@@ -48,27 +48,57 @@ Cloudflare (proxied DNS, SSL/TLS Full Strict, WAF)
         v
 Ringmaster — us-west-2                          [ this repo ]
   web frontend + API  ·  Discord OAuth2  ·  ingest endpoint
-  the ONLY thing holding AWS credentials
-        |                                    \
+  writes grants/bans/audit  ·  reads everything
+        |                                     \
         |  VPC peering, security-group          \  AWS SDK
         |  restricted to the peered CIDR         \
         |    RCON -> game commands                v
-        |    SSH  -> process control + telemetry  DynamoDB (us-west-2)
-        v                                         grants · bans · audit
-FXServer — us-east-2                              incidents · telemetry
-  FXServer process  ·  br_ringmaster resource     [ game repo ]
-  sshd + dispatch.sh (forced command only)
+        |    SSH  -> process control + telemetry  DynamoDB — us-east-2
+        v                                         ^
+FXServer — us-east-2                              |  instance role:
+  FXServer process                                |  stats + telemetry
+  br_ringmaster resource — realtime push  --------+  writes ONLY
+  bundled JS resource — DynamoDB writes
+  sshd + dispatch.sh (forced command only)        [ game repo ]
 ```
 
-**Ringmaster is the only thing that talks to DynamoDB.** The game server never
-holds AWS credentials and never signs an AWS request — it pushes JSON to
-Ringmaster's ingest endpoint and forgets about it. This is a security win (no
-credentials on the box most exposed to the public internet) and it sidesteps a
-real problem: DynamoDB's API requires SigV4 request signing, and FXServer's Lua
-runtime ships no HMAC-SHA256 to sign with.
+**Both sides write to DynamoDB, with deliberately unequal reach.** The game
+server writes stats and telemetry from a server-side JavaScript resource, using
+an EC2 instance role — no static credentials anywhere. Its IAM policy grants
+**no access to the grants, bans or audit tables**; those belong to Ringmaster
+alone, so a compromised game server cannot grant itself an admin scope or edit
+the record of what it did.
+
+*Realtime* state — the live player list, host telemetry — takes a different
+path, pushing to Ringmaster's ingest endpoint, because polling DynamoDB for a
+two-second-fresh player list would be slow and wasteful. Two paths, because the
+data has genuinely different latency and durability needs.
 
 Nothing about RCON, SSH or the ingest endpoint touches Cloudflare or the public
 internet. Cloudflare fronts the admin's browser traffic only.
+
+### Platform notes worth not relearning
+
+- **FXServer's server-side JS runtime is real Node.js**, not bare V8 —
+  `citizen-scripting-node`, genuine libuv loop, `require('crypto')` works, npm
+  packages resolve. Node 22 is opt-in via `node_version '22'` in the manifest.
+  This is distinct from FXServer's *build* toolchain, which is a bundled
+  yarn/Node 16 and auto-builds any resource containing a `package.json` — hence
+  the game-side DynamoDB resource ships as a **single committed esbuild bundle
+  with no `package.json`**, the same shape the gamemode's NUI build already uses.
+- **FiveM's Lua has no HMAC or SHA-2.** All 827 native declarations checked; the
+  only crypto natives are bcrypt (`GetPasswordHash`/`VerifyPasswordHash`), which
+  block the main thread. So SigV4 belongs in the JS resource, never in Lua.
+- **`PerformHttpRequest` has a hardcoded 5-second no-response timeout**, not
+  configurable. Applies to the realtime push; not to the AWS SDK, which uses
+  Node's own HTTP stack.
+- **No prior art.** No published FiveM resource uses the AWS SDK, DynamoDB, S3
+  or SigV4 — the ecosystem is overwhelmingly MySQL/MariaDB. Unusually for this
+  project, there is nobody to read first.
+- **`screenshot-basic` uploads from the client's NUI browser via `fetch`**, and
+  passes caller-supplied headers straight through — so incident screenshots can
+  go to a **presigned S3 URL directly from the client**, never transiting the
+  game server or Ringmaster.
 
 ### Two channels to the game host, deliberately different
 
@@ -89,9 +119,10 @@ outside it.
 **Nothing here is protected by the code being private.** Every actual secret
 lives outside the repo under any visibility setting — RCON password, SSH private
 key, Discord OAuth secret, session signing key, and *who the admins are* (that
-is data, in DynamoDB, never a committed file). DynamoDB access is via the EC2
-instance IAM role, so there is no static credential to leak. The game repo
-already publishes its anticheat thresholds on purpose; this is the same bet.
+is data, in DynamoDB, never a committed file). DynamoDB access on both hosts is
+via an EC2 instance IAM role, so there is no static credential to leak
+anywhere. The game repo already publishes its anticheat thresholds on purpose;
+this is the same bet.
 
 The load-bearing pieces:
 
