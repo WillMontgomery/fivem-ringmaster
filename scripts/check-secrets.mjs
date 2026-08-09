@@ -18,6 +18,7 @@
  *   node scripts/check-secrets.mjs
  */
 
+import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
@@ -99,15 +100,49 @@ function walk(dir, out = []) {
   return out
 }
 
+/**
+ * The files git would actually publish: tracked, plus untracked-but-not-ignored.
+ *
+ * ASKING GIT RATHER THAN WALKING THE DISK IS THE POINT. `.env.local` holds real
+ * secrets and is gitignored, so it can never reach the public repo — flagging it
+ * would be a false positive on a file git will never see, and false positives
+ * are how a gate ends up bypassed with --no-verify. The threat model is "a
+ * secret gets committed", and git's own index is the authority on what can be.
+ *
+ * Falls back to walking the tree if git is unavailable (a tarball, a CI image
+ * without git). That direction is deliberate: erring toward scanning too much
+ * is a nuisance, erring toward scanning too little is a leak.
+ */
+function candidates() {
+  try {
+    const out = execFileSync(
+      'git',
+      ['ls-files', '--cached', '--others', '--exclude-standard'],
+      { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    )
+    return out
+      .split('\n')
+      .filter(Boolean)
+      .map((p) => join(ROOT, p))
+      .filter((p) => {
+        const name = p.split(sep).pop() ?? ''
+        return !SKIP_FILES.has(name) && !BINARY.test(name)
+      })
+  } catch {
+    console.warn('note: git unavailable, scanning the working tree instead')
+    return walk(ROOT)
+  }
+}
+
 let findings = 0
 let scanned = 0
 
-for (const file of walk(ROOT)) {
+for (const file of candidates()) {
   let text
   try {
     text = readFileSync(file, 'utf8')
   } catch {
-    continue // unreadable or genuinely binary; nothing to scan
+    continue // unreadable, deleted, or genuinely binary; nothing to scan
   }
   if (text.indexOf(String.fromCharCode(0)) !== -1) continue // binary that slipped past the extension list
 

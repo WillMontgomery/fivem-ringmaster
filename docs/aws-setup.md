@@ -132,7 +132,7 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "GameServerWritesOnly",
+      "Sid": "GameServerWrites",
       "Effect": "Allow",
       "Action": [
         "dynamodb:PutItem",
@@ -143,27 +143,43 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
         "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-telemetry",
         "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/br-stats-*"
       ]
+    },
+    {
+      "Sid": "GameServerBanCheck",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-bans"
     }
   ]
 }
 ```
 
+**Two statements, on purpose.** The first is what the game server *writes* — its
+own stats and telemetry. The second is the single read it genuinely needs: the
+ban check that runs when a player connects. Keeping them apart means the read is
+visible as a deliberate exception rather than buried in a list of nine actions,
+and it stays `GetItem` on one table — **not `Query`, not `Scan`**, so the game
+server can answer "is *this* license banned?" and cannot enumerate the ban list.
+
 **Why this policy is shaped the way it is** — this is the single most important
 security control in the whole design, so it is worth understanding rather than
 pasting:
 
-- **No `ringmaster-grants`, no `ringmaster-audit`, no `ringmaster-bans`.** The
-  game server is the box most exposed to the public internet, running software
-  that people actively try to exploit. If it were ever compromised, this policy
-  means the attacker still cannot grant themselves an admin scope, cannot lift
-  their own ban, and cannot edit the record of what they did.
-- **No `GetItem`, `Query` or `Scan`.** The game server writes; it does not read.
-  It has no reason to enumerate anything.
-- **No `DeleteItem`.** Nothing on the game side ever needs to destroy a row.
-
-> **The ban check reads bans, doesn't it?** It will — and when M4 adds it, this
-> policy gains exactly `dynamodb:GetItem` on `ringmaster-bans` and nothing else.
-> Adding it now would be granting a permission before there is code to use it.
+- **No `ringmaster-grants` and no `ringmaster-audit`, at all.** The game server
+  is the box most exposed to the public internet, running software that people
+  actively try to exploit. If it were ever compromised, this policy means the
+  attacker still cannot grant themselves an admin scope and cannot edit the
+  record of what they did.
+- **On `ringmaster-bans`, `GetItem` only.** Enough to answer "is *this* license
+  banned?" when someone connects. **Not `Query`, not `Scan`** — so a compromised
+  game server cannot enumerate who is banned, and **no write actions** — so it
+  cannot lift a ban.
+- **No `Query` or `Scan` anywhere.** Nothing on the game side has a reason to
+  enumerate a table.
+- **No `DeleteItem` anywhere.** Nothing on the game side ever needs to destroy a
+  row.
 
 ### Attach both roles
 
@@ -265,8 +281,23 @@ S3 → *Create bucket*, in **us-east-2**:
 - Name: something globally unique, e.g. `royale-incidents-<something>`
 - **Block all public access: ON.** Images reach the browser through presigned
   URLs, never public reads.
-- *Management* → *Lifecycle rule* → expire objects after **90 days**. These are
-  pictures of players' screens; they should not be kept forever.
+
+**No expiry lifecycle rule** (decided 2026-08-09). An earlier draft proposed
+deleting objects after 90 days on the reasoning that these are pictures of
+players' screens. The operator's objection is the stronger one: an incident
+whose evidence has silently evaporated is worse than useless — you open a report
+from eighteen months ago during an appeal or a pattern investigation and half of
+it is gone, with nothing to say why.
+
+If storage cost ever becomes the concern, **the answer is a storage class, not a
+deletion**. A lifecycle rule transitioning objects to *Glacier Instant
+Retrieval* after 90 days keeps every image readable on demand at roughly a fifth
+of the price. That satisfies the cost worry without ever losing evidence.
+
+> Worth knowing what this trades away: screenshots of players' screens are then
+> retained indefinitely. If a player ever asks for their data to be deleted, that
+> is a manual job against this bucket, and there is no automated process that
+> would have done it for you.
 
 ---
 
