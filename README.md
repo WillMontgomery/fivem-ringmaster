@@ -162,8 +162,10 @@ The load-bearing pieces:
 - **Server-side sessions, not stateless JWTs** — a revoked admin must lose access
   *immediately*, and a self-contained token stays valid until it expires.
 - **Scoped grants, re-checked per action, server-side.** Hiding a button is a
-  courtesy, not a boundary. `br_ringmaster` re-checks independently on arrival,
-  because RCON has no notion of *which* admin sent a command.
+  courtesy, not a boundary. The check lives here and only here: the sole writer
+  to the game host's command channel is the supervisor behind a forced-command
+  SSH key, so anyone able to reach it already has console authority and a second
+  check there would guard nothing.
 - **Command injection is the single biggest risk in this design**, and dropping
   RCON did not remove it — a newline in an admin-typed ban reason is still a
   second command once it reaches FXServer's stdin, which is a console with full
@@ -182,16 +184,24 @@ Tracked as GitHub milestones; this table is the map, `gh issue list` is the queu
 | 0 | Foundations | Repo scaffold, toolchain, secret gate, DynamoDB tables, IAM role, deploy |
 | 1 | Identity | Discord OAuth2 + PKCE, server-side sessions, the grants table and scope model |
 | 2 | Observe | Ingest endpoint, realtime player list, live match/squad/party view |
-| 3 | Host control | `dispatch.sh` over restricted SSH; status, telemetry, CPU/memory/network graphs |
-| 4 | Act | RCON channel, kick, ban, the audit log |
+| 3a | Host observation | `dispatch.sh` over restricted SSH — `status` and `telemetry` verbs only; CPU/memory/network graphs |
+| 4 | Act | The command channel, kick, ban, the audit log |
 | 5 | Evidence | Incident reports (anticheat- and player-triggered), screenshots, Discord webhook |
+| 3b | Process control | `stop` / `restart` / `update_check`, and the supervisor that owns FXServer's stdin |
 | 6 | Operate | Live config editing, generic event triggers, scheduled maintenance windows |
 | 7 | Investigate | Retrospective history by match/squad/party, full profile view, search |
 
-**Ordered read-before-write on purpose.** Milestones 0–3 cannot change anything
+**Ordered read-before-write on purpose.** Milestones 0–3a cannot change anything
 in a running game; the first write path opens in M4. This is the same discipline
 the gamemode used for its damage validator, which ran in log-only mode for a
 full playtest before it was ever allowed to refuse a shot.
+
+Host control is split into **3a** and **3b** for exactly that reason. An earlier
+version listed one M3 shipping `dispatch.sh` with its full verb set — including
+`stop` and `restart` — while also claiming M0–M3 could not touch a running game.
+Both could not be true. The verbs that only read (`status`, `telemetry`) belong
+before the boundary; the ones that end a match for everyone on the box belong
+after it, next to the audit log that records them.
 
 **Spectate is deliberately absent.** The camera and client-state machinery
 belongs to the game repo's M7 (death-cam spectating), and Ringmaster's
@@ -201,7 +211,10 @@ ahead of the tooling; the wiring waits.
 
 ## Stack
 
-**Proposed, not locked** — worth settling in M0 before anything is built on it.
+**Locked** (2026-08-09): Next.js (App Router) + TypeScript + Auth.js, Tailwind,
+DynamoDB via the AWS SDK's default credential chain. Resolved and locked against
+a real `npm install`, so `package-lock.json` — not this list — is the authority
+on versions.
 
 Node 20+ and TypeScript. Unlike the game's NUI, this runs in a real browser, so
 **none of the CEF Chrome 103 constraints apply** — current CSS, current

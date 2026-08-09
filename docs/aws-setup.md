@@ -33,7 +33,7 @@ Create six tables. For every one of them:
 
 | Table name | Partition key | Sort key | Notes |
 |---|---|---|---|
-| `ringmaster-grants` | `license` (String) | — | Who can do what. **Ringmaster writes; the game server must never touch this.** |
+| `ringmaster-grants` | `license` (String) | — | Who can do what. **Needs a secondary index — see below.** Ringmaster writes; the game server must never touch this. |
 | `ringmaster-bans` | `license` (String) | — | Active and lifted bans |
 | `ringmaster-audit` | `pk` (String) | `ts` (Number) | Every admin action. **Ringmaster only.** |
 | `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations |
@@ -58,6 +58,33 @@ and **it will not work without it**. Create the table as above, then open it →
 > Confirm the exact key names against the adapter's own docs when you install
 > it (`@auth/dynamodb-adapter`), in case they have changed since this was
 > written.
+
+### The secondary index on `ringmaster-grants`
+
+**Added 2026-08-09. If you created the tables before this date, this one is
+missing and nobody can log in.**
+
+Discord tells us *who* is logged in; every grant, ban and audit row keys on the
+**license**. Something has to bridge them, and `ringmaster-grants` is keyed by
+`license` with `discordId` as a plain attribute — which answers "what can this
+license do?" but not "which license is this Discord account?", and login needs
+the second one.
+
+Open `ringmaster-grants` → *Indexes* → *Create index*:
+
+- **Partition key**: `discordId` (String)
+- No sort key
+- **Index name**: `discordId-index`
+- Attribute projections: **All**
+
+> Worth understanding rather than pasting, because it constrains a real
+> behaviour: the `discordId` on a grants row is written **by hand when the admin
+> is granted**, not discovered automatically. FiveM only reports a `discord:`
+> identifier when the connecting player has Discord's activity integration
+> enabled on their end, which is opt-in. So an admin who has never connected
+> with it on has no discovered mapping — and without a manually-set `discordId`,
+> **they cannot log in at all.** That includes, awkwardly, the first admin.
+> `scripts/grant.mjs` therefore takes `--discord-id` explicitly.
 
 ### TTL, on the two tables that need it
 
@@ -132,7 +159,7 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "GameServerWrites",
+      "Sid": "GameServerWritesOnly",
       "Effect": "Allow",
       "Action": [
         "dynamodb:PutItem",
@@ -140,28 +167,52 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
         "dynamodb:BatchWriteItem"
       ],
       "Resource": [
-        "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-telemetry",
         "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/br-stats-*"
       ]
-    },
-    {
-      "Sid": "GameServerBanCheck",
-      "Effect": "Allow",
-      "Action": [
-        "dynamodb:GetItem"
-      ],
-      "Resource": "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-bans"
     }
   ]
 }
 ```
 
-**Two statements, on purpose.** The first is what the game server *writes* — its
-own stats and telemetry. The second is the single read it genuinely needs: the
-ban check that runs when a player connects. Keeping them apart means the read is
-visible as a deliberate exception rather than buried in a list of nine actions,
-and it stays `GetItem` on one table — **not `Query`, not `Scan`**, so the game
-server can answer "is *this* license banned?" and cannot enumerate the ban list.
+**This is the whole policy today, and the shortest true sentence about it is
+that the game box cannot touch a single `ringmaster-*` table.** It writes its
+own match stats and nothing else. Not the grants table, not the audit log, not
+the ban list, not telemetry.
+
+That matters because the game server is the box most exposed to the public
+internet, running software people actively try to exploit. If it is ever
+compromised, this policy means the attacker cannot grant themselves an admin
+scope, cannot edit the record of what they did, and cannot even find out who is
+banned.
+
+> **Revised 2026-08-09** — if you created this role earlier it also granted
+> `ringmaster-telemetry`; **delete that ARN.** Host telemetry is polled by
+> Ringmaster over SSH and written by Ringmaster, so the game box never touches
+> that table. An earlier draft of this file had it in both places, which cannot
+> both be right.
+
+### The one read it will eventually need — Slice 2, not yet
+
+When the ban gate lands (a player connecting is checked against the ban list),
+the game box needs exactly one read, and it gets its own statement so the
+exception stays visible rather than buried in a list of actions:
+
+```json
+{
+  "Sid": "GameServerBanCheck",
+  "Effect": "Allow",
+  "Action": [
+    "dynamodb:GetItem"
+  ],
+  "Resource": "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-bans"
+}
+```
+
+**Do not add this yet.** Slice 1 is deliberately read-before-write: nothing on
+the game side reaches Ringmaster's data at all until there is a feature that
+needs it. When it does get added, note what it is and is not — `GetItem` on one
+table, so the game server can answer "is *this* license banned?" and **cannot**
+enumerate the ban list (no `Query`, no `Scan`) or lift a ban (no writes).
 
 **Why this policy is shaped the way it is** — this is the single most important
 security control in the whole design, so it is worth understanding rather than
@@ -245,7 +296,7 @@ those cannot be referenced across regions.
 
 | Type | Protocol | Port | Source | Why |
 |---|---|---|---|---|
-| SSH | TCP | `22` | us-west-2 CIDR | `dispatch.sh` forced command — the *only* channel |
+| SSH | TCP | `22` | us-west-2 CIDR | `dispatch.sh` forced command — the *only* inbound channel |
 
 > **There is deliberately no RCON rule here**, and this is worth understanding
 > because an earlier draft of this plan had one.
