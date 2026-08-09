@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# ---------------------------------------------------------------------------
+# SECRETS
+#
+# This repo is PUBLIC. Everything below is a credential that would compromise
+# either the game server or the AWS account, and none of it belongs in git under
+# any circumstances. A secret-scanning gate backs this up on every commit --
+# .gitignore is the first line, not the only one.
+#
+# Where these actually live:
+#   AWS            -> the EC2 instance IAM role. There is no key file.
+#   Discord OAuth  -> environment, on the Ringmaster host
+#   session secret -> environment, on the Ringmaster host
+#   RCON password  -> server.cfg on the game host (already gitignored there)
+#   SSH key        -> the Ringmaster host only, never checked in
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+credentials
+.aws/
+
+# Local overrides
+*.local
+config.local.*
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
