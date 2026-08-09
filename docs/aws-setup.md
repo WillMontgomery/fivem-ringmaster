@@ -239,14 +239,30 @@ IPv4 CIDR column) in each region.
 
 Peering makes the path exist; security groups decide what may cross it.
 
-**On the game server's security group** (us-east-2), add two inbound rules.
+**On the game server's security group** (us-east-2), add **one** inbound rule.
 For *Source*, type the **us-west-2 VPC CIDR** — not a security group id, since
 those cannot be referenced across regions.
 
 | Type | Protocol | Port | Source | Why |
 |---|---|---|---|---|
-| Custom TCP | TCP | `30120` | us-west-2 CIDR | RCON. Match the port to your `server.cfg` |
-| SSH | TCP | `22` | us-west-2 CIDR | `dispatch.sh` forced command |
+| SSH | TCP | `22` | us-west-2 CIDR | `dispatch.sh` forced command — the *only* channel |
+
+> **There is deliberately no RCON rule here**, and this is worth understanding
+> because an earlier draft of this plan had one.
+>
+> FXServer's RCON is not a separate service on a port you can choose. It is an
+> out-of-band handler bolted onto **the same UDP socket players connect
+> through**, and there is no convar to move or rebind it — so it cannot be
+> firewalled apart from gameplay traffic at all. Its authentication is a
+> plaintext password compared non-constant-time, rate-limited on a *spoofable*
+> UDP source address, and commands execute with full console authority.
+>
+> So Ringmaster does not use RCON. **Leave `rcon_password` unset in
+> `server.cfg`** — that is already the default — and admin commands travel over
+> SSH instead, exactly as txAdmin does it (it writes to the FXServer process's
+> stdin and contains no RCON code at all).
+>
+> One channel, on a port that is not open to the world.
 
 **On Ringmaster's security group** (us-west-2), one inbound rule:
 

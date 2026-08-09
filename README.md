@@ -52,15 +52,39 @@ Ringmaster — us-west-2                          [ this repo ]
         |                                     \
         |  VPC peering, security-group          \  AWS SDK
         |  restricted to the peered CIDR         \
-        |    RCON -> game commands                v
-        |    SSH  -> process control + telemetry  DynamoDB — us-east-2
+        |    SSH (port 22) — the ONLY channel:    v
+        |    commands, process control, telemetry DynamoDB — us-east-2
         v                                         ^
 FXServer — us-east-2                              |  instance role:
-  FXServer process                                |  stats + telemetry
-  br_ringmaster resource — realtime push  --------+  writes ONLY
+  supervisor -> FXServer stdin                    |  stats + telemetry
+  br_ringmaster resource — realtime push  --------+  writes, ban reads
   bundled JS resource — DynamoDB writes
   sshd + dispatch.sh (forced command only)        [ game repo ]
 ```
+
+### No RCON, and that is a deliberate reversal
+
+An earlier version of this design used FXServer's RCON for game commands. It
+should not, and the reason is structural rather than a matter of taste:
+
+**RCON is not a separate service.** It is an out-of-band handler registered on
+the *same UDP socket players connect through*, and no convar exists to move or
+rebind it — so it cannot be firewalled apart from gameplay traffic. Its
+authentication is a plaintext password compared in non-constant time, its rate
+limiter is keyed on a spoofable UDP source address (and is bypassed entirely for
+proxy addresses), and a successful command runs with full console authority.
+Exposing that on the one port that must be open to the world is not a tradeoff
+worth making.
+
+**txAdmin, the de facto FiveM admin panel, does not use RCON either.** It spawns
+FXServer as a child process and writes commands to its **stdin** —
+`proc.stdin.write(command + '\n')` — with no RCON code anywhere in its process
+runner. That is the established answer to this exact problem.
+
+So Ringmaster sends commands over the SSH channel it already needs for process
+control, and a small supervisor on the game host relays them to FXServer's
+stdin. `rcon_password` is left unset, which is FXServer's default. **One
+channel, one port, and it is not the world-open one.**
 
 **Both sides write to DynamoDB, with deliberately unequal reach.** The game
 server writes stats and telemetry from a server-side JavaScript resource, using
@@ -89,6 +113,10 @@ internet. Cloudflare fronts the admin's browser traffic only.
 - **FiveM's Lua has no HMAC or SHA-2.** All 827 native declarations checked; the
   only crypto natives are bcrypt (`GetPasswordHash`/`VerifyPasswordHash`), which
   block the main thread. So SigV4 belongs in the JS resource, never in Lua.
+- **FXServer executes newline-terminated commands from stdin**, which is how
+  txAdmin drives it. `rcon_password` is left unset; RCON shares the players'
+  UDP socket and cannot be moved (`WithOutOfBand<…, RconOutOfBand>` on the game
+  endpoint; no `rcon_port` convar exists).
 - **`PerformHttpRequest` has a hardcoded 5-second no-response timeout**, not
   configurable. Applies to the realtime push; not to the AWS SDK, which uses
   Node's own HTTP stack.
@@ -100,15 +128,18 @@ internet. Cloudflare fronts the admin's browser traffic only.
   go to a **presigned S3 URL directly from the client**, never transiting the
   game server or Ringmaster.
 
-### Two channels to the game host, deliberately different
+### One channel to the game host
 
-**RCON** carries game commands — kick, ban, spectate, event triggers. It reaches
-the Lua environment inside a running FXServer.
+**SSH with a forced command.** An `authorized_keys` entry pinned to
+`command="/opt/royale/dispatch.sh"` means even a stolen key runs one script and
+never a shell. `dispatch.sh` switches on a fixed set of verbs and never `eval`s
+what it receives.
 
-**SSH with a forced command** carries everything RCON structurally cannot: the
-FXServer *process* itself. RCON runs inside the process; it cannot restart it.
-An `authorized_keys` entry pinned to `command="/opt/royale/dispatch.sh"` means
-even a stolen key runs one script and never a shell.
+It carries everything: game commands (relayed to FXServer's stdin by the
+supervisor), process lifecycle (`stop`, `restart`, `update_check`) and host
+telemetry. Game commands and process control were originally two different
+channels because RCON cannot restart the process it runs inside — dropping RCON
+collapsed them into one.
 
 ## Security posture
 
@@ -133,10 +164,11 @@ The load-bearing pieces:
 - **Scoped grants, re-checked per action, server-side.** Hiding a button is a
   courtesy, not a boundary. `br_ringmaster` re-checks independently on arrival,
   because RCON has no notion of *which* admin sent a command.
-- **Command injection into RCON is the single biggest risk in this design.** A
-  newline in an admin-typed ban reason is a second command on the most
-  privileged surface in the system. Free text travels base64-encoded as one
-  opaque argument, validated at the API boundary and again on arrival.
+- **Command injection is the single biggest risk in this design**, and dropping
+  RCON did not remove it — a newline in an admin-typed ban reason is still a
+  second command once it reaches FXServer's stdin, which is a console with full
+  authority. Free text travels base64-encoded as one opaque argument, validated
+  at the API boundary, again in `dispatch.sh`, and again in `br_ringmaster`.
 - **Two-phase audit logging** — intent written before dispatch, outcome after. A
   log written only on success is the one that fails when it matters most.
 - **A secret-scanning gate** runs on every commit.
