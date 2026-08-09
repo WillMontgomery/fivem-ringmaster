@@ -33,7 +33,7 @@ Create six tables. For every one of them:
 
 | Table name | Partition key | Sort key | Notes |
 |---|---|---|---|
-| `ringmaster-grants` | `license` (String) | — | Who can do what. **Ringmaster writes; the game server must never touch this.** |
+| `ringmaster-grants` | `license` (String) | — | Who can do what. **Needs a secondary index — see below.** Ringmaster writes; the game server must never touch this. |
 | `ringmaster-bans` | `license` (String) | — | Active and lifted bans |
 | `ringmaster-audit` | `pk` (String) | `ts` (Number) | Every admin action. **Ringmaster only.** |
 | `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations |
@@ -58,6 +58,33 @@ and **it will not work without it**. Create the table as above, then open it →
 > Confirm the exact key names against the adapter's own docs when you install
 > it (`@auth/dynamodb-adapter`), in case they have changed since this was
 > written.
+
+### The secondary index on `ringmaster-grants`
+
+**Added 2026-08-09. If you created the tables before this date, this one is
+missing and nobody can log in.**
+
+Discord tells us *who* is logged in; every grant, ban and audit row keys on the
+**license**. Something has to bridge them, and `ringmaster-grants` is keyed by
+`license` with `discordId` as a plain attribute — which answers "what can this
+license do?" but not "which license is this Discord account?", and login needs
+the second one.
+
+Open `ringmaster-grants` → *Indexes* → *Create index*:
+
+- **Partition key**: `discordId` (String)
+- No sort key
+- **Index name**: `discordId-index`
+- Attribute projections: **All**
+
+> Worth understanding rather than pasting, because it constrains a real
+> behaviour: the `discordId` on a grants row is written **by hand when the admin
+> is granted**, not discovered automatically. FiveM only reports a `discord:`
+> identifier when the connecting player has Discord's activity integration
+> enabled on their end, which is opt-in. So an admin who has never connected
+> with it on has no discovered mapping — and without a manually-set `discordId`,
+> **they cannot log in at all.** That includes, awkwardly, the first admin.
+> `scripts/grant.mjs` therefore takes `--discord-id` explicitly.
 
 ### TTL, on the two tables that need it
 
@@ -140,7 +167,6 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
         "dynamodb:BatchWriteItem"
       ],
       "Resource": [
-        "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-telemetry",
         "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/br-stats-*"
       ]
     },
@@ -156,9 +182,17 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
 }
 ```
 
+> **Revised 2026-08-09** — if you created this role earlier, edit it: an earlier
+> version of this policy also granted `ringmaster-telemetry`. It should not.
+> Host telemetry is *polled by Ringmaster over SSH* and written by Ringmaster,
+> so the game box never touches that table. Removing it leaves the game role
+> with exactly **one** `ringmaster-*` permission, which is a much easier
+> sentence to defend.
+
 **Two statements, on purpose.** The first is what the game server *writes* — its
-own stats and telemetry. The second is the single read it genuinely needs: the
-ban check that runs when a player connects. Keeping them apart means the read is
+own match stats, and nothing else. The second is the single read it genuinely
+needs: the ban check that runs when a player connects. Keeping them apart means
+the read is
 visible as a deliberate exception rather than buried in a list of nine actions,
 and it stays `GetItem` on one table — **not `Query`, not `Scan`**, so the game
 server can answer "is *this* license banned?" and cannot enumerate the ban list.
@@ -245,7 +279,7 @@ those cannot be referenced across regions.
 
 | Type | Protocol | Port | Source | Why |
 |---|---|---|---|---|
-| SSH | TCP | `22` | us-west-2 CIDR | `dispatch.sh` forced command — the *only* channel |
+| SSH | TCP | `22` | us-west-2 CIDR | `dispatch.sh` forced command — the *only* inbound channel |
 
 > **There is deliberately no RCON rule here**, and this is worth understanding
 > because an earlier draft of this plan had one.

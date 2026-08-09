@@ -21,8 +21,15 @@ out/
 #   AWS            -> the EC2 instance IAM role. There is no key file.
 #   Discord OAuth  -> environment, on the Ringmaster host
 #   session secret -> environment, on the Ringmaster host
-#   RCON password  -> server.cfg on the game host (already gitignored there)
+#   ingest secret  -> environment on both hosts
 #   SSH key        -> the Ringmaster host only, never checked in
+#
+# There is deliberately no RCON password in that list. `rcon_password` stays
+# unset on the game host, which is FXServer's own default. See the README.
+#
+# (The backticks above are load-bearing: check-secrets.mjs flags that token
+# followed by whitespace, and prose about it trips the rule. Quoting the token
+# is the right fix; loosening the rule is not.)
 # ---------------------------------------------------------------------------
 .env
 .env.*

@@ -59,9 +59,15 @@ export async function grantsFor(license: string): Promise<Grant | null> {
  * button. Hiding a button is a courtesy; this is the boundary. Same principle
  * the whole gamemode runs on: the client asks, the server decides.
  *
- * Note this is only Ringmaster's half. `br_ringmaster` re-checks independently
- * when a command arrives, because RCON carries no notion of *which* admin sent
- * it — whoever holds the RCON password can issue anything.
+ * This is the whole check, and that is a deliberate change from an earlier
+ * design. That design had `br_ringmaster` re-check independently on arrival,
+ * because RCON carried no notion of *which* admin sent a command. RCON is gone
+ * (see the README), and the only writer to its replacement — SSH forced-command
+ * → supervisor → FXServer stdin — is the supervisor itself. Anyone able to put
+ * bytes on that channel already has console authority on the game box, so a
+ * second check there would guard nothing. The acting admin's license still
+ * travels with every command, as an audit field, never as an authorisation
+ * input.
  */
 export async function can(
   license: string | null | undefined,
