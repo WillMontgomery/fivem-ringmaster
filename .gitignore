@@ -36,6 +36,11 @@ id_ed25519*
 credentials
 .aws/
 
+# Working memory, not documentation. Session handoff notes -- the README is the
+# documentation, and PLAN.md is deliberately allowed to be messy and current.
+# Same convention as the gamemode repo.
+PLAN.md
+
 # Local overrides
 *.local
 config.local.*
