@@ -82,17 +82,32 @@ export async function can(
 }
 
 /**
+ * Thrown by {@link requireScope}. Distinct from a generic Error so a route
+ * handler can map it to a 403 without string-matching a message.
+ */
+export class ForbiddenError extends Error {
+  constructor(public readonly scope: Scope) {
+    super(`forbidden: ${scope}`)
+    this.name = 'ForbiddenError'
+  }
+}
+
+/**
  * Throwing form, for route handlers.
+ *
+ * Named `requireScope` rather than `require`: the latter shadows CommonJS's
+ * global in any file that imports it, which is a genuinely confusing thing to
+ * do to the next person reading a stack trace.
  *
  * Deliberately does not say whether the license was unknown or merely lacked
  * the scope. That distinction is useful to an attacker enumerating admins and
  * useless to a legitimate one, who already knows which they are.
  */
-export async function require(
+export async function requireScope(
   license: string | null | undefined,
   scope: Scope,
 ): Promise<void> {
   if (!(await can(license, scope))) {
-    throw new Error(`forbidden: ${scope}`)
+    throw new ForbiddenError(scope)
   }
 }

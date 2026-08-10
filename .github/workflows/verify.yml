@@ -1,0 +1,54 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# This repo is public and holds no secrets, which is the point. Nothing here
+# needs credentials, and the workflow is given none — read-only on contents so
+# a compromised action in the dependency tree cannot push.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The secret scan asks git what it would publish, so it needs more
+          # than the default shallow tip to be asking about anything real.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # `ci`, not `install`: it installs exactly what package-lock.json pins
+      # and fails if the lockfile and package.json disagree, rather than
+      # quietly resolving something newer than what was tested.
+      - run: npm ci
+
+      # Secret scan first. It is the cheapest check and the only one whose
+      # failure is urgent — everything else can be fixed at leisure, a
+      # committed credential cannot be uncommitted.
+      - run: npm run check:secrets
+
+      - run: npm run typecheck
+
+      # No environment is supplied, and the build is expected to succeed
+      # anyway. That is a property worth locking in: a build that needs
+      # production secrets can only ever run on a production host, and this
+      # repo has no secrets by design.
+      #
+      # Stated as an observation rather than a guarantee, because it was
+      # checked rather than assumed: `env()` IS called at module scope in
+      # dynamo.ts and auth.ts, and the build tolerates it — Next does not
+      # evaluate those modules during route tracing. If that ever changes, or
+      # a module-scope read lands somewhere Next does evaluate, this step is
+      # where it surfaces. It is not a gate against that specific mistake;
+      # tested, and it does not catch one.
+      - run: npx next build
