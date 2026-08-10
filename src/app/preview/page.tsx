@@ -1,12 +1,12 @@
 import { notFound } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
+import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 
 import { LiveBoard } from '@/components/LiveBoard'
-import { snapshotEnvelope } from '@/lib/ingest'
 import { cn } from '@/lib/utils'
 
-import fixture from '@/lib/__fixtures__/ingest-snapshot.json'
+import { synthSnapshot } from '@/lib/__fixtures__/synth'
 
 /**
  * The design harness. DEVELOPMENT ONLY.
@@ -38,10 +38,9 @@ async function Preview({
 }) {
   const { state } = await searchParams
 
-  // Parsed through the real schema rather than cast. If the fixture drifts
-  // from the contract, this page fails loudly instead of rendering a shape
-  // the ingest endpoint would have rejected.
-  const env = snapshotEnvelope.parse(fixture)
+  // Synthesised and then parsed through the real schema. If the shape drifts
+  // from the contract, this page fails exactly where ingest would.
+  const env = synthSnapshot()
 
   const base = {
     online: true,
@@ -51,6 +50,7 @@ async function Preview({
     truncated: env.snapshot.truncated,
     matches: env.snapshot.matches,
     players: env.snapshot.players,
+    snapshotClock: { wallMs: env.server.wallMs, gameMs: env.server.gameMs },
     stats: {
       snapshots: 412,
       snapshotsStale: 3,
@@ -81,10 +81,7 @@ async function Preview({
   const view = views[key] ?? views.live
 
   return (
-    <AppShell
-      active="/"
-      user={{ name: 'Will', scopes: ['view', 'kick', 'ban', 'grant'] }}
-    >
+    <AppShell active="/" user={DEMO_USER} badges={DEMO_BADGES}>
       <div className="mx-auto max-w-6xl">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -114,7 +111,7 @@ async function Preview({
           </nav>
         </div>
 
-        <LiveBoard view={view} />
+        <LiveBoard view={view} now={Date.now()} />
 
         <p className="mt-8 border-t border-border pt-4 text-[11px] text-muted-foreground/60">
           Design harness — rendered from{' '}

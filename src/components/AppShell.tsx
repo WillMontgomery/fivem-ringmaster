@@ -1,10 +1,12 @@
 import Link from 'next/link'
 import {
   Activity,
+  CalendarClock,
   CircleDot,
   FileSearch,
   Gauge,
   ScrollText,
+  Search,
   Settings2,
   ShieldAlert,
   Users,
@@ -22,19 +24,64 @@ import { cn } from '@/lib/utils'
 /**
  * The console chrome.
  *
- * NAVIGATION MIRRORS THE MILESTONES, and the disabled entries are deliberate
- * rather than lazy. An admin panel that hides everything it cannot do yet
- * gives no sense of what it is becoming; one that shows greyed items with a
- * reason tells you where you are. They are `span`s, not links — a disabled
- * anchor is still clickable with a keyboard.
+ * NAVIGATION MIRRORS THE MILESTONES, and the not-yet-built entries are
+ * deliberate rather than lazy. An admin panel that hides everything it cannot
+ * do gives no sense of what it is becoming, so the shape of the finished tool
+ * cannot be argued with until it is expensive to change. They link to
+ * wireframes rather than being dead: a page that says what it will be and what
+ * it is blocked on is more useful than a greyed-out word.
  */
+
+export interface NavBadges {
+  /** Incidents nobody has looked at. The number that should make you click. */
+  incidents?: number
+  /** A maintenance window scheduled or draining right now. */
+  maintenance?: 'scheduled' | 'draining' | null
+}
 
 interface NavItem {
   href: string
   label: string
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
-  /** Absent when the item is live. Present = why it is not, in a tooltip. */
+  /** Absent when the page is real. Present = what it is waiting on. */
   soon?: string
+  badge?: (b: NavBadges) => React.ReactNode
+}
+
+/**
+ * The unread-incident count.
+ *
+ * URGENT-COLOURED AND CAPPED. Amber rather than red because red in this
+ * console means "dead", and an unreviewed report is not an emergency — it is
+ * a queue. Capped at 99+ because the difference between 140 and 200 unread
+ * incidents changes nothing about what you do next, and four digits wreck the
+ * column.
+ */
+function IncidentBadge({ n }: { n: number }) {
+  if (!n) return null
+  return (
+    <span className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-warn ring-1 ring-inset ring-warn/30">
+      {n > 99 ? '99+' : n}
+    </span>
+  )
+}
+
+function MaintenanceBadge({ state }: { state: 'scheduled' | 'draining' }) {
+  return (
+    <span
+      className={cn(
+        'ml-auto inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ring-1 ring-inset',
+        state === 'draining'
+          ? 'bg-warn/15 text-warn ring-warn/30'
+          : 'bg-info/15 text-info ring-info/30',
+      )}
+    >
+      {state === 'draining' && (
+        <span className="size-1.5 animate-pulse rounded-full bg-warn" />
+      )}
+      {state}
+    </span>
+  )
 }
 
 const NAV: Array<{ group: string; items: NavItem[] }> = [
@@ -42,75 +89,85 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
     group: 'Observe',
     items: [
       { href: '/', label: 'Live players', icon: Users },
-      { href: '/host', label: 'Host', icon: Gauge, soon: 'M3a — needs the SSH channel to the game box' },
-      { href: '/anticheat', label: 'Anticheat', icon: ShieldAlert, soon: 'M5 — refusal history lands with the event stream' },
+      { href: '/players', label: 'Player search', icon: Search },
+      { href: '/host', label: 'Host', icon: Gauge, soon: 'M3a' },
+      { href: '/anticheat', label: 'Anticheat', icon: ShieldAlert, soon: 'M5' },
     ],
   },
   {
     group: 'Act',
     items: [
-      { href: '/moderation', label: 'Kick & ban', icon: CircleDot, soon: 'M4 — the first write path, opens in Slice 2' },
-      { href: '/audit', label: 'Audit log', icon: ScrollText, soon: 'M4 — written two-phase, intent before outcome' },
-      { href: '/incidents', label: 'Incidents', icon: FileSearch, soon: 'M5 — reports and anticheat escalations' },
+      { href: '/moderation', label: 'Kick & ban', icon: CircleDot, soon: 'M4' },
+      {
+        href: '/incidents',
+        label: 'Incidents',
+        icon: FileSearch,
+        soon: 'M5',
+        badge: (b) => <IncidentBadge n={b.incidents ?? 0} />,
+      },
+      { href: '/audit', label: 'Audit log', icon: ScrollText, soon: 'M4' },
     ],
   },
   {
     group: 'Operate',
     items: [
-      { href: '/config', label: 'Live config', icon: Settings2, soon: 'M6 — hot-reloadable values only' },
-      { href: '/process', label: 'Process', icon: Activity, soon: 'M6 — stop and restart, the most dangerous button here' },
+      {
+        href: '/maintenance',
+        label: 'Maintenance',
+        icon: CalendarClock,
+        soon: 'M6',
+        badge: (b) =>
+          b.maintenance ? <MaintenanceBadge state={b.maintenance} /> : null,
+      },
+      { href: '/config', label: 'Live config', icon: Settings2, soon: 'M6' },
+      { href: '/process', label: 'Process', icon: Activity, soon: 'M6' },
     ],
   },
 ]
 
-function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+function NavLink({
+  item,
+  active,
+  badges,
+}: {
+  item: NavItem
+  active: boolean
+  badges: NavBadges
+}) {
   const Icon = item.icon
-
-  const base =
-    'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-all duration-200'
-
-  if (item.soon) {
-    return (
-      <Tooltip>
-        {/* Base UI's `render` replaces Radix's `asChild`. */}
-        <TooltipTrigger
-          render={
-            <span
-              aria-disabled="true"
-              className={cn(base, 'cursor-default text-muted-foreground/45')}
-            />
-          }
-        >
-          <Icon className="size-4 shrink-0" />
-          <span className="truncate">{item.label}</span>
-          <span className="ml-auto text-[10px] uppercase tracking-wider text-muted-foreground/40">
-            soon
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="right" className="max-w-[15rem]">
-          {item.soon}
-        </TooltipContent>
-      </Tooltip>
-    )
-  }
+  const badge = item.badge?.(badges)
 
   return (
     <Link
       href={item.href}
       className={cn(
-        base,
+        'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-all duration-200',
         active
           ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-          : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+          : item.soon
+            ? 'text-muted-foreground/55 hover:bg-sidebar-accent/40 hover:text-muted-foreground'
+            : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
       )}
     >
+      {/* Active marker as a bar rather than a background alone — it survives
+          being seen at the edge of vision, which a fill does not. */}
+      {active && (
+        <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />
+      )}
       <Icon
         className={cn(
-          'size-4 shrink-0',
-          active ? 'text-primary' : 'text-muted-foreground/70',
+          'size-4 shrink-0 transition-colors',
+          active ? 'text-primary' : 'text-muted-foreground/60',
         )}
       />
       <span className="truncate">{item.label}</span>
+
+      {badge ??
+        (item.soon ? (
+          <span className="ml-auto text-[10px] uppercase tracking-wider text-muted-foreground/35">
+            {item.soon}
+          </span>
+        ) : null)}
     </Link>
   )
 }
@@ -119,10 +176,12 @@ export function AppShell({
   children,
   active = '/',
   user,
+  badges = {},
 }: {
   children: React.ReactNode
   active?: string
   user?: { name: string; scopes: string[] } | null
+  badges?: NavBadges
 }) {
   return (
     <div className="flex min-h-screen">
@@ -134,9 +193,7 @@ export function AppShell({
           </div>
           <div className="leading-tight">
             <div className="text-sm font-semibold">Ringmaster</div>
-            <div className="text-[11px] text-muted-foreground">
-              FiveM Royale
-            </div>
+            <div className="text-[11px] text-muted-foreground">FiveM Royale</div>
           </div>
         </div>
 
@@ -154,6 +211,7 @@ export function AppShell({
                     key={item.href}
                     item={item}
                     active={item.href === active}
+                    badges={badges}
                   />
                 ))}
               </div>
@@ -172,16 +230,27 @@ export function AppShell({
               <div className="min-w-0 flex-1 leading-tight">
                 <div className="truncate text-[13px]">{user.name}</div>
                 {/*
-                  Scopes, not a role. There is no "admin" in this system --
+                  Scopes, not a role. There is no "admin" in this system —
                   someone who can kick may well not be able to ban, and showing
                   the actual grant set is how they find that out before a
                   button refuses them.
                 */}
-                <div className="truncate text-[10px] text-muted-foreground">
-                  {user.scopes.length
-                    ? user.scopes.join(' · ')
-                    : 'no scopes granted'}
-                </div>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <div className="truncate text-[10px] text-muted-foreground" />
+                    }
+                  >
+                    {user.scopes.length
+                      ? user.scopes.join(' · ')
+                      : 'no scopes granted'}
+                  </TooltipTrigger>
+                  <TooltipContent side="top" className="max-w-[18rem]">
+                    Your grants. Every action re-checks these server-side at the
+                    moment it runs — hiding a button is a courtesy, not the
+                    boundary.
+                  </TooltipContent>
+                </Tooltip>
               </div>
             </div>
           ) : (
@@ -200,6 +269,20 @@ export function AppShell({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            {badges.maintenance && (
+              <Badge
+                variant="outline"
+                className={cn(
+                  'gap-1.5 border-0 text-[10px] font-medium uppercase tracking-wider ring-1 ring-inset',
+                  badges.maintenance === 'draining'
+                    ? 'bg-warn/10 text-warn ring-warn/30'
+                    : 'bg-info/10 text-info ring-info/30',
+                )}
+              >
+                <CalendarClock className="size-3" />
+                Maintenance {badges.maintenance}
+              </Badge>
+            )}
             <Badge
               variant="outline"
               className="border-primary/25 bg-primary/10 text-[10px] font-medium uppercase tracking-wider text-primary"
@@ -209,7 +292,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 animate-rise px-5 py-6">{children}</main>
+        <main className="animate-rise min-w-0 flex-1 px-5 py-6">{children}</main>
       </div>
     </div>
   )

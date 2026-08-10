@@ -172,6 +172,20 @@ export function liveView(now: number) {
     truncated: snap?.snapshot.truncated ?? false,
     matches: snap?.snapshot.matches ?? [],
     players: snap?.snapshot.players ?? [],
+
+    /**
+     * The clock pair from the snapshot that produced these rows.
+     *
+     * Travels with the data rather than being read separately, because every
+     * per-player `connectedAt` is on the game clock and only convertible
+     * against the pair sampled alongside it. Pulling "the latest clock" from
+     * somewhere else would silently mis-date rows from an older snapshot.
+     */
+    snapshotClock: {
+      wallMs: snap?.server.wallMs ?? 0,
+      gameMs: snap?.server.gameMs ?? 0,
+    },
+
     stats: state.stats,
   }
 }

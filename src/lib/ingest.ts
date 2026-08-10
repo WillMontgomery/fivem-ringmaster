@@ -65,6 +65,21 @@ const playerRow = z.object({
   pos: z.object({ x: z.number(), y: z.number(), z: z.number() }),
   posAt: z.number().int().nonnegative(),
   bucket: z.number().int().nonnegative(),
+
+  /**
+   * When they connected, on the game clock — `GetGameTimer()` at the moment
+   * the roster first saw them. Convert with the envelope's clock pair.
+   *
+   * A GAME-CLOCK VALUE RATHER THAN A DURATION, deliberately. Sending "connected
+   * for 412 seconds" would be stale the instant it arrived and would tick
+   * backwards whenever a snapshot was delayed. Sending the origin lets the
+   * console compute the duration continuously against its own clock, which is
+   * what makes the column count up between pushes instead of jumping every two
+   * seconds.
+   *
+   * Maps to the roster's existing `joinedAt`, so the game side has it already.
+   */
+  connectedAt: z.number().int().nonnegative(),
 })
 
 const matchRow = z.object({

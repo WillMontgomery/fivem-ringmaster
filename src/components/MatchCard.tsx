@@ -66,7 +66,7 @@ const PHASE: Record<string, { chip: string; bar: string }> = {
  * during an incident review is a genuinely bad outcome.
  */
 const SQUAD_HUES = 8
-function squadColour(squadId: number | null): string {
+export function squadColour(squadId: number | null): string {
   if (squadId === null) return 'var(--idle)'
   return `var(--squad-${(Math.abs(squadId) % SQUAD_HUES) + 1})`
 }
@@ -101,9 +101,13 @@ function Stat({ label, value }: { label: string; value: number }) {
 export function MatchCard({
   match,
   players,
+  server,
+  now,
 }: {
   match: MatchRow
   players: Player[]
+  server: { wallMs: number; gameMs: number }
+  now: number
 }) {
   const groups = bySquad(players)
   const phase = PHASE[match.state] ?? PHASE.ENDED!
@@ -153,13 +157,13 @@ export function MatchCard({
               Health
             </TableHead>
             <TableHead className="text-right text-[10px] uppercase tracking-wider">
+              Connected
+            </TableHead>
+            <TableHead className="text-right text-[10px] uppercase tracking-wider">
               Kills
             </TableHead>
             <TableHead className="text-right text-[10px] uppercase tracking-wider">
               Damage
-            </TableHead>
-            <TableHead className="text-right text-[10px] uppercase tracking-wider">
-              Place
             </TableHead>
             <TableHead className="text-right text-[10px] uppercase tracking-wider">
               ID
@@ -204,7 +208,7 @@ export function MatchCard({
                 </td>
               </TableRow>
               {members.map((p) => (
-                <PlayerRowView key={p.src} p={p} accent={colour} />
+                <PlayerRowView key={p.src} p={p} accent={colour} server={server} now={now} />
               ))}
             </TableBody>
           )

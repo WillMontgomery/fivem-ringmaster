@@ -44,7 +44,7 @@ export default async function LivePlayersPage() {
           </p>
         </div>
 
-        <LiveBoard view={view} />
+        <LiveBoard view={view} now={Date.now()} />
       </div>
     </AppShell>
   )

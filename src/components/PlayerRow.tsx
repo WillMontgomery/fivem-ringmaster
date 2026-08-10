@@ -1,6 +1,7 @@
 'use client'
 
 import { Check, Copy, Crosshair } from 'lucide-react'
+import Link from 'next/link'
 import { useState } from 'react'
 
 import { TableCell, TableRow } from '@/components/ui/table'
@@ -9,6 +10,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { connectedFor, humanDuration } from '@/lib/duration'
 import type { PlayerRow as Player } from '@/lib/ingest'
 import { cn } from '@/lib/utils'
 
@@ -16,8 +18,8 @@ import { cn } from '@/lib/utils'
  * One player, as a moderator reads them.
  *
  * Ordered by what an investigation actually asks, left to right: who they are,
- * what they are doing, how they are doing, and only then the identifiers you
- * need to act on them.
+ * what they are doing, how they are doing, how long they have been here, and
+ * only then the identifiers you need to act on them.
  */
 
 const STATE: Record<string, { label: string; className: string }> = {
@@ -26,10 +28,10 @@ const STATE: Record<string, { label: string; className: string }> = {
   DEAD: { label: 'Dead', className: 'text-danger ring-danger/25 bg-danger/10' },
   SPECTATING: { label: 'Spectating', className: 'text-info ring-info/25 bg-info/10' },
   LOBBY: { label: 'Lobby', className: 'text-muted-foreground ring-border bg-muted/40' },
-  WARMUP: { label: 'Warmup', className: 'text-primary ring-primary/25 bg-primary/10' },
-  BUS: { label: 'Bus', className: 'text-primary ring-primary/25 bg-primary/10' },
-  FREEFALL: { label: 'Freefall', className: 'text-primary ring-primary/25 bg-primary/10' },
-  GLIDE: { label: 'Glide', className: 'text-primary ring-primary/25 bg-primary/10' },
+  WARMUP: { label: 'Warmup', className: 'text-phase-warmup ring-phase-warmup/25 bg-phase-warmup/10' },
+  BUS: { label: 'Bus', className: 'text-phase-bus ring-phase-bus/25 bg-phase-bus/10' },
+  FREEFALL: { label: 'Freefall', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
+  GLIDE: { label: 'Glide', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
 }
 
 function StateChip({ state }: { state: string }) {
@@ -53,9 +55,9 @@ function StateChip({ state }: { state: string }) {
  * Health as a bar, not a number.
  *
  * "87" and "12" take the same effort to read; a nearly-empty bar does not.
- * Armour stacks as a second segment rather than a separate figure, because
- * what matters at a glance is total survivability and two numbers make the
- * reader add them up.
+ * Armour is a second segment rather than a separate figure, because what
+ * matters at a glance is total survivability and two numbers make the reader
+ * add them up.
  */
 function Vitals({ hp, armour }: { hp: number; armour: number }) {
   const h = Math.max(0, Math.min(100, hp))
@@ -64,7 +66,7 @@ function Vitals({ hp, armour }: { hp: number; armour: number }) {
 
   return (
     <div className="flex items-center gap-2">
-      <div className="relative h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+      <div className="relative h-1.5 w-20 overflow-hidden rounded-full bg-muted">
         {/* Width transitions rather than jumping. Between two-second pushes
             that reads as someone taking damage, which is information; an
             instant jump reads as a glitch. */}
@@ -93,9 +95,9 @@ function Vitals({ hp, armour }: { hp: number; armour: number }) {
  * The license, copyable in one click.
  *
  * Every ban, grant and audit row keys on this string, so the single most
- * common physical action in this whole console is copying one. Making that a
- * click instead of a careful drag-select removes the way it goes wrong:
- * a half-selected license looks like a valid one.
+ * common physical action in this console is copying one. Making that a click
+ * rather than a careful drag-select removes the way it goes wrong: a
+ * half-selected license looks exactly like a valid one.
  */
 function License({ value }: { value: string }) {
   const [copied, setCopied] = useState(false)
@@ -106,12 +108,15 @@ function License({ value }: { value: string }) {
         render={
           <button
             type="button"
-            onClick={() => {
+            onClick={(e) => {
+              // The row is a link to the profile; copying must not navigate.
+              e.preventDefault()
+              e.stopPropagation()
               void navigator.clipboard.writeText(value)
               setCopied(true)
               setTimeout(() => setCopied(false), 1400)
             }}
-            className="group/lic -ml-1 flex max-w-[15rem] items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-[10px] text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-muted-foreground"
+            className="group/lic -ml-1 flex max-w-[14rem] items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-[10px] text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-muted-foreground"
           />
         }
       >
@@ -132,12 +137,22 @@ function License({ value }: { value: string }) {
 export function PlayerRowView({
   p,
   accent,
+  server,
+  now,
 }: {
   p: Player
   /** The squad's colour, when this row belongs to one. */
   accent?: string
+  /** The envelope's clock pair, for converting `connectedAt`. */
+  server?: { wallMs: number; gameMs: number }
+  now?: number
 }) {
   const dim = p.state === 'DEAD' || p.state === 'LOBBY'
+
+  const connected =
+    server && now !== undefined
+      ? humanDuration(connectedFor(server, p.connectedAt, now))
+      : '—'
 
   return (
     <TableRow className="group/row relative border-border/60 transition-colors duration-150 hover:bg-muted/30">
@@ -151,9 +166,21 @@ export function PlayerRowView({
             style={{ background: accent }}
           />
         )}
-        <div className={cn('text-sm', dim ? 'text-muted-foreground' : 'text-foreground')}>
+        {/*
+          The whole name is the link to the profile, rather than a separate
+          "view" button. The row is the record; clicking the person is the
+          obvious gesture, and an extra column of chevrons is a column of
+          nothing.
+        */}
+        <Link
+          href={`/players/${encodeURIComponent(p.license)}`}
+          className={cn(
+            'text-sm underline-offset-4 transition-colors hover:text-primary hover:underline',
+            dim ? 'text-muted-foreground' : 'text-foreground',
+          )}
+        >
           {p.name}
-        </div>
+        </Link>
         <License value={p.license} />
       </TableCell>
 
@@ -169,6 +196,10 @@ export function PlayerRowView({
         )}
       </TableCell>
 
+      <TableCell className="text-right font-mono text-[12px] text-muted-foreground">
+        {connected}
+      </TableCell>
+
       <TableCell className="text-right">
         <span className="inline-flex items-center gap-1 font-mono text-sm">
           {p.kills > 0 && <Crosshair className="size-3 text-muted-foreground/50" />}
@@ -178,15 +209,6 @@ export function PlayerRowView({
 
       <TableCell className="text-right font-mono text-sm text-muted-foreground">
         {Math.round(p.damage)}
-      </TableCell>
-
-      <TableCell className="text-right font-mono text-sm text-muted-foreground">
-        {/* Placement only means anything once they are out of the match. */}
-        {p.placement === null ? (
-          <span className="text-muted-foreground/30">—</span>
-        ) : (
-          `#${p.placement}`
-        )}
       </TableCell>
 
       <TableCell className="text-right font-mono text-[11px] text-muted-foreground/50">

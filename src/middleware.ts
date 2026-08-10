@@ -32,6 +32,21 @@ const SESSION_COOKIES = [
 ]
 
 export default function middleware(req: NextRequest) {
+  /**
+   * `next dev` skips the bounce, so the design harness and the wireframe pages
+   * can be looked at without a Discord round trip.
+   *
+   * SAFE BECAUSE THIS WAS NEVER THE BOUNDARY. Skipping it does not grant
+   * access to anything — pages that hold real data still call `auth()`
+   * themselves and still redirect, in dev exactly as in production. What this
+   * skips is a convenience redirect in front of pages that render no data at
+   * all.
+   *
+   * NODE_ENV is inlined at build time, so the branch is eliminated from the
+   * production bundle rather than merely unreachable.
+   */
+  if (process.env.NODE_ENV !== 'production') return NextResponse.next()
+
   const signedIn = SESSION_COOKIES.some((c) => req.cookies.has(c))
   if (signedIn) return NextResponse.next()
 

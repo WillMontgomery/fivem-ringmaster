@@ -1,90 +1,79 @@
-import { AlertTriangle, Signal, Swords, Users2, UserRound } from 'lucide-react'
+'use client'
 
-import { MatchCard } from '@/components/MatchCard'
-import { PlayerRowView } from '@/components/PlayerRow'
+import { AlertTriangle, LayoutGrid, Rows3 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+
+import { FeedStatus } from '@/components/FeedStatus'
+import { MatchCard, squadColour } from '@/components/MatchCard'
+import { PlayerTable } from '@/components/PlayerTable'
+import { ServerStrip } from '@/components/ServerStrip'
 import { Card } from '@/components/ui/card'
-import { Table, TableBody } from '@/components/ui/table'
 import type { PlayerRow as Player } from '@/lib/ingest'
 import type { liveView } from '@/lib/state'
-
-import { FeedStatus } from './FeedStatus'
+import { cn } from '@/lib/utils'
 
 type View = ReturnType<typeof liveView>
 
 /**
  * The live board.
  *
- * A PURE COMPONENT OVER A VIEW OBJECT, deliberately: it never fetches, so the
- * same tree renders from real ingest state and from a committed fixture. That
- * is what makes the whole surface reviewable before the game half exists — the
- * same trick the gamemode's NUI dev harness uses, for the same reason.
- */
-
-/**
- * A counter, with a hue of its own.
+ * A COMPONENT OVER A VIEW OBJECT, deliberately: it never fetches, so the same
+ * tree renders from real ingest state and from a fixture. That is what makes
+ * the whole surface reviewable before the game half exists — the same trick
+ * the gamemode's NUI dev harness uses, for the same reason.
  *
- * Four identical grey boxes are four things to read; four coloured ones are a
- * shape you learn in a day and then recognise. The colour is tied to what the
- * number counts, not chosen for variety — connected is the info hue used for
- * neutral facts, in-match is the accent, lobby is deliberately muted because
- * nobody is ever looking for it urgently.
+ * Two arrangements of the same data, because they answer different questions.
+ * "By match" is the operational view — who is fighting whom, which squads are
+ * down to one. "All players" is the investigative one — sortable by damage,
+ * searchable by license, indifferent to which match anybody is in.
  */
-function Tile({
-  label,
-  value,
-  hint,
-  icon: Icon,
-  colour,
+
+/** Free OneSync ceiling. Real value should come from the server's own config. */
+const DEFAULT_CAPACITY = 48
+
+export function LiveBoard({
+  view,
+  now: initialNow,
+  capacity = DEFAULT_CAPACITY,
 }: {
-  label: string
-  value: number
-  hint?: string
-  // SVG props, not just className -- these icons take a `style` so the tile's
-  // hue can reach them without a class per colour.
-  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
-  colour: string
+  view: View
+  /** Server-rendered clock, so first paint matches. */
+  now: number
+  capacity?: number
 }) {
-  return (
-    <Card className="surface-edge group relative gap-0 overflow-hidden px-4 py-3.5 transition-transform duration-200 hover:-translate-y-0.5">
-      {/* A wash of the tile's colour, brightening on hover. Enough to
-          distinguish four cards; far too faint to compete with the number. */}
-      <div
-        aria-hidden
-        className="absolute inset-0 opacity-[0.07] transition-opacity duration-300 group-hover:opacity-[0.13]"
-        style={{
-          background: `radial-gradient(20rem 10rem at 0% 0%, ${colour}, transparent 70%)`,
-        }}
-      />
-      <div
-        aria-hidden
-        className="absolute inset-x-0 top-0 h-px opacity-40"
-        style={{ background: colour }}
-      />
+  const [mode, setMode] = useState<'match' | 'all'>('match')
 
-      <div className="relative flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        <Icon className="size-3.5" style={{ color: colour }} />
-        {label}
-      </div>
-      <div className="relative mt-1.5 font-mono text-3xl leading-none tabular-nums">
-        {value}
-      </div>
-      {hint && (
-        <div className="relative mt-1 text-[11px] text-muted-foreground/60">
-          {hint}
-        </div>
-      )}
-    </Card>
-  )
-}
+  /**
+   * A ticking clock, so "connected for" counts up between pushes instead of
+   * freezing until the next snapshot arrives.
+   *
+   * Seeded from a server-rendered value and only advanced after mount —
+   * calling Date.now() during render would produce a different number on the
+   * server than on the client and trip a hydration mismatch.
+   */
+  const [now, setNow] = useState(initialNow)
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
 
-export function LiveBoard({ view }: { view: View }) {
   const lobby: Player[] = view.players.filter((p) => p.matchId === null)
   const playersOf = (matchId: number) =>
     view.players.filter((p) => p.matchId === matchId)
 
+  const server = view.snapshotClock
+
   return (
     <div className="space-y-4">
       <FeedStatus ageMs={view.ageMs} bootEpoch={view.bootEpoch} />
+
+      <ServerStrip
+        connected={view.counts.connected}
+        inMatch={view.counts.inMatch}
+        lobby={lobby.length}
+        capacity={capacity}
+        matches={view.matches}
+      />
 
       {/*
         The truncation warning sits ABOVE the data, not beside it. The push is
@@ -108,40 +97,11 @@ export function LiveBoard({ view }: { view: View }) {
         </div>
       )}
 
-      <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Tile
-          label="Connected"
-          value={view.counts.connected}
-          icon={Users2}
-          colour="var(--info)"
-        />
-        <Tile
-          label="In match"
-          value={view.counts.inMatch}
-          icon={Swords}
-          colour="var(--primary)"
-        />
-        <Tile
-          label="Matches"
-          value={view.matches.length}
-          icon={Signal}
-          colour="var(--live)"
-        />
-        <Tile
-          label="In lobby"
-          value={lobby.length}
-          icon={UserRound}
-          colour="var(--idle)"
-          hint={lobby.length ? 'not in a match' : undefined}
-        />
-      </div>
-
       {!view.online && (
         <Card className="surface-edge animate-rise relative items-center overflow-hidden px-6 py-14 text-center">
-          {/* A slow highlight travelling across the card — the one looping
-              animation on this page, and it earns it: without motion, "waiting
-              to hear from the server" and "this console is broken" look
-              identical. */}
+          {/* The one looping animation on this page, and it earns it: without
+              motion, "waiting to hear from the server" and "this console is
+              broken" look identical. */}
           <div
             aria-hidden
             className="animate-sweep pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-primary/[0.06] to-transparent"
@@ -166,26 +126,82 @@ export function LiveBoard({ view }: { view: View }) {
         </Card>
       )}
 
-      {view.matches.map((m) => (
-        <MatchCard key={m.id} match={m} players={playersOf(m.id)} />
-      ))}
-
-      {lobby.length > 0 && (
-        <Card className="surface-edge gap-0 overflow-hidden py-0">
-          <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
-            <span className="text-sm">Lobby</span>
-            <span className="text-[11px] text-muted-foreground">
-              connected, not in a match
-            </span>
-          </header>
-          <Table>
-            <TableBody>
-              {lobby.map((p) => (
-                <PlayerRowView key={p.src} p={p} />
+      {view.online && (
+        <>
+          <div className="flex items-center gap-2">
+            <div className="flex gap-0.5 rounded-lg border border-border bg-card/60 p-1">
+              {(
+                [
+                  { k: 'match', label: 'By match', icon: LayoutGrid },
+                  { k: 'all', label: 'All players', icon: Rows3 },
+                ] as const
+              ).map(({ k, label, icon: Icon }) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setMode(k)}
+                  className={cn(
+                    'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] transition-colors',
+                    mode === k
+                      ? 'bg-primary/15 text-primary'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <Icon className="size-3.5" />
+                  {label}
+                </button>
               ))}
-            </TableBody>
-          </Table>
-        </Card>
+            </div>
+          </div>
+
+          {mode === 'match' ? (
+            <div className="space-y-4">
+              {view.matches.map((m) => (
+                <MatchCard
+                  key={m.id}
+                  match={m}
+                  players={playersOf(m.id)}
+                  server={server}
+                  now={now}
+                />
+              ))}
+
+              {lobby.length > 0 && (
+                <Card className="surface-edge gap-0 overflow-hidden py-0">
+                  <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
+                    <span className="text-sm">Lobby</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      connected, not in a match
+                    </span>
+                  </header>
+                  <PlayerTable
+                    players={lobby}
+                    server={server}
+                    now={now}
+                    squadColour={() => undefined}
+                  />
+                </Card>
+              )}
+            </div>
+          ) : (
+            <Card className="surface-edge gap-0 overflow-hidden py-0">
+              <PlayerTable
+                players={view.players}
+                server={server}
+                now={now}
+                squadColour={squadColour}
+                caption={
+                  <span className="text-sm">
+                    Everyone connected
+                    <span className="ml-2 text-[11px] text-muted-foreground">
+                      across all matches
+                    </span>
+                  </span>
+                }
+              />
+            </Card>
+          )}
+        </>
       )}
     </div>
   )
