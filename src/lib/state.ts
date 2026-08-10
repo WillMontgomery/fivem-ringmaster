@@ -167,6 +167,17 @@ export function liveView(now: number) {
   return {
     online: snap !== null,
     ageMs: snap ? now - state.receivedAt : null,
+
+    /**
+     * When the last push landed, as an absolute timestamp.
+     *
+     * `ageMs` is computed against whatever `now` the caller passed, which
+     * freezes the moment it is server-rendered. Handing out the origin instead
+     * lets a client component tick the age continuously — the same reasoning
+     * as `connectedAt` being a clock reading rather than a duration.
+     */
+    lastPushAt: snap ? state.receivedAt : null,
+
     bootEpoch: snap?.server.bootEpoch ?? null,
     counts: snap?.snapshot.counts ?? { connected: 0, inMatch: 0 },
     truncated: snap?.snapshot.truncated ?? false,

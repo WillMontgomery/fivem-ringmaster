@@ -59,19 +59,13 @@ export function ServerStrip({
   connected,
   inMatch,
   lobby,
-  capacity,
   matches,
 }: {
   connected: number
   inMatch: number
   lobby: number
-  capacity: number
   matches: MatchRow[]
 }) {
-  const pctMatch = capacity > 0 ? (inMatch / capacity) * 100 : 0
-  const pctLobby = capacity > 0 ? (lobby / capacity) * 100 : 0
-  const pctFull = capacity > 0 ? (connected / capacity) * 100 : 0
-
   return (
     <Card className="surface-edge animate-rise gap-0 overflow-hidden px-5 py-4">
       <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
@@ -108,36 +102,6 @@ export function ServerStrip({
         </div>
       </div>
 
-      {/* The population bar. Segments are in-match then lobby, against the
-          full slot count -- so the empty remainder is as informative as the
-          filled part. */}
-      <div className="mt-4">
-        <div className="flex h-2 w-full overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full bg-primary transition-[width] duration-700 ease-out"
-            style={{ width: `${pctMatch}%` }}
-          />
-          <div
-            className="h-full bg-idle/70 transition-[width] duration-700 ease-out"
-            style={{ width: `${pctLobby}%` }}
-          />
-        </div>
-        <div className="mt-1.5 flex items-center justify-between text-[10px] text-muted-foreground">
-          <span>
-            {Math.round(pctFull)}% of {capacity} slots
-          </span>
-          <span className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5">
-              <span className="size-1.5 rounded-full bg-primary" />
-              in match
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="size-1.5 rounded-full bg-idle/70" />
-              lobby
-            </span>
-          </span>
-        </div>
-      </div>
     </Card>
   )
 }

@@ -1,4 +1,7 @@
+'use client'
+
 import { Radio, WifiOff } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import {
   Tooltip,
@@ -8,16 +11,19 @@ import {
 import { cn } from '@/lib/utils'
 
 /**
- * How old the picture is, stated before anything drawn from it.
+ * How old the picture is — in the header, next to the other standing facts
+ * about the server.
  *
- * This is the most important element on the page and it is deliberately first.
- * Every number below it is a claim about *now*, and the failure mode of a live
- * console is not showing wrong data — it is showing correct data from four
- * minutes ago as though it were current. An operator who kicks the wrong
- * person because the list was stale was failed by this component.
+ * IT LIVES IN THE CHROME BECAUSE IT IS TRUE OF EVERY PAGE, not just the live
+ * board. A profile, an audit log and an incident queue are all drawn from the
+ * same feed, and "is the data arriving" is the question underneath all of
+ * them. It sat on the board as a full-width banner first, which put the most
+ * persistent fact on the page in the one place you scroll away from.
  *
- * So staleness is a colour and a sentence, never a timestamp the reader has to
- * subtract from the clock in their head.
+ * It still earns the attention it gets. The failure mode of a live console is
+ * not showing wrong data — it is showing correct data from four minutes ago as
+ * though it were current, and an operator who kicks the wrong person because
+ * the list was stale was failed by this component.
  */
 
 /** Beyond this the feed is late — the game pushes every 2s by default. */
@@ -41,111 +47,105 @@ function ago(ms: number): string {
   return `${m}m ${Math.floor((ms % 60_000) / 1_000)}s`
 }
 
-const TONE = {
+const TONE: Record<Tone, { chip: string; dot: string; label: string }> = {
   live: {
-    shell: 'border-live/25 bg-live/5',
-    text: 'text-live',
+    chip: 'bg-live/10 text-live ring-live/30',
     dot: 'bg-live',
-    glow: 'shadow-[0_0_12px_-2px_var(--live)]',
+    label: 'Live',
   },
   stale: {
-    shell: 'border-warn/35 bg-warn/5',
-    text: 'text-warn',
+    chip: 'bg-warn/10 text-warn ring-warn/30',
     dot: 'bg-warn',
-    glow: '',
+    label: 'Falling behind',
   },
   dead: {
-    shell: 'border-danger/40 bg-danger/8',
-    text: 'text-danger',
+    chip: 'bg-danger/10 text-danger ring-danger/30',
     dot: 'bg-danger',
-    glow: '',
+    label: 'Feed lost',
   },
   offline: {
-    shell: 'border-border bg-card/40',
-    text: 'text-muted-foreground',
+    chip: 'bg-muted/40 text-muted-foreground ring-border',
     dot: 'bg-idle',
-    glow: '',
+    label: 'No data',
   },
-} satisfies Record<Tone, Record<string, string>>
+}
 
 export function FeedStatus({
-  ageMs,
+  lastPushAt,
   bootEpoch,
+  now: initialNow,
   intervalMs = 2_000,
 }: {
-  ageMs: number | null
+  /** Absolute timestamp of the last push, so the age can tick. */
+  lastPushAt: number | null
   bootEpoch: string | null
+  /** Server-rendered clock, so first paint matches and hydration is clean. */
+  now: number
   intervalMs?: number
 }) {
+  const [now, setNow] = useState(initialNow)
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+
+  const ageMs = lastPushAt === null ? null : Math.max(0, now - lastPushAt)
   const tone = toneOf(ageMs)
   const t = TONE[tone]
 
-  const headline =
-    tone === 'offline'
-      ? 'No data received'
-      : tone === 'dead'
-        ? 'Feed lost'
-        : tone === 'stale'
-          ? 'Falling behind'
-          : 'Live'
-
-  const detail =
-    tone === 'offline'
-      ? 'br_ringmaster has not pushed yet'
-      : `last push ${ago(ageMs!)} ago · expected every ${(intervalMs / 1000).toFixed(0)}s`
-
   return (
-    <div
-      role="status"
-      aria-live="polite"
-      className={cn(
-        'surface-edge flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border px-4 py-3 transition-colors',
-        t.shell,
-      )}
-    >
-      <span className="relative flex size-2.5 shrink-0">
-        {tone === 'live' && (
+    <Tooltip>
+      <TooltipTrigger
+        render={
           <span
+            role="status"
+            aria-live="polite"
             className={cn(
-              'absolute inline-flex size-full animate-ping rounded-full opacity-70',
-              t.dot,
+              'inline-flex cursor-help items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium uppercase tracking-wider ring-1 ring-inset transition-colors',
+              t.chip,
             )}
           />
+        }
+      >
+        {tone === 'offline' ? (
+          <WifiOff className="size-3" />
+        ) : (
+          <Radio className="size-3" />
         )}
-        <span
-          className={cn('relative inline-flex size-2.5 rounded-full', t.dot, t.glow)}
-        />
-      </span>
+        {t.label}
+        {ageMs !== null && (
+          <span className="tabular-nums opacity-70">{ago(ageMs)}</span>
+        )}
+        {tone === 'live' && (
+          <span className="relative flex size-1.5">
+            <span className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-70', t.dot)} />
+            <span className={cn('relative inline-flex size-1.5 rounded-full', t.dot)} />
+          </span>
+        )}
+      </TooltipTrigger>
 
-      <div className="min-w-0 leading-tight">
-        <div className={cn('flex items-center gap-1.5 text-sm font-medium', t.text)}>
-          {tone === 'offline' ? (
-            <WifiOff className="size-3.5" />
-          ) : (
-            <Radio className="size-3.5" />
-          )}
-          {headline}
-        </div>
-        <div className="truncate text-[11px] text-muted-foreground">{detail}</div>
-      </div>
-
-      {bootEpoch && (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <code className="ml-auto shrink-0 rounded-md bg-background/60 px-2 py-1 font-mono text-[10px] text-muted-foreground/80 ring-1 ring-inset ring-border" />
-            }
-          >
-            {bootEpoch}
-          </TooltipTrigger>
-          <TooltipContent side="left" className="max-w-[19rem]">
-            The game server&rsquo;s boot epoch. It changes on every
-            <code className="mx-1 font-mono">restart br_ringmaster</code>, which
-            is how events from before a restart stay distinguishable from ones
-            after it.
-          </TooltipContent>
-        </Tooltip>
-      )}
-    </div>
+      <TooltipContent side="bottom" className="max-w-[21rem]">
+        {tone === 'offline' ? (
+          <span>
+            Nothing has been received from the game server. That is the correct
+            display when <code className="font-mono">br_ringmaster</code> is not
+            configured — not an error.
+          </span>
+        ) : (
+          <span>
+            Last push {ago(ageMs!)} ago; expected every{' '}
+            {(intervalMs / 1000).toFixed(0)}s.
+            {bootEpoch && (
+              <>
+                {' '}
+                Boot epoch <code className="font-mono">{bootEpoch}</code>, which
+                changes on every{' '}
+                <code className="font-mono">restart br_ringmaster</code>.
+              </>
+            )}
+          </span>
+        )}
+      </TooltipContent>
+    </Tooltip>
   )
 }

@@ -45,6 +45,7 @@ async function Preview({
   const base = {
     online: true,
     ageMs: 1_200,
+    lastPushAt: 0, // replaced per-view below; the chip needs an absolute stamp
     bootEpoch: env.server.bootEpoch,
     counts: env.snapshot.counts,
     truncated: env.snapshot.truncated,
@@ -70,6 +71,7 @@ async function Preview({
       ...base,
       online: false,
       ageMs: null,
+      lastPushAt: null,
       bootEpoch: null,
       counts: { connected: 0, inMatch: 0 },
       matches: [],
@@ -77,11 +79,21 @@ async function Preview({
     },
   }
 
+  const now = Date.now()
   const key = (state ?? 'live') as keyof typeof views
   const view = views[key] ?? views.live
 
   return (
-    <AppShell active="/" user={DEMO_USER} badges={DEMO_BADGES}>
+    <AppShell
+      active="/"
+      user={DEMO_USER}
+      badges={DEMO_BADGES}
+      feed={{
+        lastPushAt: view.ageMs === null ? null : now - view.ageMs,
+        bootEpoch: view.bootEpoch,
+        now,
+      }}
+    >
       <div className="mx-auto max-w-6xl">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
@@ -111,7 +123,7 @@ async function Preview({
           </nav>
         </div>
 
-        <LiveBoard view={view} now={Date.now()} />
+        <LiveBoard view={view} now={now} />
 
         <p className="mt-8 border-t border-border pt-4 text-[11px] text-muted-foreground/60">
           Design harness — rendered from{' '}

@@ -12,6 +12,8 @@ import {
   Users,
 } from 'lucide-react'
 
+import { FeedStatus } from '@/components/FeedStatus'
+import { ThemeToggle } from '@/components/ThemeToggle'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -177,11 +179,18 @@ export function AppShell({
   active = '/',
   user,
   badges = {},
+  feed,
 }: {
   children: React.ReactNode
   active?: string
   user?: { name: string; scopes: string[] } | null
   badges?: NavBadges
+  /**
+   * Feed status for the header chip. Omit on pages that draw nothing from the
+   * live feed — claiming "Live" above a wireframe would be a lie about data
+   * that page never asked for.
+   */
+  feed?: { lastPushAt: number | null; bootEpoch: string | null; now: number }
 }) {
   return (
     <div className="flex min-h-screen">
@@ -269,6 +278,13 @@ export function AppShell({
           </div>
 
           <div className="ml-auto flex items-center gap-2">
+            {feed && (
+              <FeedStatus
+                lastPushAt={feed.lastPushAt}
+                bootEpoch={feed.bootEpoch}
+                now={feed.now}
+              />
+            )}
             {badges.maintenance && (
               <Badge
                 variant="outline"
@@ -289,6 +305,7 @@ export function AppShell({
             >
               Slice 1 · read only
             </Badge>
+            <ThemeToggle />
           </div>
         </header>
 

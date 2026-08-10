@@ -3,7 +3,6 @@
 import { AlertTriangle, LayoutGrid, Rows3 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { FeedStatus } from '@/components/FeedStatus'
 import { MatchCard, squadColour } from '@/components/MatchCard'
 import { PlayerTable } from '@/components/PlayerTable'
 import { ServerStrip } from '@/components/ServerStrip'
@@ -28,18 +27,13 @@ type View = ReturnType<typeof liveView>
  * searchable by license, indifferent to which match anybody is in.
  */
 
-/** Free OneSync ceiling. Real value should come from the server's own config. */
-const DEFAULT_CAPACITY = 48
-
 export function LiveBoard({
   view,
   now: initialNow,
-  capacity = DEFAULT_CAPACITY,
 }: {
   view: View
   /** Server-rendered clock, so first paint matches. */
   now: number
-  capacity?: number
 }) {
   const [mode, setMode] = useState<'match' | 'all'>('match')
 
@@ -65,13 +59,10 @@ export function LiveBoard({
 
   return (
     <div className="space-y-4">
-      <FeedStatus ageMs={view.ageMs} bootEpoch={view.bootEpoch} />
-
       <ServerStrip
         connected={view.counts.connected}
         inMatch={view.counts.inMatch}
         lobby={lobby.length}
-        capacity={capacity}
         matches={view.matches}
       />
 

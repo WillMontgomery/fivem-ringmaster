@@ -7,25 +7,106 @@
 /*
  * Ringmaster's palette.
  *
- * DARK IS THE ONLY THEME, deliberately. This is an operations console read at
- * 2am next to a game client that is itself dark; a light mode would be a
- * second surface to maintain that nobody would ever open.
+ * LIGHT IS THE DEFAULT and dark is a toggle. An earlier version of this file
+ * shipped dark only, on the reasoning that a console read next to a dark game
+ * client should match it. That was the wrong call to make unilaterally: this
+ * gets read on a phone in daylight at least as often as at 2am, and a tool
+ * with one theme is a tool that is wrong half the time.
  *
- * The accent is violet because the storm circle is, and because "everything
- * else on this page is a status colour" — emerald alive, amber degraded, rose
- * dead — so the brand hue has to be one that never means anything operational.
- * A blue or green accent would compete with the states it sits next to.
+ * BOTH THEMES CARRY THE SAME MEANINGS, which is the part that actually matters.
+ * Every status colour is defined twice, tuned for contrast against its own
+ * background rather than reused — a green that reads correctly on near-black
+ * is far too pale on white, and a status colour nobody can see is worse than
+ * no colour at all. The hues stay put; only the lightness moves.
  *
- * Tailwind 4 and oklch here, unlike the gamemode's NUI, which is pinned to
- * Tailwind 3 because CEF is Chrome 103 and renders oklch colourless. That
- * constraint belongs to the game client and does not follow us into a real
- * browser.
+ * Violet is the accent because the storm circle is violet, and because every
+ * other colour here already means something operational: emerald alive, amber
+ * degraded, rose dead. An accent competing with those would be a bug.
+ *
+ * Tailwind 4 and oklch, unlike the gamemode's NUI, which is pinned to Tailwind
+ * 3 because CEF is Chrome 103 and renders oklch colourless. That constraint
+ * belongs to the game client and does not follow us into a real browser.
  */
+
 :root {
   --radius: 0.625rem;
 
-  /* Near-black with a trace of violet, so surfaces read as deliberate
-     rather than as "forgot to set a colour". */
+  --background: oklch(0.985 0.003 285);
+  --foreground: oklch(0.22 0.014 285);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.014 285);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.014 285);
+
+  --primary: oklch(0.52 0.20 295);
+  --primary-foreground: oklch(0.99 0.002 285);
+
+  --secondary: oklch(0.955 0.006 285);
+  --secondary-foreground: oklch(0.26 0.014 285);
+
+  --muted: oklch(0.955 0.006 285);
+  --muted-foreground: oklch(0.47 0.014 285);
+
+  --accent: oklch(0.94 0.018 295);
+  --accent-foreground: oklch(0.26 0.014 285);
+
+  --destructive: oklch(0.55 0.20 22);
+  --destructive-foreground: oklch(0.99 0.002 285);
+
+  --border: oklch(0.22 0.01 285 / 12%);
+  --input: oklch(0.22 0.01 285 / 16%);
+  --ring: oklch(0.52 0.20 295 / 45%);
+
+  --chart-1: oklch(0.52 0.20 295);
+  --chart-2: oklch(0.55 0.14 205);
+  --chart-3: oklch(0.55 0.14 150);
+  --chart-4: oklch(0.60 0.14 80);
+  --chart-5: oklch(0.55 0.20 22);
+
+  --sidebar: oklch(0.972 0.005 285);
+  --sidebar-foreground: oklch(0.28 0.014 285);
+  --sidebar-primary: oklch(0.52 0.20 295);
+  --sidebar-primary-foreground: oklch(0.99 0.002 285);
+  --sidebar-accent: oklch(0.925 0.016 295);
+  --sidebar-accent-foreground: oklch(0.24 0.014 285);
+  --sidebar-border: oklch(0.22 0.01 285 / 10%);
+  --sidebar-ring: oklch(0.52 0.20 295 / 45%);
+
+  /* Operational status, named by MEANING rather than hue — so a component says
+     `text-live`, and the day amber stops reading well it changes once. */
+  --live: oklch(0.55 0.15 155);
+  --warn: oklch(0.58 0.14 70);
+  --danger: oklch(0.55 0.20 22);
+  --idle: oklch(0.58 0.014 285);
+  --info: oklch(0.54 0.13 235);
+
+  /* Match phases, in the order a match moves through them. */
+  --phase-warmup: oklch(0.50 0.17 265);
+  --phase-bus: oklch(0.50 0.13 220);
+  --phase-drop: oklch(0.50 0.12 195);
+  --phase-storm: oklch(0.50 0.19 300);
+  --phase-ended: oklch(0.58 0.02 285);
+
+  /* Squad identity. Separated by hue rather than lightness so they survive
+     being a 3px stripe. */
+  --squad-1: oklch(0.55 0.18 25);
+  --squad-2: oklch(0.58 0.15 70);
+  --squad-3: oklch(0.55 0.15 115);
+  --squad-4: oklch(0.53 0.14 160);
+  --squad-5: oklch(0.53 0.13 205);
+  --squad-6: oklch(0.52 0.17 250);
+  --squad-7: oklch(0.52 0.19 300);
+  --squad-8: oklch(0.54 0.18 340);
+
+  /* Raised-surface treatment differs by theme: on light, a real shadow; on
+     dark, a hairline highlight. Same intent, opposite physics. */
+  --surface-shadow: 0 1px 2px oklch(0.22 0.02 285 / 6%), 0 1px 1px oklch(0.22 0.02 285 / 4%);
+  --page-wash-1: oklch(0.52 0.20 295 / 5%);
+  --page-wash-2: oklch(0.55 0.14 250 / 4%);
+}
+
+.dark {
   --background: oklch(0.145 0.012 285);
   --foreground: oklch(0.96 0.004 285);
 
@@ -53,8 +134,6 @@
   --input: oklch(1 0 0 / 13%);
   --ring: oklch(0.62 0.19 295 / 60%);
 
-  /* Charts: one hue ramp plus the status colours, so a telemetry graph and a
-     player badge never disagree about what amber means. */
   --chart-1: oklch(0.62 0.19 295);
   --chart-2: oklch(0.70 0.15 200);
   --chart-3: oklch(0.75 0.16 150);
@@ -70,46 +149,18 @@
   --sidebar-border: oklch(1 0 0 / 8%);
   --sidebar-ring: oklch(0.62 0.19 295 / 60%);
 
-  /*
-   * Operational status. Named by MEANING, not by colour, so a component says
-   * `text-live` rather than `text-emerald-400` — and the day amber stops
-   * reading well on a projector, it changes in one place instead of thirty.
-   */
   --live: oklch(0.78 0.17 155);
   --warn: oklch(0.83 0.16 85);
   --danger: oklch(0.68 0.20 20);
   --idle: oklch(0.62 0.012 285);
   --info: oklch(0.74 0.13 230);
 
-  /*
-   * MATCH PHASES get their own hues, and this is the main reason the page is
-   * not monochrome violet.
-   *
-   * A match moves through these in order, so the ramp moves through the
-   * spectrum in order too: an operator scanning six match cards can tell which
-   * are still boarding and which are in a closing circle without reading a
-   * word. Violet is reserved for STORM, which is what the colour means in the
-   * game — the accent is not decoration borrowed for chrome, it is the late
-   * game.
-   */
   --phase-warmup: oklch(0.74 0.15 265);
   --phase-bus: oklch(0.76 0.13 220);
   --phase-drop: oklch(0.78 0.14 195);
   --phase-storm: oklch(0.68 0.19 300);
   --phase-ended: oklch(0.60 0.02 285);
 
-  /*
-   * SQUAD COLOURS. Squads are identified far more often by colour than by
-   * number — that is how they read in-game, and how a person describes one out
-   * loud. Eight, because a 100-player lobby has 25 squads and reuse past eight
-   * is unavoidable; they are separated by hue rather than by lightness so they
-   * stay distinguishable at a 3px stripe.
-   *
-   * NOTE the roster already carries a `colour` field per player. When the game
-   * side starts sending it, these should be replaced by the real one rather
-   * than derived — two systems disagreeing about which squad is "the blue one"
-   * during an incident review is a genuinely bad outcome.
-   */
   --squad-1: oklch(0.72 0.16 25);
   --squad-2: oklch(0.78 0.15 70);
   --squad-3: oklch(0.80 0.15 115);
@@ -118,6 +169,10 @@
   --squad-6: oklch(0.72 0.15 250);
   --squad-7: oklch(0.70 0.17 300);
   --squad-8: oklch(0.72 0.16 340);
+
+  --surface-shadow: inset 0 1px 0 0 oklch(1 0 0 / 6%);
+  --page-wash-1: oklch(0.62 0.19 295 / 9%);
+  --page-wash-2: oklch(0.70 0.15 250 / 6%);
 }
 
 @theme inline {
@@ -168,10 +223,6 @@
   --color-phase-storm: var(--phase-storm);
   --color-phase-ended: var(--phase-ended);
 
-  --animate-rise: rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
-  --animate-slide-in: slide-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-  --animate-sweep: sweep 2.6s ease-in-out infinite;
-
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -179,6 +230,10 @@
 
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --animate-rise: rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-slide-in: slide-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-sweep: sweep 2.6s ease-in-out infinite;
 }
 
 @layer base {
@@ -188,30 +243,21 @@
 
   body {
     /* `font-sans` is not optional here: without it the theme's font tokens are
-       defined and never applied, and everything silently falls back to
-       system-ui. It looks almost right, which is why it is easy to miss. */
+       defined and never applied, and everything falls back to system-ui. It
+       looks almost right, which is why it is easy to miss. */
     @apply bg-background font-sans text-foreground antialiased;
 
-    /*
-     * Two very soft violet washes off the top corners. Enough to stop a large
-     * dark page reading as a flat void, faint enough that nothing on top of it
-     * loses contrast — this sits under text that people make bans from.
-     */
+    /* Two very soft washes off the top corners, so a large flat page does not
+       read as a void (dark) or as a blank sheet (light). Faint enough that
+       nothing on top loses contrast — this sits under text people issue bans
+       from. */
     background-image:
-      radial-gradient(
-        60rem 40rem at 15% -10%,
-        oklch(0.62 0.19 295 / 9%),
-        transparent 60%
-      ),
-      radial-gradient(
-        50rem 35rem at 95% 0%,
-        oklch(0.70 0.15 250 / 6%),
-        transparent 55%
-      );
+      radial-gradient(60rem 40rem at 15% -10%, var(--page-wash-1), transparent 60%),
+      radial-gradient(50rem 35rem at 95% 0%, var(--page-wash-2), transparent 55%);
     background-attachment: fixed;
   }
 
-  /* Tabular figures everywhere a number changes in place. A player count that
+  /* Tabular figures wherever a number changes in place. A player count that
      shifts width every tick is the visual equivalent of a rattle. */
   .tnum,
   table td,
@@ -221,78 +267,50 @@
 }
 
 @layer utilities {
-  /* Hairline top highlight — the cheapest way to make a dark card read as a
-     raised surface rather than a hole. */
   .surface-edge {
-    box-shadow: inset 0 1px 0 0 oklch(1 0 0 / 6%);
+    box-shadow: var(--surface-shadow);
   }
 
   /*
    * Motion.
    *
-   * The rule everything here follows: MOVEMENT MEANS SOMETHING ARRIVED OR
-   * CHANGED. Nothing loops, nothing floats, nothing draws attention to itself
-   * on a page that is refreshed every two seconds — an operator watching a
-   * live board for an hour would be driven mad by decoration, and worse, real
-   * motion (a health bar dropping, a squad going quiet) would stop standing
-   * out against the noise.
+   * MOVEMENT MEANS SOMETHING ARRIVED OR CHANGED. Nothing loops, nothing floats,
+   * nothing draws attention to itself on a page refreshed every two seconds —
+   * an operator watching a live board for an hour would be driven mad by
+   * decoration, and worse, real motion (a health bar dropping, a squad going
+   * quiet) would stop standing out against the noise.
    *
-   * The one exception is the live pulse, which is not decoration: it is the
-   * only thing on screen saying the data is still arriving.
+   * The exceptions are the live pulse, which is the only thing on screen
+   * saying data is still arriving, and the sweep on the waiting-for-data card,
+   * without which "connecting" and "broken" look identical.
    */
   @keyframes rise {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
   }
 
   @keyframes slide-in {
-    from {
-      opacity: 0;
-      transform: translateX(-6px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
+    from { opacity: 0; transform: translateX(-6px); }
+    to { opacity: 1; transform: translateX(0); }
   }
 
-  /* A slow highlight travelling across a surface — used only on the "waiting
-     for data" card, where it is the difference between "connecting" and
-     "broken". */
   @keyframes sweep {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(200%);
-    }
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(200%); }
   }
 
-  .animate-rise {
-    animation: var(--animate-rise);
-  }
-
-  .animate-slide-in {
-    animation: var(--animate-slide-in);
-  }
+  .animate-rise { animation: var(--animate-rise); }
+  .animate-slide-in { animation: var(--animate-slide-in); }
 
   /*
-   * Stagger. Entrance animations fire in reading order rather than all at
-   * once, which makes a dense board resolve instead of flashing.
+   * Stagger. Entrance animations fire in reading order rather than all at once,
+   * which makes a dense board resolve instead of flash.
    *
    * Capped hard: a hundred-player list must not spend three seconds arriving,
    * so anything past the tenth child appears immediately. A stagger that scales
-   * with row count is a stagger that becomes a loading screen.
+   * with row count is a loading screen.
    */
-  .stagger > * {
-    animation: var(--animate-rise);
-  }
+  .stagger > * { animation: var(--animate-rise); }
   .stagger > *:nth-child(1) { animation-delay: 0ms; }
   .stagger > *:nth-child(2) { animation-delay: 40ms; }
   .stagger > *:nth-child(3) { animation-delay: 80ms; }
@@ -306,8 +324,8 @@
 
 /*
  * Anyone who has asked their operating system to stop moving things gets a
- * board that does not move. This is not a nicety on a tool used during an
- * incident: vestibular triggers do not care that the animation was tasteful.
+ * board that does not move. Not a nicety on a tool used during an incident:
+ * vestibular triggers do not care that the animation was tasteful.
  */
 @media (prefers-reduced-motion: reduce) {
   *,

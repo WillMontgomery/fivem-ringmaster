@@ -24,7 +24,8 @@ export default async function LivePlayersPage() {
   const session = await auth()
   if (!session?.user) redirect('/login')
 
-  const view = liveView(Date.now())
+  const now = Date.now()
+  const view = liveView(now)
 
   return (
     <AppShell
@@ -35,6 +36,7 @@ export default async function LivePlayersPage() {
         // says what is true rather than inventing a role.
         scopes: [],
       }}
+      feed={{ lastPushAt: view.lastPushAt, bootEpoch: view.bootEpoch, now }}
     >
       <div className="mx-auto max-w-6xl">
         <div className="mb-5">
@@ -44,7 +46,7 @@ export default async function LivePlayersPage() {
           </p>
         </div>
 
-        <LiveBoard view={view} now={Date.now()} />
+        <LiveBoard view={view} now={now} />
       </div>
     </AppShell>
   )
