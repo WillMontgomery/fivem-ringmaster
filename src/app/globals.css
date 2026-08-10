@@ -80,6 +80,44 @@
   --danger: oklch(0.68 0.20 20);
   --idle: oklch(0.62 0.012 285);
   --info: oklch(0.74 0.13 230);
+
+  /*
+   * MATCH PHASES get their own hues, and this is the main reason the page is
+   * not monochrome violet.
+   *
+   * A match moves through these in order, so the ramp moves through the
+   * spectrum in order too: an operator scanning six match cards can tell which
+   * are still boarding and which are in a closing circle without reading a
+   * word. Violet is reserved for STORM, which is what the colour means in the
+   * game — the accent is not decoration borrowed for chrome, it is the late
+   * game.
+   */
+  --phase-warmup: oklch(0.74 0.15 265);
+  --phase-bus: oklch(0.76 0.13 220);
+  --phase-drop: oklch(0.78 0.14 195);
+  --phase-storm: oklch(0.68 0.19 300);
+  --phase-ended: oklch(0.60 0.02 285);
+
+  /*
+   * SQUAD COLOURS. Squads are identified far more often by colour than by
+   * number — that is how they read in-game, and how a person describes one out
+   * loud. Eight, because a 100-player lobby has 25 squads and reuse past eight
+   * is unavoidable; they are separated by hue rather than by lightness so they
+   * stay distinguishable at a 3px stripe.
+   *
+   * NOTE the roster already carries a `colour` field per player. When the game
+   * side starts sending it, these should be replaced by the real one rather
+   * than derived — two systems disagreeing about which squad is "the blue one"
+   * during an incident review is a genuinely bad outcome.
+   */
+  --squad-1: oklch(0.72 0.16 25);
+  --squad-2: oklch(0.78 0.15 70);
+  --squad-3: oklch(0.80 0.15 115);
+  --squad-4: oklch(0.76 0.15 160);
+  --squad-5: oklch(0.76 0.13 205);
+  --squad-6: oklch(0.72 0.15 250);
+  --squad-7: oklch(0.70 0.17 300);
+  --squad-8: oklch(0.72 0.16 340);
 }
 
 @theme inline {
@@ -123,6 +161,16 @@
   --color-danger: var(--danger);
   --color-idle: var(--idle);
   --color-info: var(--info);
+
+  --color-phase-warmup: var(--phase-warmup);
+  --color-phase-bus: var(--phase-bus);
+  --color-phase-drop: var(--phase-drop);
+  --color-phase-storm: var(--phase-storm);
+  --color-phase-ended: var(--phase-ended);
+
+  --animate-rise: rise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-slide-in: slide-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-sweep: sweep 2.6s ease-in-out infinite;
 
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
@@ -177,5 +225,96 @@
      raised surface rather than a hole. */
   .surface-edge {
     box-shadow: inset 0 1px 0 0 oklch(1 0 0 / 6%);
+  }
+
+  /*
+   * Motion.
+   *
+   * The rule everything here follows: MOVEMENT MEANS SOMETHING ARRIVED OR
+   * CHANGED. Nothing loops, nothing floats, nothing draws attention to itself
+   * on a page that is refreshed every two seconds — an operator watching a
+   * live board for an hour would be driven mad by decoration, and worse, real
+   * motion (a health bar dropping, a squad going quiet) would stop standing
+   * out against the noise.
+   *
+   * The one exception is the live pulse, which is not decoration: it is the
+   * only thing on screen saying the data is still arriving.
+   */
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+      transform: translateX(-6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  /* A slow highlight travelling across a surface — used only on the "waiting
+     for data" card, where it is the difference between "connecting" and
+     "broken". */
+  @keyframes sweep {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(200%);
+    }
+  }
+
+  .animate-rise {
+    animation: var(--animate-rise);
+  }
+
+  .animate-slide-in {
+    animation: var(--animate-slide-in);
+  }
+
+  /*
+   * Stagger. Entrance animations fire in reading order rather than all at
+   * once, which makes a dense board resolve instead of flashing.
+   *
+   * Capped hard: a hundred-player list must not spend three seconds arriving,
+   * so anything past the tenth child appears immediately. A stagger that scales
+   * with row count is a stagger that becomes a loading screen.
+   */
+  .stagger > * {
+    animation: var(--animate-rise);
+  }
+  .stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .stagger > *:nth-child(6) { animation-delay: 200ms; }
+  .stagger > *:nth-child(7) { animation-delay: 240ms; }
+  .stagger > *:nth-child(8) { animation-delay: 280ms; }
+  .stagger > *:nth-child(n + 9) { animation-delay: 300ms; }
+}
+
+/*
+ * Anyone who has asked their operating system to stop moving things gets a
+ * board that does not move. This is not a nicety on a tool used during an
+ * incident: vestibular triggers do not care that the animation was tasteful.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

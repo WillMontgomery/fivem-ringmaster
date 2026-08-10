@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils'
 interface NavItem {
   href: string
   label: string
-  icon: React.ComponentType<{ className?: string }>
+  icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   /** Absent when the item is live. Present = why it is not, in a tooltip. */
   soon?: string
 }
@@ -67,7 +67,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   const Icon = item.icon
 
   const base =
-    'group flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors'
+    'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-all duration-200'
 
   if (item.soon) {
     return (
@@ -209,7 +209,7 @@ export function AppShell({
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 px-5 py-6">{children}</main>
+        <main className="min-w-0 flex-1 animate-rise px-5 py-6">{children}</main>
       </div>
     </div>
   )

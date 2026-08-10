@@ -65,13 +65,19 @@ function Vitals({ hp, armour }: { hp: number; armour: number }) {
   return (
     <div className="flex items-center gap-2">
       <div className="relative h-1.5 w-24 overflow-hidden rounded-full bg-muted">
+        {/* Width transitions rather than jumping. Between two-second pushes
+            that reads as someone taking damage, which is information; an
+            instant jump reads as a glitch. */}
         <div
-          className={cn('absolute inset-y-0 left-0 rounded-full', tone)}
+          className={cn(
+            'absolute inset-y-0 left-0 rounded-full transition-[width,background-color] duration-500 ease-out',
+            tone,
+          )}
           style={{ width: `${h}%` }}
         />
         {a > 0 && (
           <div
-            className="absolute inset-y-0 left-0 rounded-full bg-info/70"
+            className="absolute inset-y-0 left-0 rounded-full bg-info/80 transition-[width] duration-500 ease-out"
             style={{ width: `${Math.min(100, a)}%`, height: '3px' }}
           />
         )}
@@ -123,12 +129,28 @@ function License({ value }: { value: string }) {
   )
 }
 
-export function PlayerRowView({ p }: { p: Player }) {
+export function PlayerRowView({
+  p,
+  accent,
+}: {
+  p: Player
+  /** The squad's colour, when this row belongs to one. */
+  accent?: string
+}) {
   const dim = p.state === 'DEAD' || p.state === 'LOBBY'
 
   return (
-    <TableRow className="border-border/60 hover:bg-muted/30">
-      <TableCell className="py-2">
+    <TableRow className="group/row relative border-border/60 transition-colors duration-150 hover:bg-muted/30">
+      <TableCell className="relative py-2">
+        {/* The squad spine, continued down each member and brightened on
+            hover — so pointing at one player shows you their squad. */}
+        {accent && (
+          <span
+            aria-hidden
+            className="absolute inset-y-0 left-0 w-[3px] opacity-40 transition-opacity duration-150 group-hover/row:opacity-100"
+            style={{ background: accent }}
+          />
+        )}
         <div className={cn('text-sm', dim ? 'text-muted-foreground' : 'text-foreground')}>
           {p.name}
         </div>

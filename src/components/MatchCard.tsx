@@ -23,12 +23,52 @@ import { cn } from '@/lib/utils'
  * usually why you were looking.
  */
 
-const PHASE: Record<string, string> = {
-  WARMUP: 'text-primary ring-primary/25 bg-primary/10',
-  BUS: 'text-primary ring-primary/25 bg-primary/10',
-  DROP: 'text-info ring-info/25 bg-info/10',
-  STORM: 'text-chart-1 ring-chart-1/30 bg-chart-1/10',
-  ENDED: 'text-muted-foreground ring-border bg-muted/40',
+/**
+ * A phase's colour, and the whole reason this page is not monochrome.
+ *
+ * The ramp follows the order a match actually moves through, so six cards can
+ * be scanned for "which is nearly over" without reading a word. Violet is
+ * STORM specifically, because that is what the colour means in the game.
+ */
+const PHASE: Record<string, { chip: string; bar: string }> = {
+  WARMUP: {
+    chip: 'text-phase-warmup ring-phase-warmup/30 bg-phase-warmup/10',
+    bar: 'bg-phase-warmup',
+  },
+  BUS: {
+    chip: 'text-phase-bus ring-phase-bus/30 bg-phase-bus/10',
+    bar: 'bg-phase-bus',
+  },
+  DROP: {
+    chip: 'text-phase-drop ring-phase-drop/30 bg-phase-drop/10',
+    bar: 'bg-phase-drop',
+  },
+  STORM: {
+    chip: 'text-phase-storm ring-phase-storm/30 bg-phase-storm/10',
+    bar: 'bg-phase-storm',
+  },
+  ENDED: {
+    chip: 'text-phase-ended ring-border bg-muted/40',
+    bar: 'bg-phase-ended',
+  },
+}
+
+/**
+ * A squad's colour.
+ *
+ * Squads are identified by colour far more often than by number — that is how
+ * they read in game and how a person describes one out loud. Derived from the
+ * id so it is stable across renders and across reloads.
+ *
+ * TEMPORARY: the roster already carries a real `colour` per player. When the
+ * game side starts sending it, this must be replaced rather than kept
+ * alongside — two systems disagreeing about which squad is "the blue one"
+ * during an incident review is a genuinely bad outcome.
+ */
+const SQUAD_HUES = 8
+function squadColour(squadId: number | null): string {
+  if (squadId === null) return 'var(--idle)'
+  return `var(--squad-${(Math.abs(squadId) % SQUAD_HUES) + 1})`
 }
 
 /** Deterministic grouping — never iterate a hash and hope. */
@@ -66,9 +106,14 @@ export function MatchCard({
   players: Player[]
 }) {
   const groups = bySquad(players)
+  const phase = PHASE[match.state] ?? PHASE.ENDED!
 
   return (
-    <Card className="surface-edge gap-0 overflow-hidden py-0">
+    <Card className="surface-edge animate-rise gap-0 overflow-hidden py-0 transition-shadow duration-300 hover:shadow-lg hover:shadow-black/20">
+      {/* A phase-coloured rule across the top: the card's identity readable
+          from the corner of the eye, before any text is parsed. */}
+      <div className={cn('h-0.5 w-full', phase.bar)} />
+
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-card/60 px-4 py-3">
         <div className="flex items-center gap-2.5">
           <span className="font-mono text-sm text-muted-foreground">
@@ -78,7 +123,7 @@ export function MatchCard({
             variant="outline"
             className={cn(
               'rounded-md border-0 text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset',
-              PHASE[match.state] ?? PHASE.ENDED,
+              phase.chip,
             )}
           >
             {match.state}
@@ -124,29 +169,42 @@ export function MatchCard({
 
         {groups.map(([squadId, members]) => {
           const alive = members.filter((m) => m.state === 'ALIVE').length
+          const colour = squadColour(squadId)
+          const wiped = alive === 0
+
           return (
             <TableBody key={squadId ?? 'none'}>
               <TableRow className="border-border/60 hover:bg-transparent">
                 <td
                   colSpan={7}
-                  className="bg-background/40 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                  className="relative bg-background/40 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
                 >
+                  {/* The squad's colour as a spine down the left edge. Reads as
+                      grouping without a border box, and survives being glanced
+                      at from across a desk. */}
+                  <span
+                    aria-hidden
+                    className="absolute inset-y-0 left-0 w-[3px]"
+                    style={{ background: colour }}
+                  />
                   <span className="inline-flex items-center gap-1.5">
-                    <Users className="size-3" />
-                    {squadId === null ? 'No squad' : `Squad ${squadId}`}
+                    <Users className="size-3" style={{ color: colour }} />
+                    <span style={{ color: colour }}>
+                      {squadId === null ? 'No squad' : `Squad ${squadId}`}
+                    </span>
                   </span>
                   <span
                     className={cn(
                       'ml-2 font-normal normal-case tracking-normal',
-                      alive === 0 ? 'text-danger/70' : 'text-muted-foreground/60',
+                      wiped ? 'text-danger/80' : 'text-muted-foreground/60',
                     )}
                   >
-                    {alive} of {members.length} alive
+                    {wiped ? 'wiped' : `${alive} of ${members.length} alive`}
                   </span>
                 </td>
               </TableRow>
               {members.map((p) => (
-                <PlayerRowView key={p.src} p={p} />
+                <PlayerRowView key={p.src} p={p} accent={colour} />
               ))}
             </TableBody>
           )
