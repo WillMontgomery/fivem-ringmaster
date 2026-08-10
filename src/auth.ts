@@ -17,7 +17,19 @@ import { env } from './lib/env'
  * `grant` scope's revoke button does not actually revoke anything for up to the
  * token lifetime. An admin being removed has to take effect *now*.
  */
-export const { handlers, auth, signIn, signOut } = NextAuth({
+/**
+ * The config is a FUNCTION, not an object literal, and that is a build
+ * requirement rather than a style choice.
+ *
+ * Auth.js evaluates it per request. An object literal is evaluated at module
+ * load -- and `next build` imports every module to collect page data, so the
+ * build itself would demand a complete production environment and could only
+ * run on an already-configured host.
+ *
+ * Deferring it keeps the useful half of env()'s strictness: a missing variable
+ * still fails loudly, naming itself, at the first request instead of at build.
+ */
+export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
   adapter: DynamoDBAdapter(ddb, { tableName: tables.sessions }),
 
   session: { strategy: 'database' },
@@ -81,7 +93,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
 
   // Auth.js reads AUTH_SECRET and AUTH_URL from the environment on its own;
-  // env() is called here purely so a missing one fails at boot with a message
-  // naming it, rather than at the first login attempt.
+  // env() is called here purely so a missing one fails with a message naming
+  // it, rather than as an OAuth redirect dead-ending on a blank page.
   secret: env().AUTH_SECRET,
-})
+}))

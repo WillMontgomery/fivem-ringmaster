@@ -34,9 +34,34 @@ function create(): DynamoDBDocument {
   })
 }
 
-export const ddb: DynamoDBDocument = globalForDdb.ddb ?? create()
-
-if (env().NODE_ENV !== 'production') globalForDdb.ddb = ddb
+/**
+ * Constructed on first use, not on import — and this is a build requirement,
+ * not a micro-optimisation.
+ *
+ * `create()` reads env(), which throws when a variable is missing. That is
+ * correct at runtime: a misconfigured host should fail loudly, naming the
+ * variable. But `next build` imports every module to collect page data, so
+ * constructing here meant the BUILD demanded a complete production
+ * environment — a real Discord secret, a real signing key — and could only run
+ * on an already-configured host. CI has no secrets by design, so CI could
+ * never build this app.
+ *
+ * The proxy defers construction to the first property access. Callers see an
+ * ordinary DynamoDBDocument and nothing downstream changes.
+ *
+ * TESTED BY MOVING `.env.local` OUT OF THE WAY, which is the part I got wrong
+ * the first time: Next loads `.env.local` from disk automatically, so
+ * unsetting shell variables proves nothing at all. That bad test is why this
+ * fix was written, reverted as unnecessary, and then written again after the
+ * build failed on a real box.
+ */
+export const ddb: DynamoDBDocument = new Proxy({} as DynamoDBDocument, {
+  get(_target, prop, receiver) {
+    const real = (globalForDdb.ddb ??= create())
+    const value = Reflect.get(real, prop, receiver)
+    return typeof value === 'function' ? value.bind(real) : value
+  },
+})
 
 /**
  * Table names, all derived from one prefix so a second environment (a staging

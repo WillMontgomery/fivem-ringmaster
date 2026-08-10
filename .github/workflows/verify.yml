@@ -39,16 +39,17 @@ jobs:
 
       - run: npm run typecheck
 
-      # No environment is supplied, and the build is expected to succeed
-      # anyway. That is a property worth locking in: a build that needs
-      # production secrets can only ever run on a production host, and this
-      # repo has no secrets by design.
+      # NO ENVIRONMENT IS SUPPLIED, AND THIS IS THE GATE THAT PROVES IT WORKS.
       #
-      # Stated as an observation rather than a guarantee, because it was
-      # checked rather than assumed: `env()` IS called at module scope in
-      # dynamo.ts and auth.ts, and the build tolerates it — Next does not
-      # evaluate those modules during route tracing. If that ever changes, or
-      # a module-scope read lands somewhere Next does evaluate, this step is
-      # where it surfaces. It is not a gate against that specific mistake;
-      # tested, and it does not catch one.
+      # `next build` imports every module to collect page data, so anything
+      # reading env() at module scope makes the build demand a complete
+      # production environment — a real Discord secret, a real signing key —
+      # and it can then only run on an already-configured host. CI has no
+      # secrets by design, so CI could never build it.
+      #
+      # This step failed on a real box for exactly that reason after the fix
+      # was reverted as unnecessary. It was "unnecessary" because the local
+      # test that cleared it was wrong: Next loads `.env.local` from disk
+      # automatically, so unsetting shell variables proved nothing. CI has no
+      # such file, which is what makes this the honest check.
       - run: npx next build

@@ -50,14 +50,14 @@ git clone https://github.com/WillMontgomery/fivem-ringmaster.git /opt/ringmaster
 ```
 
 ```bash
-cd /opt/ringmaster && npm ci && npm run build
+cd /opt/ringmaster && npm ci
 ```
 
 `npm ci` rather than `npm install`: it installs exactly what `package-lock.json`
 pins and fails if the lockfile and `package.json` disagree, instead of quietly
 resolving something newer than what was tested.
 
-### Environment
+### Environment, before building
 
 ```bash
 cp .env.example .env.local && nano .env.local
@@ -74,6 +74,17 @@ chmod 600 .env.local
 This file holds the Discord secret, the session signing key and the ingest
 secret. It is gitignored, and the secret-scanning gate would fail the build if
 it ever were not.
+
+> **The build does not require these**, deliberately — nothing reads the
+> environment at module load, so CI can build with no secrets at all. Set them
+> first anyway: the app needs them the moment it serves a request, and finding
+> that out at `systemctl status` is worse than finding it out now.
+
+### Build
+
+```bash
+npm run build
+```
 
 ---
 
