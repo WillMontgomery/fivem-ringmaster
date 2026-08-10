@@ -1,3 +1,181 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Ringmaster's palette.
+ *
+ * DARK IS THE ONLY THEME, deliberately. This is an operations console read at
+ * 2am next to a game client that is itself dark; a light mode would be a
+ * second surface to maintain that nobody would ever open.
+ *
+ * The accent is violet because the storm circle is, and because "everything
+ * else on this page is a status colour" — emerald alive, amber degraded, rose
+ * dead — so the brand hue has to be one that never means anything operational.
+ * A blue or green accent would compete with the states it sits next to.
+ *
+ * Tailwind 4 and oklch here, unlike the gamemode's NUI, which is pinned to
+ * Tailwind 3 because CEF is Chrome 103 and renders oklch colourless. That
+ * constraint belongs to the game client and does not follow us into a real
+ * browser.
+ */
+:root {
+  --radius: 0.625rem;
+
+  /* Near-black with a trace of violet, so surfaces read as deliberate
+     rather than as "forgot to set a colour". */
+  --background: oklch(0.145 0.012 285);
+  --foreground: oklch(0.96 0.004 285);
+
+  --card: oklch(0.185 0.013 285);
+  --card-foreground: oklch(0.96 0.004 285);
+  --popover: oklch(0.185 0.013 285);
+  --popover-foreground: oklch(0.96 0.004 285);
+
+  --primary: oklch(0.62 0.19 295);
+  --primary-foreground: oklch(0.99 0.002 285);
+
+  --secondary: oklch(0.245 0.014 285);
+  --secondary-foreground: oklch(0.96 0.004 285);
+
+  --muted: oklch(0.245 0.014 285);
+  --muted-foreground: oklch(0.68 0.012 285);
+
+  --accent: oklch(0.28 0.03 295);
+  --accent-foreground: oklch(0.97 0.004 285);
+
+  --destructive: oklch(0.62 0.21 20);
+  --destructive-foreground: oklch(0.99 0.002 285);
+
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 13%);
+  --ring: oklch(0.62 0.19 295 / 60%);
+
+  /* Charts: one hue ramp plus the status colours, so a telemetry graph and a
+     player badge never disagree about what amber means. */
+  --chart-1: oklch(0.62 0.19 295);
+  --chart-2: oklch(0.70 0.15 200);
+  --chart-3: oklch(0.75 0.16 150);
+  --chart-4: oklch(0.80 0.15 85);
+  --chart-5: oklch(0.65 0.20 20);
+
+  --sidebar: oklch(0.165 0.013 285);
+  --sidebar-foreground: oklch(0.92 0.005 285);
+  --sidebar-primary: oklch(0.62 0.19 295);
+  --sidebar-primary-foreground: oklch(0.99 0.002 285);
+  --sidebar-accent: oklch(0.245 0.016 285);
+  --sidebar-accent-foreground: oklch(0.97 0.004 285);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.62 0.19 295 / 60%);
+
+  /*
+   * Operational status. Named by MEANING, not by colour, so a component says
+   * `text-live` rather than `text-emerald-400` — and the day amber stops
+   * reading well on a projector, it changes in one place instead of thirty.
+   */
+  --live: oklch(0.78 0.17 155);
+  --warn: oklch(0.83 0.16 85);
+  --danger: oklch(0.68 0.20 20);
+  --idle: oklch(0.62 0.012 285);
+  --info: oklch(0.74 0.13 230);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-live: var(--live);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-idle: var(--idle);
+  --color-info: var(--info);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    /* `font-sans` is not optional here: without it the theme's font tokens are
+       defined and never applied, and everything silently falls back to
+       system-ui. It looks almost right, which is why it is easy to miss. */
+    @apply bg-background font-sans text-foreground antialiased;
+
+    /*
+     * Two very soft violet washes off the top corners. Enough to stop a large
+     * dark page reading as a flat void, faint enough that nothing on top of it
+     * loses contrast — this sits under text that people make bans from.
+     */
+    background-image:
+      radial-gradient(
+        60rem 40rem at 15% -10%,
+        oklch(0.62 0.19 295 / 9%),
+        transparent 60%
+      ),
+      radial-gradient(
+        50rem 35rem at 95% 0%,
+        oklch(0.70 0.15 250 / 6%),
+        transparent 55%
+      );
+    background-attachment: fixed;
+  }
+
+  /* Tabular figures everywhere a number changes in place. A player count that
+     shifts width every tick is the visual equivalent of a rattle. */
+  .tnum,
+  table td,
+  table th {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Hairline top highlight — the cheapest way to make a dark card read as a
+     raised surface rather than a hole. */
+  .surface-edge {
+    box-shadow: inset 0 1px 0 0 oklch(1 0 0 / 6%);
+  }
+}

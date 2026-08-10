@@ -1,31 +1,51 @@
+import { redirect } from 'next/navigation'
+
+import { AppShell } from '@/components/AppShell'
+import { LiveBoard } from '@/components/LiveBoard'
 import { auth } from '@/auth'
+import { liveView } from '@/lib/state'
 
 /**
- * M0 placeholder. The real dashboard arrives in M2 ("Observe"), once there is
- * a live player list to show. Until then this exists to prove the stack boots
- * and that auth resolves.
+ * Live players — the Slice 1 view.
+ *
+ * THE `auth()` CALL HERE IS THE ACTUAL BOUNDARY. The middleware only sniffs
+ * for a session cookie, because it runs on the edge runtime where the DynamoDB
+ * adapter cannot; it can be fooled by any cookie of the right name. This runs
+ * server-side against the session record, which is what makes revoking an
+ * admin take effect immediately rather than whenever a token would have
+ * expired.
+ *
+ * Scope checks are per action and land with the first write path in Slice 2.
+ * Everything on this page is read-only, so holding a valid session is the
+ * whole requirement for now — but the shape is deliberately "check here",
+ * not "the middleware handled it".
  */
-export default async function Home() {
+export default async function LivePlayersPage() {
   const session = await auth()
+  if (!session?.user) redirect('/login')
+
+  const view = liveView(Date.now())
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-16">
-      <h1 className="text-2xl font-semibold">Ringmaster</h1>
-      <p className="mt-2 text-slate-400">
-        Admin console for FiveM Royale.
-      </p>
+    <AppShell
+      active="/"
+      user={{
+        name: session.user.name ?? 'Unknown',
+        // Real scopes arrive with the Discord→license mapping. Until then this
+        // says what is true rather than inventing a role.
+        scopes: [],
+      }}
+    >
+      <div className="mx-auto max-w-6xl">
+        <div className="mb-5">
+          <h1 className="text-xl font-semibold tracking-tight">Live players</h1>
+          <p className="text-[13px] text-muted-foreground">
+            Everyone on the server right now, by match and squad.
+          </p>
+        </div>
 
-      <div className="mt-8 rounded-lg border border-slate-800 bg-slate-900/60 p-5">
-        <p className="text-sm text-slate-400">
-          {session?.user
-            ? `Signed in as ${session.user.name ?? session.user.id}`
-            : 'Not signed in.'}
-        </p>
+        <LiveBoard view={view} />
       </div>
-
-      <p className="mt-8 text-xs text-slate-500">
-        M0 — foundations. Views land from M2 onward.
-      </p>
-    </main>
+    </AppShell>
   )
 }

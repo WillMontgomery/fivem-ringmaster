@@ -1,16 +1,53 @@
+import { NextResponse, type NextRequest } from 'next/server'
+
 /**
- * Require a session for everything the matcher covers.
+ * Bounce obviously-signed-out requests to the login page.
  *
- * THIS IS A CONVENIENCE, NOT THE BOUNDARY, and the distinction matters enough
- * to state before anyone leans on it. Middleware answers "is someone signed
- * in", which is not the same question as "may this person do this" — that one
- * is answered per action, server-side, by lib/grants.ts, in the route that
- * acts. A signed-in stranger with no grants gets past this file and no further.
+ * THIS IS A FAST PATH, NOT THE BOUNDARY, and the distinction is load-bearing
+ * rather than pedantic. All this does is look for a session cookie. It does
+ * not validate it, does not look up the session record, and does not know
+ * anything about scopes — a forged cookie sails straight through.
  *
- * Same principle as the gamemode: the client asks, the server decides. A
- * middleware check is the equivalent of hiding a button.
+ * The real check is `auth()` in the page or route, followed by
+ * `requireScope()` per action. Those run server-side against the session
+ * record in DynamoDB, which is what makes revocation immediate.
+ *
+ * WHY IT CANNOT DO MORE. Auth.js is configured with a *database* adapter, and
+ * middleware runs on the edge runtime where the AWS SDK does not. Calling
+ * `auth()` here would either fail to build or silently degrade. The first
+ * version of this file was `export { auth as default }`, which typechecks,
+ * deploys, and does nothing at all — verified against a production build,
+ * where an unauthenticated request to `/` returned 200 rather than a redirect.
+ * A guard that does nothing is worse than no guard, because everything behind
+ * it gets written as though it were protected.
  */
-export { auth as default } from '@/auth'
+
+/**
+ * Auth.js's cookie, both spellings. The `__Secure-` prefix is used whenever
+ * the app is served over HTTPS, which is every deployment and no dev machine.
+ */
+const SESSION_COOKIES = [
+  'authjs.session-token',
+  '__Secure-authjs.session-token',
+]
+
+export default function middleware(req: NextRequest) {
+  const signedIn = SESSION_COOKIES.some((c) => req.cookies.has(c))
+  if (signedIn) return NextResponse.next()
+
+  const url = new URL('/login', req.nextUrl.origin)
+
+  // Where to come back to. Passed as a search param and handed to Auth.js,
+  // which validates it against the configured origin — never interpolated
+  // into markup or used for a redirect directly, because an open redirect on
+  // a login page is how a convincing phishing link gets built from a real
+  // domain.
+  if (req.nextUrl.pathname !== '/') {
+    url.searchParams.set('callbackUrl', req.nextUrl.pathname)
+  }
+
+  return NextResponse.redirect(url)
+}
 
 export const config = {
   /**
@@ -18,16 +55,16 @@ export const config = {
    *
    * `/api/ingest` IS EXCLUDED ON PURPOSE and it is the one that would break
    * silently. The game server pushes there with a shared secret over the VPC
-   * peering link — it has no session and never will. Letting the session
-   * middleware near it would bounce every push to a login page, and the game
-   * side would read that redirect as a delivery failure and back off, so the
-   * player list would simply be empty with nothing anywhere saying why. The
-   * endpoint does its own constant-time secret check.
+   * peering link — it has no session and never will. A redirect to a login
+   * page would be read as a delivery failure, the game side would back off,
+   * and the player list would simply be empty with nothing saying why.
    *
    * `/api/auth` is excluded because it is how a session is obtained in the
    * first place; requiring one to reach it is a redirect loop.
+   *
+   * `/preview` is the design harness, which 404s in production regardless.
    */
   matcher: [
-    '/((?!api/auth|api/ingest|login|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api/auth|api/ingest|login|preview|_next/static|_next/image|favicon.ico).*)',
   ],
 }
