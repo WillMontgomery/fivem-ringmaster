@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import {
   Activity,
+  LogOut,
   CalendarClock,
   CircleDot,
   FileSearch,
@@ -238,7 +239,7 @@ export function AppShell({
 
         <div className="p-3">
           {user ? (
-            <div className="flex items-center gap-2.5 rounded-md px-2 py-1.5">
+            <div className="group/user flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/50">
               <div className="flex size-7 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/25">
                 {user.name.slice(0, 2).toUpperCase()}
               </div>
@@ -267,6 +268,36 @@ export function AppShell({
                   </TooltipContent>
                 </Tooltip>
               </div>
+              {/*
+                Sign out, revealed on hover. This deletes the session RECORD in
+                DynamoDB via Auth.js -- which clearing cookies does not: that
+                merely orphans the row until TTL. With server-side sessions,
+                the button is the revocation-correct exit, not a nicety.
+                focus-visible keeps it reachable by keyboard, where "revealed
+                on hover" would otherwise mean "does not exist".
+              */}
+              <form
+                action={async () => {
+                  'use server'
+                  const { signOut } = await import('@/auth')
+                  await signOut({ redirectTo: '/login' })
+                }}
+              >
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="submit"
+                        aria-label="Sign out"
+                        className="flex size-7 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-all hover:bg-danger/10 hover:text-danger focus-visible:opacity-100 group-hover/user:opacity-100"
+                      />
+                    }
+                  >
+                    <LogOut className="size-3.5" />
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Sign out</TooltipContent>
+                </Tooltip>
+              </form>
             </div>
           ) : (
             <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
