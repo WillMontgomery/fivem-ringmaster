@@ -3,6 +3,7 @@
 import { Radio, WifiOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { useLiveState } from '@/lib/livePoll'
 import {
   Tooltip,
   TooltipContent,
@@ -71,10 +72,11 @@ const TONE: Record<Tone, { chip: string; dot: string; label: string }> = {
 }
 
 export function FeedStatus({
-  lastPushAt,
-  bootEpoch,
+  lastPushAt: initialLastPushAt,
+  bootEpoch: initialBootEpoch,
   now: initialNow,
   intervalMs = 2_000,
+  live = false,
 }: {
   /** Absolute timestamp of the last push, so the age can tick. */
   lastPushAt: number | null
@@ -82,7 +84,14 @@ export function FeedStatus({
   /** Server-rendered clock, so first paint matches and hydration is clean. */
   now: number
   intervalMs?: number
+  /** Poll for fresh state. Off in the preview harness, on for the real app. */
+  live?: boolean
 }) {
+  // The shared poller — same tick, same object, as the board below it, so the
+  // chip can never claim an age the table contradicts.
+  const polled = useLiveState(live)
+  const lastPushAt = polled?.view.lastPushAt ?? initialLastPushAt
+  const bootEpoch = polled?.view.bootEpoch ?? initialBootEpoch
   const [now, setNow] = useState(initialNow)
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)

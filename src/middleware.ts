@@ -77,9 +77,14 @@ export const config = {
    * `/api/auth` is excluded because it is how a session is obtained in the
    * first place; requiring one to reach it is a redirect loop.
    *
+   * `/api/state` is excluded because a REDIRECT is the wrong answer for an
+   * API: the poller would follow the 307 to the login page, receive HTML with
+   * a 200, and choke parsing it as JSON. The route runs its own auth() and
+   * answers 401, which the poller understands as "stop asking".
+   *
    * `/preview` is the design harness, which 404s in production regardless.
    */
   matcher: [
-    '/((?!api/auth|api/ingest|login|preview|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api/auth|api/ingest|api/state|login|preview|_next/static|_next/image|favicon.ico).*)',
   ],
 }

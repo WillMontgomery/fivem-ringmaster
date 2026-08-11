@@ -52,6 +52,32 @@ export async function grantsFor(license: string): Promise<Grant | null> {
 }
 
 /**
+ * Look up grants by Discord id — the login-time direction.
+ *
+ * The table is keyed by license because every ban, audit row and game-side
+ * record is; Discord id is a plain attribute with a GSI over it
+ * (`discordId-index`, provisioned in docs/aws-setup.md). Login only knows the
+ * Discord id, so this is the bridge every session crosses exactly once.
+ *
+ * Takes the FIRST match if several rows carry the same discordId. That state
+ * is a data-entry error — one human, one license, one row — and picking
+ * deterministically beats refusing to log the person in over it.
+ */
+export async function grantsForDiscordId(
+  discordId: string,
+): Promise<Grant | null> {
+  const res = await ddb.query({
+    TableName: tables.grants,
+    IndexName: 'discordId-index',
+    KeyConditionExpression: 'discordId = :d',
+    ExpressionAttributeValues: { ':d': discordId },
+    Limit: 1,
+  })
+
+  return (res.Items?.[0] as Grant | undefined) ?? null
+}
+
+/**
  * Does this admin hold this scope?
  *
  * CALL THIS AT THE POINT OF ACTION, in every route that changes anything —

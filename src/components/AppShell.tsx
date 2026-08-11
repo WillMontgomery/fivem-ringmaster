@@ -190,7 +190,13 @@ export function AppShell({
    * live feed — claiming "Live" above a wireframe would be a lie about data
    * that page never asked for.
    */
-  feed?: { lastPushAt: number | null; bootEpoch: string | null; now: number }
+  feed?: {
+    lastPushAt: number | null
+    bootEpoch: string | null
+    now: number
+    /** Poll for fresh state. The real app sets it; the harness does not. */
+    live?: boolean
+  }
 }) {
   return (
     <div className="flex min-h-screen">
@@ -283,6 +289,7 @@ export function AppShell({
                 lastPushAt={feed.lastPushAt}
                 bootEpoch={feed.bootEpoch}
                 now={feed.now}
+                live={feed.live}
               />
             )}
             {badges.maintenance && (

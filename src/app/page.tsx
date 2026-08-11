@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
 import { LiveBoard } from '@/components/LiveBoard'
-import { auth } from '@/auth'
+import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
 
 /**
@@ -21,8 +21,8 @@ import { liveView } from '@/lib/state'
  * not "the middleware handled it".
  */
 export default async function LivePlayersPage() {
-  const session = await auth()
-  if (!session?.user) redirect('/login')
+  const admin = await currentAdmin()
+  if (!admin) redirect('/login')
 
   const now = Date.now()
   const view = liveView(now)
@@ -30,13 +30,8 @@ export default async function LivePlayersPage() {
   return (
     <AppShell
       active="/"
-      user={{
-        name: session.user.name ?? 'Unknown',
-        // Real scopes arrive with the Discord→license mapping. Until then this
-        // says what is true rather than inventing a role.
-        scopes: [],
-      }}
-      feed={{ lastPushAt: view.lastPushAt, bootEpoch: view.bootEpoch, now }}
+      user={{ name: admin.name, scopes: admin.scopes }}
+      feed={{ lastPushAt: view.lastPushAt, bootEpoch: view.bootEpoch, now, live: true }}
     >
       <div className="mx-auto max-w-6xl">
         <div className="mb-5">
@@ -46,7 +41,7 @@ export default async function LivePlayersPage() {
           </p>
         </div>
 
-        <LiveBoard view={view} now={now} />
+        <LiveBoard view={view} now={now} live />
       </div>
     </AppShell>
   )

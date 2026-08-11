@@ -8,6 +8,7 @@ import { PlayerTable } from '@/components/PlayerTable'
 import { ServerStrip } from '@/components/ServerStrip'
 import { Card } from '@/components/ui/card'
 import type { PlayerRow as Player } from '@/lib/ingest'
+import { useLiveState } from '@/lib/livePoll'
 import type { liveView } from '@/lib/state'
 import { cn } from '@/lib/utils'
 
@@ -28,13 +29,21 @@ type View = ReturnType<typeof liveView>
  */
 
 export function LiveBoard({
-  view,
+  view: initialView,
   now: initialNow,
+  live = false,
 }: {
   view: View
   /** Server-rendered clock, so first paint matches. */
   now: number
+  /** Poll for fresh state. Off in the preview harness, on for the real app. */
+  live?: boolean
 }) {
+  // Fresh state from the shared poller, falling back to the server render so
+  // first paint is never blank. The fixture harness passes live=false and
+  // renders exactly what it was given.
+  const polled = useLiveState(live)
+  const view = polled?.view ?? initialView
   const [mode, setMode] = useState<'match' | 'all'>('match')
 
   /**
