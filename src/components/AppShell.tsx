@@ -93,7 +93,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
     items: [
       { href: '/', label: 'Live players', icon: Users },
       { href: '/players', label: 'Player search', icon: Search },
-      { href: '/host', label: 'Host', icon: Gauge, soon: 'M3a' },
+      { href: '/host', label: 'Host', icon: Gauge },
       { href: '/anticheat', label: 'Anticheat', icon: ShieldAlert, soon: 'M5' },
     ],
   },

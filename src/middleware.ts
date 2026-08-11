@@ -85,6 +85,6 @@ export const config = {
    * `/preview` is the design harness, which 404s in production regardless.
    */
   matcher: [
-    '/((?!api/auth|api/ingest|api/state|login|preview|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api/auth|api/ingest|api/state|api/host|login|preview|_next/static|_next/image|favicon.ico).*)',
   ],
 }

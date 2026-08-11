@@ -50,6 +50,15 @@ const schema = z.object({
   // security groups get edited by tired people.
   INGEST_SECRET: z.string().min(16),
 
+  // --- Game host SSH ---------------------------------------------------
+  // The forced-command channel to the game box, for host status and
+  // telemetry. All optional: with them unset, the Host page shows
+  // "not configured" rather than erroring, exactly like the ingest endpoint.
+  // The private key never leaves this box; only its path is named here.
+  GAME_HOST: z.string().optional(),          // private IP over the peering link
+  GAME_SSH_USER: z.string().default('ubuntu'),
+  GAME_SSH_KEY: z.string().optional(),       // path, e.g. /opt/ringmaster/.ssh/dispatch
+
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })
 

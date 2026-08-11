@@ -1,17 +1,40 @@
-import { AppShell } from '@/components/AppShell'
-import { Wireframe } from '@/components/Wireframe'
-import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
+import { redirect } from 'next/navigation'
 
-export default function Page() {
+import { AppShell } from '@/components/AppShell'
+import { HostBoard } from '@/components/HostBoard'
+import { currentAdmin } from '@/lib/session'
+import { ensurePolling, hostView } from '@/lib/telemetry'
+import { liveView } from '@/lib/state'
+
+/**
+ * Host — CPU, memory, network and process status for the game box.
+ *
+ * Kicks the poll timer on first load so the graphs have a sample by the time
+ * the client's first fetch lands, rather than a blank chart for one interval.
+ */
+export default async function HostPage() {
+  const admin = await currentAdmin()
+  if (!admin) redirect('/login')
+
+  ensurePolling()
+  const now = Date.now()
+  const feed = liveView(now)
+
   return (
-    <AppShell active="/host" user={DEMO_USER} badges={DEMO_BADGES}>
-      <Wireframe
-        title="Host"
-        milestone="M3a"
-        intent={"CPU, memory and network for the game box, plus whether FXServer is actually running and which commit it is on. Polled over SSH every 15-30 seconds - the game host runs no agent and opens no port for this."}
-        needs={["VPC peering and the security group rule allowing SSH from us-west-2 only","An SSH keypair whose authorized_keys entry is pinned to command=\"/opt/royale/dispatch.sh\"","dispatch.sh with its read-only verbs: status and telemetry, and deliberately nothing else in Slice 1"]}
-        blocks={[{"h":22,"label":"Process status - running, uptime, current commit, update available"},{"h":40,"label":"CPU / memory / network, last hour","cols":3},{"h":30,"label":"Player count over time, against slot capacity"}]}
-      />
+    <AppShell
+      active="/host"
+      user={{ name: admin.name, scopes: admin.scopes }}
+      feed={{ lastPushAt: feed.lastPushAt, bootEpoch: feed.bootEpoch, now, live: true }}
+    >
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-5">
+          <h1 className="text-xl font-semibold tracking-tight">Host</h1>
+          <p className="text-[13px] text-muted-foreground">
+            The game server box &mdash; process, CPU, memory, network. Polled over SSH.
+          </p>
+        </div>
+        <HostBoard initial={hostView()} />
+      </div>
     </AppShell>
   )
 }
