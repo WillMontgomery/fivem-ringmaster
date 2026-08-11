@@ -38,31 +38,47 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
     Discord({
       clientId: env().DISCORD_CLIENT_ID,
       clientSecret: env().DISCORD_CLIENT_SECRET,
-      // `guilds` is what lets the signIn callback below ask which servers this
-      // account is in. `identify` is the default and gives us the user id.
-      authorization: { params: { scope: 'identify guilds' } },
+      // `guilds.members.read` lets the signIn callback fetch this account's
+      // member record — roles included — in OUR guild specifically. `identify`
+      // is the default and gives us the user id. Scopes are requested at
+      // authorize time, so changing them needs nothing in the Discord portal.
+      authorization: { params: { scope: 'identify guilds.members.read' } },
     }),
   ],
 
   callbacks: {
     /**
-     * Guild membership as a coarse first filter, before any grant lookup.
+     * The admin role as the sign-in gate, before any grant lookup.
      *
-     * This is not the permission check — that is `lib/grants.ts`, per action.
-     * It is a cheap way to make sure a stranger with a Discord account never
-     * reaches the scope check at all, at the cost of one API call per login.
+     * Guild membership alone stopped being a meaningful filter the moment the
+     * guild doubled as the player community — every player would pass it. So
+     * the gate is a specific role, assigned by hand in Discord.
+     *
+     * ONE CALL DOES BOTH CHECKS: the member endpoint 404s for accounts not in
+     * the guild, so membership comes free with the role lookup that replaced
+     * the old guild-list scan.
+     *
+     * This is still not the permission check — that is `lib/grants.ts`, per
+     * action, keyed on license. Returning `false` here sends Auth.js to
+     * /login?error=AccessDenied, which the login page surfaces as a toast.
      */
     async signIn({ account }) {
       if (!account?.access_token) return false
 
       try {
-        const res = await fetch('https://discord.com/api/users/@me/guilds', {
-          headers: { Authorization: `Bearer ${account.access_token}` },
-        })
+        const res = await fetch(
+          `https://discord.com/api/users/@me/guilds/${env().DISCORD_GUILD_ID}/member`,
+          { headers: { Authorization: `Bearer ${account.access_token}` } },
+        )
+        // 404: not in the guild. Anything else non-OK: Discord declined to
+        // answer. Both deny.
         if (!res.ok) return false
 
-        const guilds = (await res.json()) as Array<{ id: string }>
-        return guilds.some((g) => g.id === env().DISCORD_GUILD_ID)
+        const member = (await res.json()) as { roles?: string[] }
+        return (
+          Array.isArray(member.roles) &&
+          member.roles.includes(env().DISCORD_ADMIN_ROLE_ID)
+        )
       } catch {
         // Discord being unreachable denies the login rather than allowing it.
         // The failure mode of "admins cannot log in for ten minutes" is
@@ -90,6 +106,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
 
   pages: {
     signIn: '/login',
+    // Errors land on OUR login page too, as ?error=<code>. Without this they
+    // go to Auth.js's default /api/auth/error — an unstyled "Server error"
+    // page that tells the person nothing and tells us nothing, which is
+    // exactly where the first real login attempt ended up.
+    error: '/login',
   },
 
   // Auth.js reads AUTH_SECRET and AUTH_URL from the environment on its own;

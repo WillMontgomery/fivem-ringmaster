@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 
+import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
 import './globals.css'
@@ -54,7 +55,10 @@ export default function RootLayout({
       </head>
       <body className={`${sans.variable} ${mono.variable} min-h-screen`}>
         {/* Base UI names this `delay`, not Radix's `delayDuration`. */}
-        <TooltipProvider delay={200}>{children}</TooltipProvider>
+        <TooltipProvider delay={200}>
+          {children}
+          <Toaster position="top-center" />
+        </TooltipProvider>
       </body>
     </html>
   )

@@ -25,6 +25,12 @@ const schema = z.object({
   // runs — a stranger with a Discord account never reaches the scope check.
   DISCORD_GUILD_ID: z.string().min(1),
 
+  // The Discord role required to sign in AT ALL. Coarser than the grants
+  // table and checked before it: guild membership alone stopped being enough
+  // the moment the guild is also the player community. Right-click the role
+  // in Server Settings -> Roles -> Copy Role ID (needs Developer Mode).
+  DISCORD_ADMIN_ROLE_ID: z.string().min(1),
+
   // --- Auth.js ---------------------------------------------------------
   // Signing key for session cookies. Generate with: openssl rand -base64 32
   AUTH_SECRET: z.string().min(32, 'AUTH_SECRET must be at least 32 chars'),

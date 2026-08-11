@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 
 import { auth, signIn } from '@/auth'
+import { LoginToast } from '@/components/LoginToast'
 
 /**
  * The sign-in page.
@@ -31,19 +32,17 @@ export default async function LoginPage({
         Admin console for FiveM Royale.
       </p>
 
+      {/* The toast carries the message now; the inline fallback stays for
+          anyone who dismissed it or arrived with the param in a shared link. */}
+      <LoginToast error={error} />
       {error ? (
-        /*
-         * One message for every failure, on purpose. "Not in the guild", "no
-         * grants", and "Discord said no" are the same sentence here — telling
-         * a stranger which one they hit is how an admin list gets enumerated,
-         * and a real admin already knows which they are.
-         */
         <p
           role="alert"
-          className="mt-6 rounded-md border border-amber-900/60 bg-amber-950/40 px-4 py-3 text-sm text-amber-200"
+          className="mt-6 rounded-md border border-warn/30 bg-warn/5 px-4 py-3 text-sm text-warn"
         >
-          That account cannot sign in. If you believe it should, ask an existing
-          admin to check your access.
+          {error === 'AccessDenied'
+            ? 'Your Discord account does not have the admin role for this console.'
+            : 'That account cannot sign in right now. If you believe it should, ask an existing admin to check your access.'}
         </p>
       ) : null}
 
