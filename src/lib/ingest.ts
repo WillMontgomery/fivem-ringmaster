@@ -44,16 +44,30 @@ const serverBlock = z.object({
  * hands a wallhack to anyone reading the event stream. This is server to
  * server over a private link, which is the only reason it is allowed.
  *
- * `placement` is `null` until the player is out. It is always present rather
- * than sometimes absent, because nil does not survive Lua serialisation and
- * "missing" versus "null" is not a distinction this wire can carry.
+ * NIL DOES NOT SURVIVE LUA SERIALISATION, and this schema has to honour that
+ * or it rejects most real snapshots. A Lua table key set to nil is not sent as
+ * JSON `null` — it is simply absent. So every field that is legitimately nil on
+ * the game side (`pos` before position sampling, i.e. in the lobby; `matchId`,
+ * `squadId`, `placement` whenever a player is not in a match or not yet out)
+ * arrives as UNDEFINED, not null. `.nullable()` accepts null and rejects
+ * undefined, which 400'd every snapshot that contained a lobby player.
+ *
+ * `optNull` accepts both and normalises to null, so the rest of the app can
+ * keep its `=== null` checks and the wire's "missing means none" stays a lie
+ * nobody downstream has to know about. This is the same "nil never survives
+ * serialisation" rule the gamemode's own roster deltas are built around.
  */
+const optNull = <T extends z.ZodTypeAny>(inner: T) =>
+  inner
+    .nullish()
+    .transform((v) => (v ?? null) as z.infer<T> | null)
+
 const playerRow = z.object({
   src: z.number().int().positive(),
   name: z.string().max(128),
-  license: z.string().min(1).max(128),
-  matchId: z.number().int().nullable(),
-  squadId: z.number().int().nullable(),
+  license: optNull(z.string().min(1).max(128)),
+  matchId: optNull(z.number().int()),
+  squadId: optNull(z.number().int()),
   state: z.string().max(32),
   hp: z.number(),
   armour: z.number(),
@@ -61,8 +75,8 @@ const playerRow = z.object({
   downs: z.number().int().nonnegative(),
   revives: z.number().int().nonnegative(),
   damage: z.number().nonnegative(),
-  placement: z.number().int().nullable(),
-  pos: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+  placement: optNull(z.number().int()),
+  pos: optNull(z.object({ x: z.number(), y: z.number(), z: z.number() })),
   posAt: z.number().int().nonnegative(),
   bucket: z.number().int().nonnegative(),
 

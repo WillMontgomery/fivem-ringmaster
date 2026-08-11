@@ -171,17 +171,33 @@ export function PlayerRowView({
           "view" button. The row is the record; clicking the person is the
           obvious gesture, and an extra column of chevrons is a column of
           nothing.
+
+          A player with no license yet — mid-handshake, or the rare account
+          that reports none — is not clickable and shows no license line: the
+          profile is keyed on license, so there is nothing to link to. It still
+          renders as a row, because "who is connecting right now" is exactly
+          what an admin watching a join wants to see.
         */}
-        <Link
-          href={`/players/${encodeURIComponent(p.license)}`}
-          className={cn(
-            'text-sm underline-offset-4 transition-colors hover:text-primary hover:underline',
-            dim ? 'text-muted-foreground' : 'text-foreground',
-          )}
-        >
-          {p.name}
-        </Link>
-        <License value={p.license} />
+        {p.license ? (
+          <Link
+            href={`/players/${encodeURIComponent(p.license)}`}
+            className={cn(
+              'text-sm underline-offset-4 transition-colors hover:text-primary hover:underline',
+              dim ? 'text-muted-foreground' : 'text-foreground',
+            )}
+          >
+            {p.name}
+          </Link>
+        ) : (
+          <span className={cn('text-sm', dim ? 'text-muted-foreground' : 'text-foreground')}>
+            {p.name}
+          </span>
+        )}
+        {p.license ? (
+          <License value={p.license} />
+        ) : (
+          <span className="text-[10px] text-muted-foreground/50">no license yet</span>
+        )}
       </TableCell>
 
       <TableCell>

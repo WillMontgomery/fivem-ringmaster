@@ -102,7 +102,8 @@ export function PlayerTable({
       if (!q) return true
       // Name or license. See the note at the top of this file.
       return (
-        p.name.toLowerCase().includes(q) || p.license.toLowerCase().includes(q)
+        p.name.toLowerCase().includes(q) ||
+        (p.license?.toLowerCase().includes(q) ?? false)
       )
     })
 
