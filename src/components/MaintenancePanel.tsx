@@ -147,6 +147,25 @@ export function MaintenancePanel({
           }
         }
 
+        /**
+         * A STATE CHANGE HAS TO RE-RENDER THE SERVER COMPONENTS TOO.
+         *
+         * The sidebar and header badges are resolved in AppShell, which is a
+         * server component — so this poll updated the panel while the
+         * "maintenance draining" badge beside the nav item stayed exactly as it
+         * was, indefinitely, long after the update had finished. It only
+         * cleared on a hard navigation, which is not something anybody does
+         * while watching a deploy.
+         *
+         * router.refresh() re-runs the server render, which re-reads the row
+         * and drops the badge. Only on a CHANGE, never per poll: refreshing
+         * every five seconds would re-fetch every server component on the page
+         * forever.
+         */
+        if (prev !== null && prev !== nextState) {
+          router.refresh()
+        }
+
         seenState.current = nextState
         setW(next)
         setPlayers(d.players ?? 0)
