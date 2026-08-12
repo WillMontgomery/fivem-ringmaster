@@ -64,6 +64,23 @@ export function runVerb<T>(verb: Verb, ...verbArgs: string[]): Promise<T> {
     // than prompting. StrictHostKeyChecking=no would also silence a genuine
     // key change; accept-new does not.
     '-o', 'StrictHostKeyChecking=accept-new',
+    /**
+     * known_hosts NEXT TO THE KEY, not in $HOME.
+     *
+     * The service runs under systemd with ProtectHome, so /home is masked and
+     * ssh cannot even stat ~/.ssh — every call printed
+     *
+     *   Could not stat /home/ubuntu/.ssh: Permission denied
+     *   Failed to add the host to the list of known hosts
+     *
+     * on stderr. Harmless with accept-new (the connection still succeeds), but
+     * it lands in the middle of real error messages and made a working channel
+     * look broken while we were debugging a genuine failure beside it. Pointing
+     * at a directory the service actually owns lets the host key persist, which
+     * also means a CHANGED key will be noticed rather than silently re-accepted
+     * forever.
+     */
+    '-o', `UserKnownHostsFile=${e.GAME_SSH_KEY.replace(/\/[^/]*$/, '')}/known_hosts`,
     `${e.GAME_SSH_USER}@${e.GAME_HOST}`,
     // The forced command reads this from $SSH_ORIGINAL_COMMAND. It is one of a
     // fixed enum; it is never user input.

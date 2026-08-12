@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { postJson } from '@/lib/api'
 
 /**
  * Issue a ban, in two deliberate steps.
@@ -100,22 +101,16 @@ export function BanDialog({
   const submit = async () => {
     setBusy(true)
     try {
-      const res = await fetch('/api/bans', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          license,
-          reason: reason.trim(),
-          playerName: name,
-          days: effectiveDays,
-        }),
-      })
-      const d = (await res.json()) as {
+      const d = await postJson<{
         ok?: boolean
         error?: string
         kicked?: { attempted: boolean; ok: boolean; error?: string }
-      }
-      if (!res.ok || !d.ok) throw new Error(d.error ?? 'Ban failed.')
+      }>('/api/bans', {
+        license,
+        reason: reason.trim(),
+        playerName: name,
+        days: effectiveDays,
+      })
 
       // The toast names the player and the expiry, because "Ban recorded" a
       // second after clicking Confirm tells you nothing you did not already
@@ -188,7 +183,19 @@ export function BanDialog({
                   disabled={permanent}
                 >
                   <SelectTrigger id="ban-duration" className="w-full">
-                    <SelectValue placeholder="Choose a length" />
+                    {/* Base UI's Select.Value renders the raw VALUE unless it
+                        is told how to render, so the trigger read "1" while the
+                        open list correctly said "24 hours". Mapping it back to
+                        the label keeps the closed and open states saying the
+                        same thing — a duration field that reads "1" next to a
+                        ban button is exactly the ambiguity this dialog exists
+                        to remove. */}
+                    <SelectValue placeholder="Choose a length">
+                      {(value) =>
+                        DURATIONS.find((d) => d.value === value)?.label ??
+                        'Choose a length'
+                      }
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     {DURATIONS.map((d) => (

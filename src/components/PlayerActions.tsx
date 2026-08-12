@@ -14,6 +14,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { postJson } from '@/lib/api'
 import type { Ban } from '@/lib/bans'
 
 /**
@@ -64,13 +65,7 @@ export function PlayerActions({
 
   const lift = async () => {
     try {
-      const res = await fetch('/api/bans/lift', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ license }),
-      })
-      const d = (await res.json()) as { ok?: boolean; error?: string }
-      if (!res.ok || !d.ok) throw new Error(d.error ?? 'Lift failed.')
+      await postJson('/api/bans/lift', { license })
       toast.success(`Ban lifted for ${name}. The record is kept.`)
       router.refresh()
     } catch (e) {
@@ -80,13 +75,7 @@ export function PlayerActions({
 
   const kick = async () => {
     try {
-      const res = await fetch('/api/kick', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ license, playerName: name }),
-      })
-      const d = (await res.json()) as { ok?: boolean; error?: string }
-      if (!res.ok || !d.ok) throw new Error(d.error ?? 'Kick failed.')
+      await postJson('/api/kick', { license, playerName: name })
       toast.success(`${name} was kicked from the server.`)
       router.refresh()
     } catch (e) {
