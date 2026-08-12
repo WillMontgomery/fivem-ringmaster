@@ -86,4 +86,13 @@ export const tables = {
   get telemetry() {
     return `${env().DDB_TABLE_PREFIX}telemetry`
   },
+  /**
+   * The scheduled maintenance window. One item, fixed key — see lib/maintenance.
+   * The game reads this table too (via br_ddb) so it knows to refuse
+   * connections while draining, which is why it is a table rather than
+   * in-memory state on this box.
+   */
+  get maintenance() {
+    return `${env().DDB_TABLE_PREFIX}maintenance`
+  },
 } as const

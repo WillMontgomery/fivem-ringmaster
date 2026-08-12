@@ -1,17 +1,62 @@
-import { AppShell } from '@/components/AppShell'
-import { Wireframe } from '@/components/Wireframe'
-import { DEMO_BADGES } from '@/lib/demo'
+import { redirect } from 'next/navigation'
 
-export default function Page() {
+import { AppShell } from '@/components/AppShell'
+import { MaintenancePanel } from '@/components/MaintenancePanel'
+import { can } from '@/lib/grants'
+import * as maint from '@/lib/maintenance'
+import { ensureDriver } from '@/lib/maintenanceDriver'
+import { currentAdmin } from '@/lib/session'
+import { liveView } from '@/lib/state'
+
+/**
+ * Scheduled maintenance.
+ *
+ * Loading this page starts the driver — the timer that advances a window from
+ * scheduled to draining to deployed. The same lazy pattern the telemetry poller
+ * uses: nothing runs on a console nobody has opened.
+ */
+export const dynamic = 'force-dynamic'
+
+export default async function MaintenancePage() {
+  const admin = await currentAdmin()
+  if (!admin) redirect('/login')
+
+  ensureDriver()
+
+  const now = Date.now()
+  const [w, canRun] = await Promise.all([
+    maint.current(),
+    can(admin.license, 'process'),
+  ])
+  const view = liveView(now)
+
   return (
-    <AppShell active="/maintenance" badges={DEMO_BADGES}>
-      <Wireframe
-        title="Maintenance windows"
-        milestone="M6"
-        intent={"Schedule a restart nobody has to be told about twice. At T-30 the server stops accepting queue joins and stops forming new matches; matches already running finish normally. Once the last one ends it deploys from main and restarts. No player is ever disconnected to make a window happen - if the drain overruns it takes a grace period, then abandons and reopens the queue."}
-        needs={["A drain flag in br_core - a third gate in BR.Lobby.join, and a maintenance reason from BR.Match.startBlocker, which already returns a reason and already surfaces it to players","dispatch.sh gaining update_check and restart_process, both Slice 4 verbs","The Discord webhook, which is how an abandoned window announces itself","One DynamoDB record per window, so a Ringmaster restart does not forget one is in progress"]}
-        blocks={[{"h":26,"label":"Next window - countdown, target commit, current phase"},{"h":34,"label":"Drain progress - matches still running, players left, which match is blocking","cols":2},{"h":22,"label":"Schedule a window - time, target commit, grace period"},{"h":40,"label":"History - completed and abandoned windows"}]}
-      />
+    <AppShell
+      active="/maintenance"
+      user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
+      badges={{ maintenance: maint.badgeState(w, now) }}
+      feed={{
+        lastPushAt: view.lastPushAt,
+        bootEpoch: view.bootEpoch,
+        now,
+        live: true,
+      }}
+    >
+      <div className="max-w-4xl">
+        <div className="mb-5">
+          <h1 className="text-2xl font-semibold tracking-tight">Maintenance</h1>
+          <p className="text-sm text-muted-foreground">
+            Take the server down gently: stop new players joining, let the
+            running matches finish, then deploy the latest code and restart.
+          </p>
+        </div>
+
+        <MaintenancePanel
+          initial={w}
+          initialPlayers={view.counts.connected}
+          canRun={canRun}
+        />
+      </div>
     </AppShell>
   )
 }

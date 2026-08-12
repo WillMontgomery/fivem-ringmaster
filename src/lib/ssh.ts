@@ -18,7 +18,7 @@ import { env } from './env'
  * dashboard does before br_ringmaster is pointed at the ingest endpoint.
  */
 
-export type Verb = 'status' | 'telemetry' | 'kick'
+export type Verb = 'status' | 'telemetry' | 'kick' | 'deploy'
 
 export function sshConfigured(): boolean {
   const e = env()

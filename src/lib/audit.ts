@@ -29,6 +29,10 @@ export type AuditAction =
   | 'ban.issue'
   | 'ban.lift'
   | 'player.kick'
+  | 'maintenance.schedule'
+  | 'maintenance.cancel'
+  | 'maintenance.drain'
+  | 'maintenance.deploy'
 
 export type AuditOutcome = 'pending' | 'ok' | 'failed'
 
