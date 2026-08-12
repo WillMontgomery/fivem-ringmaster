@@ -13,7 +13,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "check:secrets": "node scripts/check-secrets.mjs",
-    "verify": "npm run check:secrets && npm run typecheck"
+    "verify": "npm run check:secrets && npm run check:banrule && npm run typecheck",
+    "check:banrule": "node scripts/check-ban-rule.mjs"
   },
   "dependencies": {
     "@auth/dynamodb-adapter": "^2.7.0",

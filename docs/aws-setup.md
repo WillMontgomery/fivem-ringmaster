@@ -191,46 +191,60 @@ banned.
 > that table. An earlier draft of this file had it in both places, which cannot
 > both be right.
 
-### The one read it will eventually need — Slice 2, not yet
+### The two reads it needs — Slice 2
 
-When the ban gate lands (a player connecting is checked against the ban list),
-the game box needs exactly one read, and it gets its own statement so the
-exception stays visible rather than buried in a list of actions:
+The game box reads DynamoDB directly through the `br_ddb` resource: the ban gate
+checks a connecting player against the ban list, and the in-game admin surface
+(later) reads its own scopes rather than inventing a second permission source.
+Both are point lookups by license, and they share one statement so the exception
+stays visible rather than buried in a list of actions:
 
 ```json
 {
-  "Sid": "GameServerBanCheck",
+  "Sid": "GameServerReadOnly",
   "Effect": "Allow",
   "Action": [
     "dynamodb:GetItem"
   ],
-  "Resource": "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-bans"
+  "Resource": [
+    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-bans",
+    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-grants"
+  ]
 }
 ```
 
-**Do not add this yet.** Slice 1 is deliberately read-before-write: nothing on
-the game side reaches Ringmaster's data at all until there is a feature that
-needs it. When it does get added, note what it is and is not — `GetItem` on one
-table, so the game server can answer "is *this* license banned?" and **cannot**
-enumerate the ban list (no `Query`, no `Scan`) or lift a ban (no writes).
+**Add this when the ban gate ships, not before.** Nothing on the game side
+reaches Ringmaster's data until there is a feature that needs it. Verify it with
+`brddb` in the server console — it does one lookup of a license that will never
+exist, which proves credentials, route and permission together without depending
+on any row being present.
 
 **Why this policy is shaped the way it is** — this is the single most important
 security control in the whole design, so it is worth understanding rather than
 pasting:
 
-- **No `ringmaster-grants` and no `ringmaster-audit`, at all.** The game server
-  is the box most exposed to the public internet, running software that people
-  actively try to exploit. If it were ever compromised, this policy means the
-  attacker still cannot grant themselves an admin scope and cannot edit the
-  record of what they did.
-- **On `ringmaster-bans`, `GetItem` only.** Enough to answer "is *this* license
-  banned?" when someone connects. **Not `Query`, not `Scan`** — so a compromised
-  game server cannot enumerate who is banned, and **no write actions** — so it
-  cannot lift a ban.
-- **No `Query` or `Scan` anywhere.** Nothing on the game side has a reason to
-  enumerate a table.
+- **`GetItem` only, on two named tables.** Enough to answer "is *this* license
+  banned?" and "what scopes does *this* license hold?" — both about one specific
+  license the box already has in hand.
+- **No `ringmaster-audit`, at all.** The audit log is the record of what admins
+  did. A compromised game host must not be able to read — still less rewrite —
+  the account of its own compromise. This is the line that does not move.
+- **No `Query` or `Scan` anywhere.** So a compromised game server cannot
+  enumerate who is banned or who the admins are. It can only confirm or deny a
+  license it was already given.
+- **No write actions anywhere.** It cannot lift a ban, and it cannot grant
+  itself a scope. `ringmaster-grants` stays *writable only by Ringmaster*, where
+  every change goes through the console's own scope check and lands in the audit
+  log.
 - **No `DeleteItem` anywhere.** Nothing on the game side ever needs to destroy a
   row.
+
+> **Why `ringmaster-grants` is readable here at all**, having previously been
+> excluded: admin actions are moving in-game as well as in the console, and the
+> game needs a permission source for them. The alternative — a grants cache
+> pushed down and invalidated out of band — is a whole subsystem whose failure
+> mode is a stale permission, which is worse than a read. The read is narrow
+> (one license, no enumeration) and the write side is untouched.
 
 ### Attach both roles
 
