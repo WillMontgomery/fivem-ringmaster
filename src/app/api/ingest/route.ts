@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 
 import { env } from '@/lib/env'
 import { ingestEnvelope } from '@/lib/ingest'
+import * as players from '@/lib/players'
 import { applyEvents, applySnapshot } from '@/lib/state'
 
 /**
@@ -86,10 +87,77 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const applied = applyEvents(env_, now)
+
+  /**
+   * Persist identity to the registry, without making the game wait for it.
+   *
+   * THE ACKNOWLEDGEMENT IS NOT THE PERSISTENCE. The game's PerformHttpRequest
+   * carries a hardcoded five-second ceiling, and a DynamoDB write plus a
+   * reverse-index update per identifier can outlast a slow moment on the link.
+   * Blocking the 202 on that would turn a slow write into a failed push, which
+   * the outbox would then RETRY — re-sending events we already applied.
+   *
+   * So the response goes out on the in-memory apply (which is what makes the
+   * board correct) and the durable write proceeds behind it. A lost write costs
+   * one sighting of a player who will reconnect; a lost acknowledgement costs a
+   * retry storm.
+   */
+  void persistIdentity(env_, now).catch((e) => {
+    console.error('[ingest] registry write failed', e)
+  })
+
   return Response.json(
     { ok: true, applied, received: env_.events.length },
     { status: 202 },
   )
+}
+
+/**
+ * Write player_seen events into the durable registry.
+ *
+ * `player_seen` fires the first time the GAME meets a license in a given
+ * process, which is exactly when the identifier set is worth recording — and
+ * when a mismatch against a previous visit is worth noticing.
+ */
+async function persistIdentity(
+  env_: { events: Array<{ kind: string; data: unknown }> },
+  now: number,
+): Promise<void> {
+  for (const ev of env_.events) {
+    if (ev.kind !== 'player_seen') continue
+
+    const d = ev.data as {
+      license?: string
+      name?: string
+      identifiers?: Record<string, string>
+    }
+    if (!d.license) continue
+
+    const { sharedWith } = await players.recordConnect({
+      license: d.license,
+      name: d.name ?? 'Unknown',
+      identifiers: (d.identifiers ?? {}) as Partial<Record<players.IdKind, string>>,
+      now,
+    })
+
+    /**
+     * An identifier that already belongs to somebody else.
+     *
+     * This is the mismatch signal: same Discord account, different game
+     * license. It has innocent explanations (a shared console, a reinstall
+     * that reissued a license) and dishonest ones, which is exactly why it
+     * becomes an INCIDENT for a human rather than an automatic action.
+     *
+     * Logged for now; the incident record lands with the incidents table.
+     */
+    if (sharedWith.length > 0) {
+      console.warn('[registry] identifier reuse', {
+        license: d.license,
+        name: d.name,
+        sharedWith,
+      })
+    }
+  }
 }
 
 /**

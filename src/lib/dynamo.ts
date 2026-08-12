@@ -95,4 +95,19 @@ export const tables = {
   get maintenance() {
     return `${env().DDB_TABLE_PREFIX}maintenance`
   },
+  /** The player registry. Keyed on license — see lib/players.ts. */
+  get players() {
+    return `${env().DDB_TABLE_PREFIX}players`
+  },
+  /**
+   * Reverse index: identifier -> the licenses that have presented it.
+   *
+   * A SEPARATE TABLE because the question it answers cannot be asked of a
+   * license-keyed one. "Has this Discord account been here under a different
+   * license before" has no answer from a row you look up BY that license — a
+   * new license is simply a new row with nothing to compare against.
+   */
+  get playerIds() {
+    return `${env().DDB_TABLE_PREFIX}player-ids`
+  },
 } as const

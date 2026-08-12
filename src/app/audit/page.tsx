@@ -1,4 +1,5 @@
 import { CircleCheck, CircleSlash, OctagonX } from 'lucide-react'
+import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
@@ -43,12 +44,44 @@ const ACTION_LABEL: Record<string, string> = {
   'maintenance.deploy': 'deployed the server update',
 }
 
+/** A name that links to its profile, when we have a license to link to. */
+function PersonLink({
+  name,
+  license,
+  className,
+}: {
+  name: string | null
+  license: string | null
+  className?: string
+}) {
+  const label = name ?? 'Unknown'
+  if (!license) return <span className={className}>{label}</span>
+  return (
+    <Link
+      href={`/players/${encodeURIComponent(license)}`}
+      className={cn(
+        'underline-offset-4 transition-colors hover:text-primary hover:underline',
+        className,
+      )}
+    >
+      {label}
+    </Link>
+  )
+}
+
 /**
  * Actions whose stored reason just repeats the label.
  *
- * A maintenance row's reason is the generated note — "a server update" — sitting
- * directly under a line that already says the admin scheduled a server update.
- * Saying it twice makes the log harder to skim rather than more informative.
+ * A maintenance row's reason is the generated note — "a server update" —
+ * sitting directly under a line that already says the admin scheduled a server
+ * update. Saying it twice makes the log harder to skim, not more informative.
+ */
+/**
+ * Actions whose stored reason just repeats the label.
+ *
+ * A maintenance row's reason is the generated note — "a server update" —
+ * sitting directly under a line that already says the admin scheduled a server
+ * update. Saying it twice makes the log harder to skim, not more informative.
  */
 const REDUNDANT_REASON = new Set([
   'maintenance.schedule',
@@ -94,15 +127,24 @@ export default async function AuditPage() {
                   >
                     <Icon className={cn('mt-0.5 size-4 shrink-0', o.cls)} />
                     <div className="min-w-0 flex-1">
+                      {/* Both names link to their profile. Admins are players
+                          too, and "who is this that keeps doing X" is answered
+                          fastest by clicking them rather than searching. */}
                       <div className="text-sm">
-                        <span className="font-medium">{r.actorName}</span>{' '}
+                        <PersonLink
+                          name={r.actorName}
+                          license={r.actorLicense}
+                          className="font-medium"
+                        />{' '}
                         {ACTION_LABEL[r.action] ?? r.action}
                         {r.targetName || r.targetLicense ? (
                           <>
                             {' — '}
-                            <span className="text-muted-foreground">
-                              {r.targetName ?? r.targetLicense}
-                            </span>
+                            <PersonLink
+                              name={r.targetName ?? r.targetLicense ?? null}
+                              license={r.targetLicense ?? null}
+                              className="text-muted-foreground"
+                            />
                           </>
                         ) : null}
                       </div>
