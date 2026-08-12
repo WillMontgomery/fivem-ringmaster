@@ -131,7 +131,7 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
               <h2 className="text-sm font-medium">Current mode</h2>
               <Badge
                 className={cn(
-                  'gap-1 border-0 text-[12px] uppercase tracking-wider ring-1 ring-inset',
+                  'gap-1 border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
                   mode?.cls ?? 'bg-muted/40 text-muted-foreground ring-border',
                 )}
               >
@@ -149,33 +149,33 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
         {config && (
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-lg border border-border bg-card/40 px-3 py-2.5">
-              <div className="text-[12px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 Threshold
               </div>
               <div className="mt-0.5 text-lg tabular-nums">
                 {config.limit} in {ms(config.windowMs)}
               </div>
-              <div className="text-[12px] text-muted-foreground/60">
+              <div className="text-xs text-muted-foreground/60">
                 impossible shots before it acts
               </div>
             </div>
             <div className="rounded-lg border border-border bg-card/40 px-3 py-2.5">
-              <div className="text-[12px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 Self-damage
               </div>
               <div className="mt-0.5 text-lg tabular-nums">
                 {config.selfLimit} in {ms(config.selfWindow)}
               </div>
-              <div className="text-[12px] text-muted-foreground/60">
+              <div className="text-xs text-muted-foreground/60">
                 allowed before it counts
               </div>
             </div>
             <div className="rounded-lg border border-border bg-card/40 px-3 py-2.5">
-              <div className="text-[12px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 Action
               </div>
               <div className="mt-0.5 text-lg">{mode?.label}</div>
-              <div className="text-[12px] text-muted-foreground/60">
+              <div className="text-xs text-muted-foreground/60">
                 read live from the server
               </div>
             </div>
@@ -195,29 +195,29 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
           weapon, its range or its cadence is checked against the truth.
         </p>
 
-        <h3 className="mt-4 text-[13px] font-medium">
+        <h3 className="mt-4 text-sm font-medium">
           Counted toward the threshold
         </h3>
-        <p className="text-[13px] text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           These have no honest explanation. Enough of them in the window and the
           anticheat acts.
         </p>
         <ul className="mt-2 divide-y divide-border/60 rounded-lg border border-border">
           {MEANS.map((d) => (
             <li key={d.name} className="px-3 py-2.5">
-              <div className="text-[13px] font-medium">{d.name}</div>
-              <p className="text-[13px] text-muted-foreground">{d.what}</p>
-              <p className="mt-0.5 text-[12px] text-muted-foreground/60">
+              <div className="text-sm font-medium">{d.name}</div>
+              <p className="text-sm text-muted-foreground">{d.what}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground/60">
                 e.g. {d.example}
               </p>
             </li>
           ))}
         </ul>
 
-        <h3 className="mt-4 text-[13px] font-medium">
+        <h3 className="mt-4 text-sm font-medium">
           Refused, but never counted
         </h3>
-        <p className="text-[13px] text-muted-foreground">
+        <p className="text-sm text-muted-foreground">
           An honest client produces these constantly — the game simply declines
           the shot. Counting them would make the threshold meaningless.
         </p>
@@ -225,7 +225,7 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
           {RULES.map((r) => (
             <li
               key={r}
-              className="rounded-md bg-muted/40 px-2 py-1 text-[12px] text-muted-foreground ring-1 ring-inset ring-border"
+              className="rounded-md bg-muted/40 px-2 py-1 text-xs text-muted-foreground ring-1 ring-inset ring-border"
             >
               {r}
             </li>
@@ -241,7 +241,7 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
           <CircleAlert className="size-4 text-warn" />
           <h2 className="text-sm font-medium">What it does not catch</h2>
         </div>
-        <ul className="mt-2 space-y-2 text-[13px] leading-relaxed text-muted-foreground">
+        <ul className="mt-2 space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             <span className="font-medium text-foreground">Aimbots.</span> Every
             shot an aimbot fires is one the player could legitimately have
@@ -268,7 +268,7 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
             Looting, vehicles and the storm have no validator.
           </li>
         </ul>
-        <p className="mt-3 text-[13px] text-muted-foreground">
+        <p className="mt-3 text-sm text-muted-foreground">
           These are what human review is for. Suspicion that this system cannot
           confirm belongs in{' '}
           <Link
@@ -286,7 +286,7 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
           <Info className="size-4 text-info" />
           <h2 className="text-sm font-medium">How it decides</h2>
         </div>
-        <ol className="mt-2 space-y-2 text-[13px] leading-relaxed text-muted-foreground">
+        <ol className="mt-2 space-y-2 text-sm leading-relaxed text-muted-foreground">
           <li>
             <span className="font-medium text-foreground">1.</span> A damage
             event arrives and is checked against the server&rsquo;s model.
@@ -306,7 +306,7 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
             triggers the current action, and the event is recorded either way.
           </li>
         </ol>
-        <p className="mt-3 text-[13px] text-muted-foreground">
+        <p className="mt-3 text-sm text-muted-foreground">
           Refused damage never applies even in log-only mode. The mode decides
           what happens to the <em>player</em>, not to the shot.
         </p>

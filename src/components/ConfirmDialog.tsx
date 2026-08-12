@@ -65,7 +65,7 @@ export function ConfirmDialog({
         {/* Outside DialogDescription on purpose: Base UI renders it as a <p>,
             and these bodies contain block elements — a <div> inside a <p> is
             invalid HTML that React silently reparents, wrecking the layout. */}
-        <div className="space-y-2 text-[13px] text-muted-foreground">{body}</div>
+        <div className="space-y-2 text-sm text-muted-foreground">{body}</div>
 
         <DialogFooter>
           <Button

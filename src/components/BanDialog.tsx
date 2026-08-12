@@ -165,8 +165,8 @@ export function BanDialog({
                 <p
                   className={
                     reasonOk
-                      ? 'text-[11px] text-muted-foreground'
-                      : 'text-[11px] text-warn'
+                      ? 'text-xs text-muted-foreground'
+                      : 'text-xs text-warn'
                   }
                 >
                   {reasonOk
@@ -245,7 +245,7 @@ export function BanDialog({
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-2 text-[13px]">
+            <div className="space-y-2 text-sm">
                   <p>
                     <span className="font-medium text-foreground">{name}</span>{' '}
                     will be banned{' '}

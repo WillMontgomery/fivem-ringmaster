@@ -147,14 +147,14 @@ export function ModerationBoard({
       {canBan && (
         <Card className="surface-edge gap-0 px-5 py-4">
           <h2 className="text-sm font-medium">Issue a ban</h2>
-          <p className="mt-0.5 text-[12px] text-muted-foreground">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             Recorded against the license. It takes effect the next time that
             player connects — it does not remove anyone who is online now.
           </p>
 
           <div className="mt-4 grid gap-3 md:grid-cols-[2fr_1fr]">
             <div className="space-y-1.5">
-              <label htmlFor="ban-license" className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              <label htmlFor="ban-license" className="text-xs uppercase tracking-wider text-muted-foreground">
                 License
               </label>
               <Input
@@ -166,7 +166,7 @@ export function ModerationBoard({
               />
             </div>
             <div className="space-y-1.5">
-              <label htmlFor="ban-days" className="text-[11px] uppercase tracking-wider text-muted-foreground">
+              <label htmlFor="ban-days" className="text-xs uppercase tracking-wider text-muted-foreground">
                 Days (blank = permanent)
               </label>
               <Input
@@ -180,7 +180,7 @@ export function ModerationBoard({
           </div>
 
           <div className="mt-3 space-y-1.5">
-            <label htmlFor="ban-reason" className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            <label htmlFor="ban-reason" className="text-xs uppercase tracking-wider text-muted-foreground">
               Reason — shown to the player
             </label>
             <Textarea
@@ -204,7 +204,7 @@ export function ModerationBoard({
       <Card className="surface-edge gap-0 overflow-hidden py-0">
         <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
           <span className="text-sm">Active bans</span>
-          <span className="text-[11px] text-muted-foreground">{active.length}</span>
+          <span className="text-xs text-muted-foreground">{active.length}</span>
         </header>
 
         {active.length === 0 ? (
@@ -220,18 +220,18 @@ export function ModerationBoard({
                     <span className="truncate text-sm">
                       {b.playerName ?? 'Unknown player'}
                     </span>
-                    <Badge className="border-0 bg-danger/10 text-[10px] uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
+                    <Badge className="border-0 bg-danger/10 text-xs uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
                       {b.expiresAt === null ? 'permanent' : `until ${when(b.expiresAt)}`}
                     </Badge>
                   </div>
-                  <code className="block truncate font-mono text-[10px] text-muted-foreground/60">
+                  <code className="block truncate font-mono text-xs text-muted-foreground/60">
                     {b.license}
                   </code>
-                  <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
+                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
                     {b.reason}
                   </p>
                 </div>
-                <div className="shrink-0 text-right text-[11px] text-muted-foreground">
+                <div className="shrink-0 text-right text-xs text-muted-foreground">
                   <div>{when(b.at)}</div>
                   <div className="text-muted-foreground/60">by {b.byName}</div>
                 </div>
@@ -251,22 +251,22 @@ export function ModerationBoard({
         <Card className="surface-edge gap-0 overflow-hidden py-0">
           <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
             <span className="text-sm">Lifted and expired</span>
-            <span className="text-[11px] text-muted-foreground">{past.length}</span>
+            <span className="text-xs text-muted-foreground">{past.length}</span>
           </header>
           <ul className="divide-y divide-border/60">
             {past.map((b) => (
               <li key={b.license} className="flex items-center gap-4 px-4 py-2.5 opacity-70">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px]">
+                  <div className="truncate text-sm">
                     {b.playerName ?? 'Unknown player'}
                   </div>
-                  <code className="block truncate font-mono text-[10px] text-muted-foreground/60">
+                  <code className="block truncate font-mono text-xs text-muted-foreground/60">
                     {b.license}
                   </code>
                 </div>
                 <span
                   className={cn(
-                    'shrink-0 text-[10px] uppercase tracking-wider',
+                    'shrink-0 text-xs uppercase tracking-wider',
                     b.liftedAt ? 'text-info' : 'text-muted-foreground',
                   )}
                 >

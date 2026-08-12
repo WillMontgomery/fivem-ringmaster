@@ -60,7 +60,7 @@ export default function RootLayout({
         {/* Base UI names this `delay`, not Radix's `delayDuration`. */}
         <TooltipProvider delay={200}>
           {children}
-          <Toaster position="top-center" />
+          <Toaster position="bottom-left" />
         </TooltipProvider>
       </body>
     </html>

@@ -123,7 +123,7 @@ export function FeedStatus({
             role="status"
             aria-live="polite"
             className={cn(
-              'inline-flex cursor-help items-center gap-1.5 rounded-md px-2 py-1 text-[10px] font-medium uppercase tracking-wider ring-1 ring-inset transition-colors',
+              'inline-flex cursor-help items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium uppercase tracking-wider ring-1 ring-inset transition-colors',
               t.chip,
             )}
           />
@@ -146,12 +146,12 @@ export function FeedStatus({
           <span className={cn('size-2 rounded-full', t.dot)} />
           <span className="text-sm font-medium">{t.label}</span>
         </div>
-        <p className="mt-1.5 text-[13px] text-muted-foreground">
+        <p className="mt-1.5 text-sm text-muted-foreground">
           {frozenAge === null
             ? 'No update received yet.'
             : `Last update: ${ago(frozenAge)} ago`}
         </p>
-        <p className="mt-2 text-[11px] text-muted-foreground/60">
+        <p className="mt-2 text-xs text-muted-foreground/60">
           The board refreshes every {(intervalMs / 1000).toFixed(0)}s.
         </p>
       </HoverCardContent>

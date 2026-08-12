@@ -111,7 +111,7 @@ export function LiveBoard({
           <p className="relative text-sm text-muted-foreground">
             Nothing received from the game server yet.
           </p>
-          <p className="relative mx-auto mt-2 max-w-md text-[13px] leading-relaxed text-muted-foreground/60">
+          <p className="relative mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground/60">
             <code className="font-mono text-muted-foreground/80">
               br_ringmaster
             </code>{' '}
@@ -143,9 +143,9 @@ export function LiveBoard({
                   type="button"
                   onClick={() => setMode(k)}
                   className={cn(
-                    'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] transition-colors',
+                    'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors',
                     mode === k
-                      ? 'bg-primary/15 text-[12px]rimary'
+                      ? 'bg-primary/15 text-primary'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
@@ -172,7 +172,7 @@ export function LiveBoard({
                 <Card className="surface-edge gap-0 overflow-hidden py-0">
                   <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
                     <span className="text-sm">Lobby</span>
-                    <span className="text-[11px] text-muted-foreground">
+                    <span className="text-xs text-muted-foreground">
                       connected, not in a match
                     </span>
                   </header>
@@ -195,7 +195,7 @@ export function LiveBoard({
                 caption={
                   <span className="text-sm">
                     Everyone connected
-                    <span className="ml-2 text-[11px] text-muted-foreground">
+                    <span className="ml-2 text-xs text-muted-foreground">
                       across all matches
                     </span>
                   </span>

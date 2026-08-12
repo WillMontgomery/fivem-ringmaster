@@ -59,11 +59,11 @@ function StatCard({
 }) {
   return (
     <Card className="surface-edge gap-0 px-4 py-3.5">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         <Icon className="size-3.5" style={{ color: tone }} />
         {label}
       </div>
-      <div className="mt-1.5 text-[12px]l">{children}</div>
+      <div className="mt-1.5 text-xl">{children}</div>
     </Card>
   )
 }
@@ -144,7 +144,7 @@ export function HostBoard({ initial }: { initial: View }) {
               className="group inline-flex items-center gap-2 transition-colors hover:text-info"
             >
               <code className="font-mono text-base">{s.commit}</code>
-              <Badge className="gap-1 border-0 bg-info/10 text-[10px] font-semibold uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
+              <Badge className="gap-1 border-0 bg-info/10 text-xs font-semibold uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
                 <ArrowUpCircle className="size-3" />
                 {s.behindMain} behind
               </Badge>
@@ -155,12 +155,12 @@ export function HostBoard({ initial }: { initial: View }) {
               href={commitUrl(s.commit)}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-2 transition-colors hover:text-[12px]rimary"
+              className="inline-flex items-center gap-2 transition-colors hover:text-primary"
             >
               <code className="font-mono text-base underline decoration-dotted underline-offset-4">
                 {s.commit}
               </code>
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium uppercase tracking-wider text-live">
+              <span className="inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-live">
                 <Check className="size-3" />
                 up to date
               </span>
@@ -190,7 +190,7 @@ export function HostBoard({ initial }: { initial: View }) {
             height={84}
             axisLeft={axisLeft}
           />
-          <p className="mt-1 text-[11px] text-muted-foreground/60">
+          <p className="mt-1 text-xs text-muted-foreground/60">
             {last ? `${last.cores} cores` : ''}
           </p>
         </Card>
@@ -206,7 +206,7 @@ export function HostBoard({ initial }: { initial: View }) {
             height={84}
             axisLeft={axisLeft}
           />
-          <p className="mt-1 text-[11px] text-muted-foreground/60">
+          <p className="mt-1 text-xs text-muted-foreground/60">
             {last && last.memTotalKb > 0
               ? `${((last.memTotalKb - last.memAvailKb) / 1024 / 1024).toFixed(1)} / ${(last.memTotalKb / 1024 / 1024).toFixed(1)} GB`
               : ''}
@@ -238,7 +238,7 @@ export function HostBoard({ initial }: { initial: View }) {
         </Card>
       </div>
 
-      <div className="flex items-center justify-between text-[11px] text-muted-foreground/60">
+      <div className="flex items-center justify-between text-xs text-muted-foreground/60">
         <span>
           {samples.length} sample{samples.length === 1 ? '' : 's'}
           {view.statusAgeMs !== null && ` · updated ${Math.round(view.statusAgeMs / 1000)}s ago`}

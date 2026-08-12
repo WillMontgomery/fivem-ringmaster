@@ -45,10 +45,10 @@ function Figure({
 }) {
   return (
     <div className={cn('leading-none', className)}>
-      <div className="font-mono text-[13px]xl tabular-nums" style={{ color: colour }}>
+      <div className="font-mono text-2xl tabular-nums" style={{ color: colour }}>
         {value}
       </div>
-      <div className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="mt-1 text-xs uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
     </div>

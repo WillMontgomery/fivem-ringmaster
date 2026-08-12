@@ -29,6 +29,19 @@ interface LiveState {
   events: StoredEvent[]
   /** `${bootEpoch}:${seq}` of events already applied. */
   seen: Set<string>
+  /**
+   * Everyone this console has seen since it started, keyed by license.
+   *
+   * WHY IT EXISTS: search could only ever find players who were connected at
+   * that exact moment, because the live snapshot was the only source. Looking
+   * somebody up half an hour after they logged off — which is the ordinary
+   * reason to look somebody up — returned nothing, with no way to say why.
+   *
+   * IN MEMORY, AND HONEST ABOUT IT. Lost on a console restart. The durable
+   * record is the player_seen stream landing in DynamoDB (M7b); until then this
+   * covers the session, and the empty state says exactly that.
+   */
+  directory: Map<string, DirectoryEntry>
   /** Counters, so `is it working` has an answer that is not a shrug. */
   stats: {
     snapshots: number
@@ -36,6 +49,14 @@ interface LiveState {
     eventsApplied: number
     eventsDuplicate: number
   }
+}
+
+/** One player the console has seen, whether or not they are on right now. */
+export interface DirectoryEntry {
+  license: string
+  name: string
+  firstSeen: number
+  lastSeen: number
 }
 
 export interface StoredEvent extends GameEvent {
@@ -57,6 +78,7 @@ function create(): LiveState {
     receivedAt: 0,
     events: [],
     seen: new Set(),
+    directory: new Map(),
     stats: {
       snapshots: 0,
       snapshotsStale: 0,
@@ -100,6 +122,15 @@ export function applySnapshot(env: SnapshotEnvelope, now: number): boolean {
   state.snapshot = env
   state.receivedAt = now
   state.stats.snapshots++
+
+  // Everyone on the server right now is somebody search should be able to find
+  // later. Snapshots are the reliable source: a player_seen event only fires
+  // the first time the GAME meets a license, so a console that started
+  // afterwards would never hear about anybody already playing.
+  for (const p of env.snapshot.players) {
+    remember(p.license, p.name, now)
+  }
+
   return true
 }
 
@@ -113,6 +144,67 @@ export function applySnapshot(env: SnapshotEnvelope, now: number): boolean {
  *
  * @returns how many were new
  */
+/**
+ * Remember a player, wherever we learned about them.
+ *
+ * Called from both sources deliberately: `player_seen` events announce a
+ * license the first time this server process meets it, and snapshots carry
+ * everyone currently on. Neither alone is complete — events are missed if the
+ * console was down, and snapshots forget the moment somebody leaves.
+ */
+function remember(license: string | null | undefined, name: string, now: number) {
+  if (!license) return
+  const existing = state.directory.get(license)
+  if (existing) {
+    existing.name = name || existing.name
+    existing.lastSeen = now
+    return
+  }
+  state.directory.set(license, {
+    license,
+    name: name || 'Unknown',
+    firstSeen: now,
+    lastSeen: now,
+  })
+}
+
+/**
+ * Search everyone this console has seen, by name or identifier.
+ *
+ * MATCHES ON BOTH because the two realistic starting points are a name
+ * somebody typed in Discord and a license pasted from a report, and an admin
+ * should not have to know which box to use.
+ */
+export function searchDirectory(query: string, limit = 10): DirectoryEntry[] {
+  const q = query.trim().toLowerCase()
+  const online = new Set(
+    (state.snapshot?.snapshot.players ?? []).map((p) => p.license).filter(Boolean),
+  )
+
+  const rows = [...state.directory.values()].filter(
+    (e) =>
+      !q ||
+      e.name.toLowerCase().includes(q) ||
+      e.license.toLowerCase().includes(q),
+  )
+
+  // Online first, then most recently seen. Someone on the server right now is
+  // almost always the one being looked for.
+  rows.sort((a, b) => {
+    const ao = online.has(a.license) ? 1 : 0
+    const bo = online.has(b.license) ? 1 : 0
+    if (ao !== bo) return bo - ao
+    return b.lastSeen - a.lastSeen
+  })
+
+  return rows.slice(0, limit)
+}
+
+/** Is this license connected right now? For labelling search results. */
+export function isOnline(license: string): boolean {
+  return (state.snapshot?.snapshot.players ?? []).some((p) => p.license === license)
+}
+
 export function applyEvents(env: EventsEnvelope, now: number): number {
   let applied = 0
 
@@ -124,6 +216,12 @@ export function applyEvents(env: EventsEnvelope, now: number): number {
       continue
     }
     state.seen.add(key)
+
+    // player_seen is how a license first becomes known to this console.
+    if (ev.kind === 'player_seen') {
+      const p = ev.data as { license?: string; name?: string }
+      remember(p.license, p.name ?? 'Unknown', now)
+    }
 
     state.events.push({
       ...ev,

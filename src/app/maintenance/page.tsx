@@ -44,7 +44,7 @@ export default async function MaintenancePage() {
     >
       <div className="mx-auto max-w-4xl">
         <div className="mb-5">
-          <h1 className="text-[13px]xl font-semibold tracking-tight">Maintenance</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Maintenance</h1>
           <p className="text-sm text-muted-foreground">
             Take the server down gently: stop new players joining, let the
             running matches finish, then deploy the latest code and restart.

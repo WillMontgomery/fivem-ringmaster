@@ -86,7 +86,7 @@ function PersonLink({
     <Link
       href={`/players/${encodeURIComponent(license)}`}
       className={cn(
-        'underline-offset-4 transition-colors hover:text-[12px]rimary hover:underline',
+        'underline-offset-4 transition-colors hover:text-primary hover:underline',
         className,
       )}
     >
@@ -109,7 +109,7 @@ function Pager({
   if (total === 0) return null
   return (
     <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
-      <span className="text-[11px] tabular-nums text-muted-foreground">
+      <span className="text-xs tabular-nums text-muted-foreground">
         {total} total · page {page + 1} of {pages}
       </span>
       <div className="flex gap-1">
@@ -186,7 +186,7 @@ export function ModerationLog({
                     className="flex items-start gap-4 px-4 py-3"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="text-[13px]">
+                      <div className="text-sm">
                         <PersonLink
                           name={k.actorName}
                           license={k.actorLicense}
@@ -200,13 +200,13 @@ export function ModerationLog({
                         />
                       </div>
                       {k.reason && (
-                        <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
                           “{k.reason}”
                         </p>
                       )}
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-[11px] tabular-nums text-muted-foreground">
+                      <div className="text-xs tabular-nums text-muted-foreground">
                         {when(k.ts)}
                       </div>
                       {/* `pending` is shown rather than hidden: it means we
@@ -216,7 +216,7 @@ export function ModerationLog({
                       {k.outcome !== 'ok' && (
                         <div
                           className={cn(
-                            'text-[10px] uppercase tracking-wider',
+                            'text-xs uppercase tracking-wider',
                             k.outcome === 'failed' ? 'text-danger' : 'text-warn',
                           )}
                         >
@@ -248,7 +248,7 @@ export function ModerationLog({
                 {banSlice.map((b) => (
                   <li key={b.license} className="flex items-center gap-4 px-4 py-3">
                     <div className="min-w-0 flex-1">
-                      <div className="text-[13px]">
+                      <div className="text-sm">
                         <PersonLink
                           name={b.playerName ?? null}
                           license={b.license}
@@ -261,7 +261,7 @@ export function ModerationLog({
                           className="font-medium"
                         />
                       </div>
-                      <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
                         “{b.reason}”
                       </p>
                     </div>
@@ -269,7 +269,7 @@ export function ModerationLog({
                     <div className="shrink-0 text-right">
                       <Badge
                         className={cn(
-                          'gap-1 border-0 text-[10px] uppercase tracking-wider ring-1 ring-inset',
+                          'gap-1 border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
                           b.expiresAt === null
                             ? 'bg-danger/10 text-danger ring-danger/30'
                             : 'bg-warn/10 text-warn ring-warn/30',
@@ -278,7 +278,7 @@ export function ModerationLog({
                         <Clock className="size-3" />
                         {remaining(b.expiresAt, now)}
                       </Badge>
-                      <div className="mt-0.5 text-[11px] tabular-nums text-muted-foreground/60">
+                      <div className="mt-0.5 text-xs tabular-nums text-muted-foreground/60">
                         {when(b.at)}
                       </div>
                     </div>

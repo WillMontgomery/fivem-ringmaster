@@ -173,9 +173,9 @@ export function PlayerTable({
                 type="button"
                 onClick={() => setFilter(f.key)}
                 className={cn(
-                  'rounded-md px-2 py-1 text-[11px] transition-colors',
+                  'rounded-md px-2 py-1 text-xs transition-colors',
                   filter === f.key
-                    ? 'bg-primary/15 text-[12px]rimary'
+                    ? 'bg-primary/15 text-primary'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >
@@ -196,7 +196,7 @@ export function PlayerTable({
                 <TableHead
                   key={col.key}
                   className={cn(
-                    'group/th cursor-pointer select-none text-[10px] uppercase tracking-wider transition-colors hover:text-foreground',
+                    'group/th cursor-pointer select-none text-xs uppercase tracking-wider transition-colors hover:text-foreground',
                     col.align === 'right' && 'text-right',
                     dir && 'text-foreground',
                   )}
@@ -221,7 +221,7 @@ export function PlayerTable({
                 </TableHead>
               )
             })}
-            <TableHead className="text-right text-[10px] uppercase tracking-wider">
+            <TableHead className="text-right text-xs uppercase tracking-wider">
               ID
             </TableHead>
           </TableRow>
@@ -244,13 +244,13 @@ export function PlayerTable({
         <div className="px-4 py-10 text-center">
           <p className="text-sm text-muted-foreground">No players match.</p>
           {query && (
-            <p className="mt-1 text-[12px] text-muted-foreground/60">
+            <p className="mt-1 text-xs text-muted-foreground/60">
               Nothing here called{' '}
               <span className="font-mono text-muted-foreground">{query}</span>.
               Searching a license from another session?{' '}
               <Link
                 href={`/players?q=${encodeURIComponent(query)}`}
-                className="text-[12px]rimary underline-offset-2 hover:underline"
+                className="text-primary underline-offset-2 hover:underline"
               >
                 Search everyone ever seen
               </Link>

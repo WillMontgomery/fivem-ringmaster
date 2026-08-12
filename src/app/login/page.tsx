@@ -55,7 +55,7 @@ export default async function LoginPage({
               {/* The storm circle, where the name comes from. */}
               <div className="size-5 rounded-full border-2 border-primary" />
             </div>
-            <h1 className={`${display.className} text-smxl font-bold tracking-tight`}>
+            <h1 className={`${display.className} text-2xl font-bold tracking-tight`}>
               Ringmaster
             </h1>
             <p className="mt-1.5 text-sm text-muted-foreground">

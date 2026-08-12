@@ -52,36 +52,39 @@ export function PlayerSearch({
   const [players, setPlayers] = useState<SearchPlayer[]>([])
 
   /**
-   * Suggestions come from live state, which is the honest source today: the
-   * durable `player_seen` stream does not exist yet, so anyone offline is not
-   * searchable and the empty state says as much rather than implying the
-   * person was never here.
+   * Ask the server, on every keystroke.
+   *
+   * THIS USED TO READ THE LIVE SNAPSHOT and filter it here, which meant search
+   * could only ever find somebody who was connected at that exact moment.
+   * Looking a player up after they logged off — the ordinary reason to look
+   * anyone up — returned nothing. The endpoint searches everyone the console
+   * has seen this session, online or not.
    */
   useEffect(() => {
     if (!open) return
     let alive = true
-    void (async () => {
+
+    const run = async () => {
       try {
-        const res = await fetch('/api/state', { cache: 'no-store' })
-        if (!res.ok || !alive) return
-        const data = (await res.json()) as {
-          view?: { players?: Array<{ license: string | null; name: string }> }
-        }
-        setPlayers(
-          (data.view?.players ?? []).map((p) => ({
-            license: p.license,
-            name: p.name,
-            online: true,
-          })),
+        const res = await fetch(
+          `/api/players/search?q=${encodeURIComponent(query)}`,
+          { cache: 'no-store' },
         )
+        if (!res.ok || !alive) return
+        const data = (await res.json()) as { players?: SearchPlayer[] }
+        setPlayers(data.players ?? [])
       } catch {
         /* an empty palette is a fine failure mode */
       }
-    })()
+    }
+
+    // Debounced: typing a name should not fire a request per keystroke.
+    const t = setTimeout(run, 120)
     return () => {
       alive = false
+      clearTimeout(t)
     }
-  }, [open])
+  }, [open, query])
 
   const go = useCallback(
     (href: string) => {
@@ -92,15 +95,9 @@ export function PlayerSearch({
     [onOpenChange, router],
   )
 
-  const q = query.trim().toLowerCase()
-  const matches = players
-    .filter(
-      (p) =>
-        !q ||
-        p.name.toLowerCase().includes(q) ||
-        (p.license?.toLowerCase().includes(q) ?? false),
-    )
-    .slice(0, MAX_RESULTS)
+  const q = query.trim()
+  // Filtered and capped by the endpoint; see api/players/search.
+  const matches = players.slice(0, MAX_RESULTS)
 
   return (
     <CommandDialog
@@ -129,7 +126,7 @@ export function PlayerSearch({
           {q ? (
             <span>
               Nobody online matches “{query}”.
-              <span className="mt-1 block text-[11px] text-muted-foreground/70">
+              <span className="mt-1 block text-xs text-muted-foreground/70">
                 Only players currently connected are searchable until the
                 player history stream ships.
               </span>
@@ -149,19 +146,19 @@ export function PlayerSearch({
                   go(`/players/${encodeURIComponent(p.license ?? '')}`)
                 }
               >
-                <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[10px] font-medium text-[12px]rimary ring-1 ring-inset ring-primary/20">
+                <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
                   {p.name.slice(0, 2).toUpperCase()}
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="truncate">{p.name}</div>
                   {p.license && (
-                    <code className="block truncate font-mono text-[10px] text-muted-foreground/60">
+                    <code className="block truncate font-mono text-xs text-muted-foreground/60">
                       {p.license}
                     </code>
                   )}
                 </div>
                 {p.online && (
-                  <span className="shrink-0 text-[10px] uppercase tracking-wider text-live">
+                  <span className="shrink-0 text-xs uppercase tracking-wider text-live">
                     online
                   </span>
                 )}
@@ -217,7 +214,7 @@ export function PlayerSearchTrigger() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="group flex w-full items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-[12px] text-muted-foreground shadow-sm transition-colors hover:bg-card hover:text-foreground"
+        className="group flex w-full items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-card hover:text-foreground"
         aria-label="Search players"
       >
         <Search className="size-3.5" />

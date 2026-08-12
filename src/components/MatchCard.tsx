@@ -32,23 +32,23 @@ import { cn } from '@/lib/utils'
  */
 const PHASE: Record<string, { chip: string; bar: string }> = {
   WARMUP: {
-    chip: 'text-[12px]hase-warmup ring-phase-warmup/30 bg-phase-warmup/10',
+    chip: 'text-phase-warmup ring-phase-warmup/30 bg-phase-warmup/10',
     bar: 'bg-phase-warmup',
   },
   BUS: {
-    chip: 'text-[12px]hase-bus ring-phase-bus/30 bg-phase-bus/10',
+    chip: 'text-phase-bus ring-phase-bus/30 bg-phase-bus/10',
     bar: 'bg-phase-bus',
   },
   DROP: {
-    chip: 'text-[12px]hase-drop ring-phase-drop/30 bg-phase-drop/10',
+    chip: 'text-phase-drop ring-phase-drop/30 bg-phase-drop/10',
     bar: 'bg-phase-drop',
   },
   STORM: {
-    chip: 'text-[12px]hase-storm ring-phase-storm/30 bg-phase-storm/10',
+    chip: 'text-phase-storm ring-phase-storm/30 bg-phase-storm/10',
     bar: 'bg-phase-storm',
   },
   ENDED: {
-    chip: 'text-[12px]hase-ended ring-border bg-muted/40',
+    chip: 'text-phase-ended ring-border bg-muted/40',
     bar: 'bg-phase-ended',
   },
 }
@@ -91,7 +91,7 @@ function Stat({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-baseline gap-1.5">
       <span className="font-mono text-sm">{value}</span>
-      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+      <span className="text-xs uppercase tracking-wider text-muted-foreground">
         {label}
       </span>
     </div>
@@ -126,13 +126,13 @@ export function MatchCard({
           <Badge
             variant="outline"
             className={cn(
-              'rounded-md border-0 text-[10px] font-semibold uppercase tracking-wider ring-1 ring-inset',
+              'rounded-md border-0 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
               phase.chip,
             )}
           >
             {match.state}
           </Badge>
-          <span className="text-[11px] uppercase tracking-wider text-muted-foreground/70">
+          <span className="text-xs uppercase tracking-wider text-muted-foreground/70">
             {match.mode}
           </span>
         </div>
@@ -147,25 +147,25 @@ export function MatchCard({
       <Table>
         <TableHeader>
           <TableRow className="border-border/60 hover:bg-transparent">
-            <TableHead className="text-[10px] uppercase tracking-wider">
+            <TableHead className="text-xs uppercase tracking-wider">
               Player
             </TableHead>
-            <TableHead className="text-[10px] uppercase tracking-wider">
+            <TableHead className="text-xs uppercase tracking-wider">
               State
             </TableHead>
-            <TableHead className="text-[10px] uppercase tracking-wider">
+            <TableHead className="text-xs uppercase tracking-wider">
               Health
             </TableHead>
-            <TableHead className="text-right text-[10px] uppercase tracking-wider">
+            <TableHead className="text-right text-xs uppercase tracking-wider">
               Connected
             </TableHead>
-            <TableHead className="text-right text-[10px] uppercase tracking-wider">
+            <TableHead className="text-right text-xs uppercase tracking-wider">
               Kills
             </TableHead>
-            <TableHead className="text-right text-[10px] uppercase tracking-wider">
+            <TableHead className="text-right text-xs uppercase tracking-wider">
               Damage
             </TableHead>
-            <TableHead className="text-right text-[10px] uppercase tracking-wider">
+            <TableHead className="text-right text-xs uppercase tracking-wider">
               ID
             </TableHead>
           </TableRow>
@@ -181,7 +181,7 @@ export function MatchCard({
               <TableRow className="border-border/60 hover:bg-transparent">
                 <td
                   colSpan={7}
-                  className="relative bg-background/40 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground"
+                  className="relative bg-background/40 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
                 >
                   {/* The squad's colour as a spine down the left edge. Reads as
                       grouping without a border box, and survives being glanced

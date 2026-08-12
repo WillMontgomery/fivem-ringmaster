@@ -56,7 +56,7 @@ export function PlayerActions({
     return (
       <Card className="surface-edge gap-0 px-5 py-4">
         <h2 className="text-sm font-medium">Moderation</h2>
-        <p className="mt-1 text-[13px] text-muted-foreground">
+        <p className="mt-1 text-sm text-muted-foreground">
           You can see this player&rsquo;s record but not act on it — kicking and
           banning need the <code className="font-mono">ban</code> scope.
         </p>
@@ -80,7 +80,7 @@ export function PlayerActions({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-medium">Moderation</h2>
-            <p className="mt-0.5 text-[12px] text-muted-foreground">
+            <p className="mt-0.5 text-xs text-muted-foreground">
               {active
                 ? `Banned by ${ban!.byName} — “${ban!.reason}”`
                 : online

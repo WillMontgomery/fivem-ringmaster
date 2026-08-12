@@ -61,7 +61,7 @@ export function UpdateBadge() {
         render={
           <Link
             href="/maintenance"
-            className="inline-flex items-center gap-1.5 rounded-md bg-info/10 px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-info ring-1 ring-inset ring-info/30 transition-colors hover:bg-info/20"
+            className="inline-flex items-center gap-1.5 rounded-md bg-info/10 px-2 py-1 text-xs font-medium uppercase tracking-wider text-info ring-1 ring-inset ring-info/30 transition-colors hover:bg-info/20"
           />
         }
       >

@@ -100,10 +100,10 @@ async function Preview({
       <div className="mx-auto max-w-6xl">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-[12px]l font-semibold tracking-tight">
+            <h1 className="text-xl font-semibold tracking-tight">
               Live players
             </h1>
-            <p className="text-[13px] text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Everyone on the server right now, by match and squad.
             </p>
           </div>
@@ -114,9 +114,9 @@ async function Preview({
                 key={k}
                 href={`/preview?state=${k}`}
                 className={cn(
-                  'rounded-md px-2.5 py-1 text-[11px] uppercase tracking-wider transition-colors',
+                  'rounded-md px-2.5 py-1 text-xs uppercase tracking-wider transition-colors',
                   k === key
-                    ? 'bg-primary/15 text-[12px]rimary'
+                    ? 'bg-primary/15 text-primary'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >
@@ -128,7 +128,7 @@ async function Preview({
 
         <LiveBoard view={view} now={now} />
 
-        <p className="mt-8 border-t border-border pt-4 text-[11px] text-muted-foreground/60">
+        <p className="mt-8 border-t border-border pt-4 text-xs text-muted-foreground/60">
           Design harness — rendered from{' '}
           <code className="font-mono">
             src/lib/__fixtures__/ingest-snapshot.json

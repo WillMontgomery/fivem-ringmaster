@@ -75,11 +75,11 @@ function Figure({
 }) {
   return (
     <div className="min-w-0">
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+      <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
         <Icon className="size-3" />
         {label}
       </div>
-      <div className="mt-1 truncate font-mono text-[12px]l tabular-nums">{value}</div>
+      <div className="mt-1 truncate font-mono text-xl tabular-nums">{value}</div>
     </div>
   )
 }
@@ -110,8 +110,8 @@ function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="text-[13px]">{i.summary}</div>
-        <div className="mt-0.5 text-[11px] text-muted-foreground">
+        <div className="text-sm">{i.summary}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">
           {when(i.at)} · {ago(i.at, now)}
         </div>
       </div>
@@ -119,7 +119,7 @@ function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
       <Badge
         variant="outline"
         className={cn(
-          'shrink-0 rounded-md border-0 text-[9px] font-semibold uppercase tracking-wider ring-1 ring-inset',
+          'shrink-0 rounded-md border-0 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
           INCIDENT_STATE[i.state],
         )}
       >
@@ -131,7 +131,7 @@ function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
 
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <p className="py-2 text-[13px] text-muted-foreground/70">{children}</p>
+    <p className="py-2 text-sm text-muted-foreground/70">{children}</p>
   )
 }
 
@@ -153,7 +153,7 @@ export function ProfileView({
     <div className="space-y-4">
       <Link
         href="/"
-        className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
       >
         <ArrowLeft className="size-3.5" />
         Back to live players
@@ -163,60 +163,60 @@ export function ProfileView({
           the wrong person. */}
       <Card className="surface-edge animate-rise gap-0 overflow-hidden px-5 py-4">
         <div className="flex flex-wrap items-start gap-4">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-[12px]rimary ring-1 ring-inset ring-primary/25">
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary ring-1 ring-inset ring-primary/25">
             {p.name.slice(0, 2).toUpperCase()}
           </div>
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[12px]l font-semibold tracking-tight">{p.name}</h1>
+              <h1 className="text-xl font-semibold tracking-tight">{p.name}</h1>
               {/* BANNED SITS NEXT TO THE NAME, not down in a moderation panel.
                   It is the single most important fact about a player when it
                   is true, and it has to be visible in the same glance that
                   confirms you are looking at the right person. */}
               {banned && (
-                <Badge className="gap-1 border-0 bg-danger/10 text-[10px] font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
+                <Badge className="gap-1 border-0 bg-danger/10 text-xs font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
                   <Ban className="size-3" />
                   Currently banned
                 </Badge>
               )}
               {p.live ? (
-                <Badge className="gap-1 border-0 bg-live/10 text-[10px] font-semibold uppercase tracking-wider text-live ring-1 ring-inset ring-live/25">
+                <Badge className="gap-1 border-0 bg-live/10 text-xs font-semibold uppercase tracking-wider text-live ring-1 ring-inset ring-live/25">
                   <span className="size-1.5 rounded-full bg-live" />
                   On the server now
                 </Badge>
               ) : (
                 <Badge
                   variant="outline"
-                  className="border-0 bg-muted/40 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
+                  className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
                 >
                   Offline
                 </Badge>
               )}
               {p.bans.length > 0 && (
-                <Badge className="gap-1 border-0 bg-danger/10 text-[10px] font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/25">
+                <Badge className="gap-1 border-0 bg-danger/10 text-xs font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/25">
                   <Ban className="size-3" />
                   {p.bans.length} ban{p.bans.length > 1 ? 's' : ''}
                 </Badge>
               )}
             </div>
-            <code className="mt-1 block font-mono text-[11px] text-muted-foreground">
+            <code className="mt-1 block font-mono text-xs text-muted-foreground">
               {p.license}
             </code>
           </div>
 
           <div className="flex gap-6 text-right">
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 First seen
               </div>
-              <div className="mt-1 text-[13px]">{when(p.firstSeen)}</div>
+              <div className="mt-1 text-sm">{when(p.firstSeen)}</div>
             </div>
             <div>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 Last seen
               </div>
-              <div className="mt-1 text-[13px]">{ago(p.lastSeen, now)}</div>
+              <div className="mt-1 text-sm">{ago(p.lastSeen, now)}</div>
             </div>
           </div>
         </div>
@@ -227,10 +227,10 @@ export function ProfileView({
           <ul className="space-y-1.5">
             {p.identifiers.map((id) => (
               <li key={id.kind} className="flex items-baseline gap-3">
-                <span className="w-16 shrink-0 text-[11px] uppercase tracking-wider text-muted-foreground">
+                <span className="w-16 shrink-0 text-xs uppercase tracking-wider text-muted-foreground">
                   {id.kind}
                 </span>
-                <code className="min-w-0 flex-1 truncate font-mono text-[12px]">
+                <code className="min-w-0 flex-1 truncate font-mono text-xs">
                   {id.value}
                 </code>
               </li>
@@ -240,7 +240,7 @@ export function ProfileView({
             The absence is the point, so it is stated rather than left as a
             gap somebody assumes is a bug.
           */}
-          <p className="mt-3 border-t border-border/60 pt-3 text-[11px] leading-relaxed text-muted-foreground/70">
+          <p className="mt-3 border-t border-border/60 pt-3 text-xs leading-relaxed text-muted-foreground/70">
             No IP address is recorded, by design. The identifier scan is an
             allowlist, so anything FiveM adds later is excluded by construction
             rather than collected by default. The cost is that evasion matching
@@ -284,7 +284,7 @@ export function ProfileView({
         provenance={<ProvenanceTag kind="moderation" />}
         action={
           p.incidents.filter((i) => i.state === 'open').length > 0 ? (
-            <Badge className="border-0 bg-warn/10 text-[10px] font-semibold uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
+            <Badge className="border-0 bg-warn/10 text-xs font-semibold uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
               {p.incidents.filter((i) => i.state === 'open').length} open
             </Badge>
           ) : null
@@ -325,7 +325,7 @@ export function ProfileView({
           {p.recentSessions.map((s, i) => (
             <li
               key={i}
-              className="flex items-center gap-4 border-t border-border/60 py-2 text-[13px] first:border-t-0 first:pt-0"
+              className="flex items-center gap-4 border-t border-border/60 py-2 text-sm first:border-t-0 first:pt-0"
             >
               <span className="w-36 shrink-0 text-muted-foreground">
                 {when(s.at)}
@@ -348,7 +348,7 @@ export function ProfileView({
       </Section>
 
       <Separator />
-      <p className="text-[11px] leading-relaxed text-muted-foreground/60">
+      <p className="text-xs leading-relaxed text-muted-foreground/60">
         <span className="text-warn">Demo data.</span> Only the live panel is
         wired to anything real. Identifiers arrive with the{' '}
         <code className="font-mono">player_seen</code> event stream, the play

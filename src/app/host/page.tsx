@@ -28,7 +28,7 @@ export default async function HostPage() {
     >
       <div>
         <div className="mb-5">
-          <h1 className="text-[13px]xl font-semibold tracking-tight">Host</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Host</h1>
           <p className="text-sm text-muted-foreground">
             The game server box &mdash; whether FXServer is running, which commit
             it is on, and how hard the machine is working.

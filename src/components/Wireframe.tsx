@@ -48,25 +48,25 @@ export function Wireframe({
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h1 className="text-[12px]l font-semibold tracking-tight">{title}</h1>
-            <span className="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border">
+            <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+            <span className="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border">
               <Construction className="size-3" />
               {milestone}
             </span>
           </div>
-          <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-muted-foreground">
+          <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted-foreground">
             {intent}
           </p>
         </div>
       </div>
 
       <Card className="surface-edge animate-rise gap-0 px-4 py-4">
-        <div className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <div className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Blocked on
         </div>
         <ul className="space-y-1.5">
           {needs.map((n) => (
-            <li key={n} className="flex gap-2 text-[13px] text-muted-foreground">
+            <li key={n} className="flex gap-2 text-sm text-muted-foreground">
               <span className="mt-[7px] size-1 shrink-0 rounded-full bg-muted-foreground/40" />
               <span>{n}</span>
             </li>
@@ -93,7 +93,7 @@ export function Wireframe({
               >
                 <Skeleton className="absolute inset-0 rounded-xl opacity-[0.25]" />
                 {b.label && c === 0 && (
-                  <span className="absolute left-3 top-2.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                  <span className="absolute left-3 top-2.5 text-xs font-medium uppercase tracking-wider text-muted-foreground/70">
                     {b.label}
                   </span>
                 )}

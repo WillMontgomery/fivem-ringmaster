@@ -229,9 +229,9 @@ export function MaintenancePanel({
                 </h2>
                 <Badge
                   className={cn(
-                    'gap-1 border-0 text-[10px] uppercase tracking-wider ring-1 ring-inset',
+                    'gap-1 border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
                     w.state === 'deploying'
-                      ? 'bg-primary/10 text-[12px]rimary ring-primary/30'
+                      ? 'bg-primary/10 text-primary ring-primary/30'
                       : draining
                         ? 'bg-warn/10 text-warn ring-warn/30'
                         : 'bg-info/10 text-info ring-info/30',
@@ -245,8 +245,8 @@ export function MaintenancePanel({
                   {w.state}
                 </Badge>
               </div>
-              <p className="mt-1 text-[13px] text-muted-foreground">“{w.note}”</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground/60">
+              <p className="mt-1 text-sm text-muted-foreground">“{w.note}”</p>
+              <p className="mt-0.5 text-xs text-muted-foreground/60">
                 Scheduled by {w.createdByName} · {clock(w.createdAt)}
               </p>
             </div>
@@ -270,18 +270,18 @@ export function MaintenancePanel({
 
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <div className="rounded-lg border border-border bg-card/40 px-3 py-2.5">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 Players online
               </div>
               <div
                 className={cn(
-                  'mt-0.5 text-[12px]l tabular-nums',
+                  'mt-0.5 text-xl tabular-nums',
                   players === 0 ? 'text-live' : 'text-foreground',
                 )}
               >
                 {players}
               </div>
-              <div className="text-[11px] text-muted-foreground/60">
+              <div className="text-xs text-muted-foreground/60">
                 {players === 0
                   ? 'server is empty'
                   : draining
@@ -291,29 +291,29 @@ export function MaintenancePanel({
             </div>
 
             <div className="rounded-lg border border-border bg-card/40 px-3 py-2.5">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 Draining
               </div>
-              <div className="mt-0.5 text-[12px]l">
+              <div className="mt-0.5 text-xl">
                 {draining ? 'Now' : until(w.drainStartsAt, now)}
               </div>
-              <div className="text-[11px] text-muted-foreground/60">
+              <div className="text-xs text-muted-foreground/60">
                 {draining ? 'refusing new players' : clock(w.drainStartsAt)}
               </div>
             </div>
 
             <div className="rounded-lg border border-border bg-card/40 px-3 py-2.5">
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 Deploy
               </div>
-              <div className="mt-0.5 text-[12px]l">
+              <div className="mt-0.5 text-xl">
                 {w.deployMode === 'when-empty'
                   ? players === 0
                     ? 'Any moment'
                     : 'When empty'
                   : until(w.deployAt ?? 0, now)}
               </div>
-              <div className="text-[11px] text-muted-foreground/60">
+              <div className="text-xs text-muted-foreground/60">
                 {w.deployMode === 'when-empty'
                   ? 'automatic'
                   : clock(w.deployAt ?? 0)}
@@ -389,17 +389,17 @@ export function MaintenancePanel({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-medium">Update available</h2>
-                <Badge className="gap-1 border-0 bg-info/10 text-[10px] uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
+                <Badge className="gap-1 border-0 bg-info/10 text-xs uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
                   <ArrowUpCircle className="size-3" />
                   {behind} commit{behind === 1 ? '' : 's'} behind
                 </Badge>
               </div>
-              <p className="mt-1 text-[13px] text-muted-foreground">
+              <p className="mt-1 text-sm text-muted-foreground">
                 Schedule it and the server drains, then deploys once everyone
                 has left. Nobody loses a match.
               </p>
               {deadline && (
-                <p className="mt-1 text-[11px] text-muted-foreground/70">
+                <p className="mt-1 text-xs text-muted-foreground/70">
                   If nobody schedules it, this runs automatically on{' '}
                   <span className="text-foreground">{clock(deadline)}</span>.
                 </p>
@@ -425,7 +425,7 @@ export function MaintenancePanel({
               <button
                 type="button"
                 onClick={() => setAdvanced((v) => !v)}
-                className="mt-3 flex w-fit items-center gap-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                className="mt-3 flex w-fit items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
               >
                 <ChevronDown
                   className={cn(
@@ -485,12 +485,12 @@ export function MaintenancePanel({
                         onChange={(e) => setDeployAt(e.target.value)}
                         className="max-w-xs"
                       />
-                      <p className="text-[11px] text-warn">
+                      <p className="text-xs text-warn">
                         Anyone still connected at that moment is disconnected
                         mid-match.
                       </p>
                       {deadline && (
-                        <p className="text-[11px] text-muted-foreground/70">
+                        <p className="text-xs text-muted-foreground/70">
                           Cannot be later than {clock(deadline)} — the automatic
                           window would already have run by then, so a later time
                           would never happen.
@@ -504,7 +504,7 @@ export function MaintenancePanel({
           )}
 
           {!canRun && (
-            <p className="mt-2 text-[12px] text-muted-foreground">
+            <p className="mt-2 text-xs text-muted-foreground">
               Scheduling needs the <code className="font-mono">process</code>{' '}
               scope — it restarts the game server.
             </p>
@@ -514,7 +514,7 @@ export function MaintenancePanel({
         <Card className="surface-edge items-center px-6 py-12 text-center">
           <CircleCheck className="size-6 text-live" />
           <p className="mt-2 text-sm">The server is running the latest code.</p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-muted-foreground">
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             Maintenance can only be scheduled when there is an update to deploy.
           </p>
         </Card>
@@ -568,12 +568,12 @@ function MaintenanceExplainer() {
       <ol className="mt-3 space-y-3">
         {steps.map((s, i) => (
           <li key={s.title} className="flex gap-3">
-            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums text-muted-foreground">
+            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold tabular-nums text-muted-foreground">
               {i + 1}
             </span>
             <div className="min-w-0">
-              <div className="text-[13px] font-medium">{s.title}</div>
-              <p className="text-[12px] leading-relaxed text-muted-foreground">
+              <div className="text-sm font-medium">{s.title}</div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
                 {s.body}
               </p>
             </div>
@@ -581,7 +581,7 @@ function MaintenanceExplainer() {
         ))}
       </ol>
 
-      <div className="mt-4 space-y-2 border-t border-border pt-3 text-[12px] leading-relaxed text-muted-foreground">
+      <div className="mt-4 space-y-2 border-t border-border pt-3 text-xs leading-relaxed text-muted-foreground">
         <p>
           <span className="font-medium text-foreground">
             You can cancel any time before the deploy starts.

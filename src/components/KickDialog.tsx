@@ -106,8 +106,8 @@ export function KickDialog({
           <p
             className={
               reasonOk
-                ? 'text-[11px] text-muted-foreground'
-                : 'text-[11px] text-warn'
+                ? 'text-xs text-muted-foreground'
+                : 'text-xs text-warn'
             }
           >
             {reasonOk

@@ -92,7 +92,7 @@ interface NavItem {
 function IncidentBadge({ n }: { n: number }) {
   if (!n) return null
   return (
-    <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-warn ring-1 ring-inset ring-warn/30">
+    <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-warn/15 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-warn ring-1 ring-inset ring-warn/30">
       {n > 99 ? '99+' : n}
     </span>
   )
@@ -102,7 +102,7 @@ function MaintenanceBadge({ state }: { state: 'scheduled' | 'draining' }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ring-1 ring-inset',
+        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
         state === 'draining'
           ? 'bg-warn/15 text-warn ring-warn/30'
           : 'bg-info/15 text-info ring-info/30',
@@ -225,7 +225,7 @@ export async function AppShell({
             </div>
             <div className="leading-tight group-data-[collapsible=icon]:hidden">
               <div className="text-sm font-semibold">Ringmaster</div>
-              <div className="text-[11px] text-muted-foreground">
+              <div className="text-xs text-muted-foreground">
                 Blitz Royale
               </div>
             </div>
@@ -260,7 +260,7 @@ export async function AppShell({
                         {badge ? (
                           <SidebarMenuBadge>{badge}</SidebarMenuBadge>
                         ) : item.soon ? (
-                          <SidebarMenuBadge className="text-[10px] uppercase tracking-wider text-muted-foreground/40">
+                          <SidebarMenuBadge className="text-xs uppercase tracking-wider text-muted-foreground/40">
                             {item.soon}
                           </SidebarMenuBadge>
                         ) : null}
@@ -292,7 +292,7 @@ export async function AppShell({
                       className="size-7 shrink-0 rounded-full object-cover ring-1 ring-inset ring-primary/25"
                     />
                   ) : (
-                    <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-[12px]rimary ring-1 ring-inset ring-primary/25">
+                    <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-xs font-medium text-primary ring-1 ring-inset ring-primary/25">
                       {resolvedUser.name.slice(0, 2).toUpperCase()}
                     </div>
                   )}
@@ -334,7 +334,7 @@ export async function AppShell({
               </SidebarMenuItem>
             </SidebarMenu>
           ) : (
-            <div className="px-2 py-1.5 text-[11px] text-muted-foreground group-data-[collapsible=icon]:hidden">
+            <div className="px-2 py-1.5 text-xs text-muted-foreground group-data-[collapsible=icon]:hidden">
               Not signed in
             </div>
           )}
@@ -359,8 +359,20 @@ export async function AppShell({
             to reach a player; a small button beside the sidebar toggle read as a
             minor control.
           */}
-          <div className="mx-auto w-full max-w-md px-4">
-            <PlayerSearchTrigger />
+          {/*
+            ABSOLUTELY positioned so it centres on the HEADER, not on whatever
+            space the flex row has left over. `mx-auto` inside the row put it
+            between the sidebar toggle and the status chips, which drifts as
+            those change width — the chips appear and disappear with feed state
+            and update availability, so the search bar visibly moved.
+
+            pointer-events-none on the wrapper keeps the rest of the header
+            clickable through it; the inner element takes them back.
+          */}
+          <div className="pointer-events-none absolute inset-x-0 flex justify-center px-28">
+            <div className="pointer-events-auto w-full max-w-md">
+              <PlayerSearchTrigger />
+            </div>
           </div>
 
           <div className="ml-auto flex items-center gap-2">
@@ -377,7 +389,7 @@ export async function AppShell({
               <Badge
                 variant="outline"
                 className={cn(
-                  'gap-1.5 border-0 text-[10px] font-medium uppercase tracking-wider ring-1 ring-inset',
+                  'gap-1.5 border-0 text-xs font-medium uppercase tracking-wider ring-1 ring-inset',
                   b.maintenance === 'draining'
                     ? 'bg-warn/10 text-warn ring-warn/30'
                     : 'bg-info/10 text-info ring-info/30',

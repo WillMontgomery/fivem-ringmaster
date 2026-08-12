@@ -140,7 +140,7 @@ export function Sparkline({
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           {label}
         </span>
         <span className="font-mono text-base tabular-nums" style={{ color }}>
@@ -194,7 +194,7 @@ export function Sparkline({
       {/* Time axis: the graph is meaningless without knowing what span it
           covers, and "last 12 minutes" is the difference between a spike that
           matters and one that scrolled off ten seconds ago. */}
-      <div className="mt-1 flex items-center justify-between text-[10px] tabular-nums text-muted-foreground/55">
+      <div className="mt-1 flex items-center justify-between text-xs tabular-nums text-muted-foreground/55">
         <span>{n > 1 ? (axisLeft ?? '') : ''}</span>
         <span>{n > 0 ? axisRight : ''}</span>
       </div>

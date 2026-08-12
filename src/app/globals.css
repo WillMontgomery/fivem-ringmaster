@@ -255,12 +255,17 @@
     @apply border-border outline-ring/50;
   }
 
-  /* The whole UI a step larger. Bumping the root rather than every utility
-     scales type AND the rem-based spacing with it, so nothing gets cramped as
-     the text grows. An admin reads this on a second monitor across a room as
-     often as up close. */
+  /* THE ONE NUMBER THAT CONTROLS THE FLOOR.
+
+     Every text size in the app is a rem-based token now (text-xs, text-sm, …),
+     so this scales all of them together, along with rem-based spacing.
+
+     It used to do almost nothing, because the components were full of absolute
+     values like `text-[11px]` — which ignore the root entirely. That is why two
+     separate rounds of "make the font bigger" changed nothing anyone could see:
+     the root grew and the 222 hardcoded pixel sizes did not. */
   html {
-    font-size: 17px;
+    font-size: 18px;
   }
 
   body {

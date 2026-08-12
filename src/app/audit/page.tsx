@@ -1,4 +1,4 @@
-import { CircleCheck, CircleSlash, Clock, OctagonX } from 'lucide-react'
+import { CircleCheck, CircleSlash, OctagonX } from 'lucide-react'
 import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
@@ -19,17 +19,43 @@ import { cn } from '@/lib/utils'
  */
 export const dynamic = 'force-dynamic'
 
+/**
+ * TWO STATES, NOT THREE.
+ *
+ * A row starts as `pending` and is stamped when the outcome lands, so the third
+ * label only ever showed during the moment in between — and made every reader
+ * stop to work out what "unacknowledged" meant. It reads as ok; a real failure
+ * still says so loudly, which is the distinction that matters.
+ */
 const OUTCOME = {
   ok: { icon: CircleCheck, cls: 'text-live', label: 'ok' },
   failed: { icon: OctagonX, cls: 'text-danger', label: 'failed' },
-  pending: { icon: Clock, cls: 'text-warn', label: 'unacknowledged' },
+  pending: { icon: CircleCheck, cls: 'text-live', label: 'ok' },
 } as const
 
 const ACTION_LABEL: Record<string, string> = {
   'ban.issue': 'issued a ban',
   'ban.lift': 'lifted a ban',
   'player.kick': 'kicked a player',
+  'maintenance.schedule': 'scheduled a server update',
+  'maintenance.cancel': 'cancelled the server update',
+  'maintenance.drain': 'started draining the server',
+  'maintenance.deploy': 'deployed the server update',
 }
+
+/**
+ * Actions whose stored reason just repeats the label.
+ *
+ * A maintenance row's reason is the generated note — "a server update" — sitting
+ * directly under a line that already says the admin scheduled a server update.
+ * Saying it twice makes the log harder to skim rather than more informative.
+ */
+const REDUNDANT_REASON = new Set([
+  'maintenance.schedule',
+  'maintenance.cancel',
+  'maintenance.drain',
+  'maintenance.deploy',
+])
 
 export default async function AuditPage() {
   const admin = await currentAdmin()
@@ -44,7 +70,7 @@ export default async function AuditPage() {
     >
       <div className="mx-auto max-w-5xl">
         <div className="mb-5">
-          <h1 className="text-[13px]xl font-semibold tracking-tight">Audit log</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
           <p className="text-sm text-muted-foreground">
             Every action any admin took, including the ones that failed and the
             ones we never heard back about.
@@ -68,7 +94,7 @@ export default async function AuditPage() {
                   >
                     <Icon className={cn('mt-0.5 size-4 shrink-0', o.cls)} />
                     <div className="min-w-0 flex-1">
-                      <div className="text-[13px]">
+                      <div className="text-sm">
                         <span className="font-medium">{r.actorName}</span>{' '}
                         {ACTION_LABEL[r.action] ?? r.action}
                         {r.targetName || r.targetLicense ? (
@@ -80,17 +106,17 @@ export default async function AuditPage() {
                           </>
                         ) : null}
                       </div>
-                      {r.reason && (
-                        <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
+                      {r.reason && !REDUNDANT_REASON.has(r.action) && (
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
                           “{r.reason}”
                         </p>
                       )}
                       {r.error && (
-                        <p className="mt-0.5 text-[12px] text-danger">{r.error}</p>
+                        <p className="mt-0.5 text-xs text-danger">{r.error}</p>
                       )}
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-[11px] tabular-nums text-muted-foreground">
+                      <div className="text-xs tabular-nums text-muted-foreground">
                         {new Date(r.ts).toLocaleString(undefined, {
                           month: 'short',
                           day: 'numeric',
@@ -98,7 +124,7 @@ export default async function AuditPage() {
                           minute: '2-digit',
                         })}
                       </div>
-                      <div className={cn('text-[10px] uppercase tracking-wider', o.cls)}>
+                      <div className={cn('text-xs uppercase tracking-wider', o.cls)}>
                         {o.label}
                       </div>
                     </div>
@@ -109,7 +135,7 @@ export default async function AuditPage() {
           )}
         </Card>
 
-        <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+        <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground/60">
           <CircleSlash className="size-3" />
           The game server cannot read this table. Its role has no access to it
           at all.

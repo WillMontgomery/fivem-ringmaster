@@ -45,14 +45,14 @@ const KIND: Record<
     detail:
       'From persistent stats, written at match end. Durable, but always one match behind a player who is mid-game.',
     icon: Trophy,
-    className: 'text-[12px]hase-warmup ring-phase-warmup/25 bg-phase-warmup/10',
+    className: 'text-phase-warmup ring-phase-warmup/25 bg-phase-warmup/10',
   },
   moderation: {
     label: 'Moderation',
     detail:
       "Ringmaster's own record — bans, incidents, audit. Authoritative, and the only data here that another admin wrote on purpose.",
     icon: ShieldAlert,
-    className: 'text-[12px]rimary ring-primary/25 bg-primary/10',
+    className: 'text-primary ring-primary/25 bg-primary/10',
   },
 }
 
@@ -66,7 +66,7 @@ export function ProvenanceTag({ kind }: { kind: Kind }) {
         render={
           <span
             className={cn(
-              'inline-flex cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ring-1 ring-inset',
+              'inline-flex cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
               k.className,
             )}
           />

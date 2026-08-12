@@ -28,10 +28,10 @@ const STATE: Record<string, { label: string; className: string }> = {
   DEAD: { label: 'Dead', className: 'text-danger ring-danger/25 bg-danger/10' },
   SPECTATING: { label: 'Spectating', className: 'text-info ring-info/25 bg-info/10' },
   LOBBY: { label: 'Lobby', className: 'text-muted-foreground ring-border bg-muted/40' },
-  WARMUP: { label: 'Warmup', className: 'text-[12px]hase-warmup ring-phase-warmup/25 bg-phase-warmup/10' },
-  BUS: { label: 'Bus', className: 'text-[12px]hase-bus ring-phase-bus/25 bg-phase-bus/10' },
-  FREEFALL: { label: 'Freefall', className: 'text-[12px]hase-drop ring-phase-drop/25 bg-phase-drop/10' },
-  GLIDE: { label: 'Glide', className: 'text-[12px]hase-drop ring-phase-drop/25 bg-phase-drop/10' },
+  WARMUP: { label: 'Warmup', className: 'text-phase-warmup ring-phase-warmup/25 bg-phase-warmup/10' },
+  BUS: { label: 'Bus', className: 'text-phase-bus ring-phase-bus/25 bg-phase-bus/10' },
+  FREEFALL: { label: 'Freefall', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
+  GLIDE: { label: 'Glide', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
 }
 
 function StateChip({ state }: { state: string }) {
@@ -42,7 +42,7 @@ function StateChip({ state }: { state: string }) {
   return (
     <span
       className={cn(
-        'inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset',
+        'inline-flex items-center rounded-md px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wide ring-1 ring-inset',
         s.className,
       )}
     >
@@ -84,7 +84,7 @@ function Vitals({ hp, armour }: { hp: number; armour: number }) {
           />
         )}
       </div>
-      <span className="w-6 text-right font-mono text-[11px] text-muted-foreground">
+      <span className="w-6 text-right font-mono text-xs text-muted-foreground">
         {Math.round(h)}
       </span>
     </div>
@@ -116,7 +116,7 @@ function License({ value }: { value: string }) {
               setCopied(true)
               setTimeout(() => setCopied(false), 1400)
             }}
-            className="group/lic -ml-1 flex max-w-[14rem] items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-[10px] text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-muted-foreground"
+            className="group/lic -ml-1 flex max-w-[14rem] items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-xs text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-muted-foreground"
           />
         }
       >
@@ -182,7 +182,7 @@ export function PlayerRowView({
           <Link
             href={`/players/${encodeURIComponent(p.license)}`}
             className={cn(
-              'text-sm underline-offset-4 transition-colors hover:text-[12px]rimary hover:underline',
+              'text-sm underline-offset-4 transition-colors hover:text-primary hover:underline',
               dim ? 'text-muted-foreground' : 'text-foreground',
             )}
           >
@@ -196,7 +196,7 @@ export function PlayerRowView({
         {p.license ? (
           <License value={p.license} />
         ) : (
-          <span className="text-[10px] text-muted-foreground/50">no license yet</span>
+          <span className="text-xs text-muted-foreground/50">no license yet</span>
         )}
       </TableCell>
 
@@ -206,13 +206,13 @@ export function PlayerRowView({
 
       <TableCell>
         {p.state === 'LOBBY' ? (
-          <span className="text-[11px] text-muted-foreground/50">—</span>
+          <span className="text-xs text-muted-foreground/50">—</span>
         ) : (
           <Vitals hp={p.hp} armour={p.armour} />
         )}
       </TableCell>
 
-      <TableCell className="text-right font-mono text-[12px] text-muted-foreground">
+      <TableCell className="text-right font-mono text-xs text-muted-foreground">
         {connected}
       </TableCell>
 
@@ -227,7 +227,7 @@ export function PlayerRowView({
         {Math.round(p.damage)}
       </TableCell>
 
-      <TableCell className="text-right font-mono text-[11px] text-muted-foreground/50">
+      <TableCell className="text-right font-mono text-xs text-muted-foreground/50">
         {p.src}
       </TableCell>
     </TableRow>

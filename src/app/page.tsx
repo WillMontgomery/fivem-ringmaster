@@ -35,7 +35,7 @@ export default async function LivePlayersPage() {
     >
       <div>
         <div className="mb-5">
-          <h1 className="text-[13px]xl font-semibold tracking-tight">Live players</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Live players</h1>
           <p className="text-sm text-muted-foreground">
             Everyone on the server right now, by match and squad.
           </p>
