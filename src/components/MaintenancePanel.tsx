@@ -387,8 +387,7 @@ export function MaintenancePanel({
               )}
               <p className="text-muted-foreground">
                 This runs <code className="font-mono">royale-deploy</code>: pull
-                main, sync resources, restart FXServer. The machine itself is not
-                rebooted.
+                main, sync resources, restart FXServer.
               </p>
             </>
           }
