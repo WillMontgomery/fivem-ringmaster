@@ -82,9 +82,16 @@ export const config = {
    * a 200, and choke parsing it as JSON. The route runs its own auth() and
    * answers 401, which the poller understands as "stop asking".
    *
+   * THE SAME REASONING COVERS EVERY API ROUTE, which is why this is a prefix
+   * match rather than a list of individual paths. The list version needed a
+   * new entry each time a route was added, and forgetting one does not fail
+   * loudly — it turns a 401 into an HTML login page with a 200 status, which
+   * fetch() reports as success and then fails to parse. Every route under
+   * /api guards itself; none of them wants a redirect.
+   *
    * `/preview` is the design harness, which 404s in production regardless.
    */
   matcher: [
-    '/((?!api/auth|api/ingest|api/state|api/host|login|preview|_next/static|_next/image|favicon.ico).*)',
+    '/((?!api|login|preview|_next/static|_next/image|favicon.ico).*)',
   ],
 }

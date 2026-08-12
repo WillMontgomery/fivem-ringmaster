@@ -1,17 +1,120 @@
-import { AppShell } from '@/components/AppShell'
-import { Wireframe } from '@/components/Wireframe'
-import { DEMO_BADGES } from '@/lib/demo'
+import { CircleCheck, CircleSlash, Clock, OctagonX } from 'lucide-react'
+import { redirect } from 'next/navigation'
 
-export default function Page() {
+import { AppShell } from '@/components/AppShell'
+import { Card } from '@/components/ui/card'
+import * as audit from '@/lib/audit'
+import { currentAdmin } from '@/lib/session'
+import { cn } from '@/lib/utils'
+
+/**
+ * The audit log.
+ *
+ * SHOWS PENDING ROWS, and that is the point rather than an oversight. An action
+ * recorded as intended but never resolved means we asked the game host to do
+ * something and never learned whether it happened — a different fact from
+ * "it failed", and the one most worth seeing. A log that displayed only
+ * resolved rows would hide exactly the actions that went wrong in the most
+ * interesting way.
+ */
+export const dynamic = 'force-dynamic'
+
+const OUTCOME = {
+  ok: { icon: CircleCheck, cls: 'text-live', label: 'ok' },
+  failed: { icon: OctagonX, cls: 'text-danger', label: 'failed' },
+  pending: { icon: Clock, cls: 'text-warn', label: 'unacknowledged' },
+} as const
+
+const ACTION_LABEL: Record<string, string> = {
+  'ban.issue': 'issued a ban',
+  'ban.lift': 'lifted a ban',
+  'player.kick': 'kicked a player',
+}
+
+export default async function AuditPage() {
+  const admin = await currentAdmin()
+  if (!admin) redirect('/login')
+
+  const rows = await audit.recent(100)
+
   return (
-    <AppShell active="/audit" badges={DEMO_BADGES}>
-      <Wireframe
-        title="Audit log"
-        milestone="M4"
-        intent={"Every action any admin took, including the ones that failed. Written in two phases - intent before dispatch, outcome after - so an action that crashes mid-flight still leaves a trace of who tried what."}
-        needs={["Any write path at all to record; Slice 1 has none by design","A command id minted here and echoed back by br_ringmaster, so the two halves of a record can be joined","An unacknowledged state for intents whose outcome never arrives - which is exactly what a crashed FXServer produces"]}
-        blocks={[{"h":16,"label":"Filters - admin, action, target, outcome, date"},{"h":70,"label":"Log - time, admin, action, target, outcome, correlation id"}]}
-      />
+    <AppShell
+      active="/audit"
+      user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
+    >
+      <div className="max-w-5xl">
+        <div className="mb-5">
+          <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
+          <p className="text-sm text-muted-foreground">
+            Every action any admin took, including the ones that failed and the
+            ones we never heard back about.
+          </p>
+        </div>
+
+        <Card className="surface-edge gap-0 overflow-hidden py-0">
+          {rows.length === 0 ? (
+            <p className="px-4 py-14 text-center text-sm text-muted-foreground">
+              Nothing has been done yet.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border/60">
+              {rows.map((r) => {
+                const o = OUTCOME[r.outcome] ?? OUTCOME.pending
+                const Icon = o.icon
+                return (
+                  <li
+                    key={`${r.ts}-${r.commandId}`}
+                    className="flex items-start gap-3 px-4 py-3"
+                  >
+                    <Icon className={cn('mt-0.5 size-4 shrink-0', o.cls)} />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13px]">
+                        <span className="font-medium">{r.actorName}</span>{' '}
+                        {ACTION_LABEL[r.action] ?? r.action}
+                        {r.targetName || r.targetLicense ? (
+                          <>
+                            {' — '}
+                            <span className="text-muted-foreground">
+                              {r.targetName ?? r.targetLicense}
+                            </span>
+                          </>
+                        ) : null}
+                      </div>
+                      {r.reason && (
+                        <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
+                          “{r.reason}”
+                        </p>
+                      )}
+                      {r.error && (
+                        <p className="mt-0.5 text-[12px] text-danger">{r.error}</p>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="text-[11px] tabular-nums text-muted-foreground">
+                        {new Date(r.ts).toLocaleString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </div>
+                      <div className={cn('text-[10px] uppercase tracking-wider', o.cls)}>
+                        {o.label}
+                      </div>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </Card>
+
+        <p className="mt-3 flex items-center gap-1.5 text-[11px] text-muted-foreground/60">
+          <CircleSlash className="size-3" />
+          The game server cannot read this table. Its role has no access to it
+          at all.
+        </p>
+      </div>
     </AppShell>
   )
 }
