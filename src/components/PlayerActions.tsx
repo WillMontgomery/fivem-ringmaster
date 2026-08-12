@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 
 import { BanDialog } from '@/components/BanDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { KickDialog } from '@/components/KickDialog'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import {
@@ -70,16 +71,6 @@ export function PlayerActions({
       router.refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Lift failed.')
-    }
-  }
-
-  const kick = async () => {
-    try {
-      await postJson('/api/kick', { license, playerName: name })
-      toast.success(`${name} was kicked from the server.`)
-      router.refresh()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Kick failed.')
     }
   }
 
@@ -171,25 +162,11 @@ export function PlayerActions({
         }
       />
 
-      <ConfirmDialog
+      <KickDialog
+        license={license}
+        name={name}
         open={kickOpen}
         onOpenChange={setKickOpen}
-        title="Kick from the server?"
-        confirmLabel="Confirm kick"
-        busyLabel="Kicking…"
-        onConfirm={kick}
-        body={
-          <>
-            <p>
-              <span className="font-medium text-foreground">{name}</span> will be
-              removed <strong>immediately</strong>, mid-match.
-            </p>
-            <p className="text-muted-foreground">
-              A kick is not a ban — nothing stops them reconnecting straight
-              away.
-            </p>
-          </>
-        }
       />
     </>
   )

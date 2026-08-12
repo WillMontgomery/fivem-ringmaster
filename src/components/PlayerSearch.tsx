@@ -217,12 +217,12 @@ export function PlayerSearchTrigger() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="group flex items-center gap-2 rounded-md border border-border bg-card/50 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-card hover:text-foreground"
+        className="group flex w-full items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-[12px] text-muted-foreground shadow-sm transition-colors hover:bg-card hover:text-foreground"
         aria-label="Search players"
       >
         <Search className="size-3.5" />
-        <span className="hidden sm:inline">Search players</span>
-        <CommandShortcut className="hidden sm:inline">⌘K</CommandShortcut>
+        <span className="hidden sm:inline">Search players by name or license…</span>
+        <CommandShortcut className="ml-auto hidden sm:inline">⌘K</CommandShortcut>
       </button>
       <PlayerSearch open={open} onOpenChange={setOpen} />
     </>

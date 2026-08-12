@@ -335,10 +335,20 @@ export async function AppShell({
       </Sidebar>
 
       <SidebarInset className="min-w-0">
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-background/70 px-5 backdrop-blur-xl">
+        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 relative border-b border-border bg-background/70 px-5 backdrop-blur-xl">
           <SidebarTrigger className="-ml-1.5" />
 
-          <PlayerSearchTrigger />
+          {/* Centred and given real width: the palette is the primary way to
+              reach a player, and a small button tucked beside the sidebar
+              toggle read as a minor control rather than the main one. */}
+          <div className="pointer-events-none absolute inset-x-0 hidden justify-center md:flex">
+            <div className="pointer-events-auto w-full max-w-md px-4">
+              <PlayerSearchTrigger />
+            </div>
+          </div>
+          <div className="md:hidden">
+            <PlayerSearchTrigger />
+          </div>
 
           <div className="ml-auto flex items-center gap-2">
             {feed && (
