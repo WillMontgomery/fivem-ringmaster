@@ -29,7 +29,7 @@ export default async function LoginPage({
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
       <h1 className="text-2xl font-semibold">Ringmaster</h1>
       <p className="mt-2 text-sm text-slate-400">
-        Admin console for FiveM Royale.
+        Admin console for Blitz Royale.
       </p>
 
       {/* The toast carries the message now; the inline fallback stays for

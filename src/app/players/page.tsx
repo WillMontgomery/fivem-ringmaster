@@ -45,7 +45,7 @@ export default async function PlayersPage({
 
   return (
     <AppShell active="/players" user={DEMO_USER} badges={DEMO_BADGES}>
-      <div className="mx-auto max-w-4xl space-y-4">
+      <div className="max-w-5xl space-y-4">
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-semibold tracking-tight">

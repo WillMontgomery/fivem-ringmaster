@@ -17,7 +17,7 @@ const mono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
   title: 'Ringmaster',
-  description: 'Admin console for FiveM Royale',
+  description: 'Admin console for Blitz Royale',
   robots: { index: false, follow: false },
 }
 

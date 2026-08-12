@@ -23,14 +23,15 @@ export default async function HostPage() {
   return (
     <AppShell
       active="/host"
-      user={{ name: admin.name, scopes: admin.scopes }}
+      user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
       feed={{ lastPushAt: feed.lastPushAt, bootEpoch: feed.bootEpoch, now, live: true }}
     >
-      <div className="mx-auto max-w-5xl">
+      <div>
         <div className="mb-5">
-          <h1 className="text-xl font-semibold tracking-tight">Host</h1>
-          <p className="text-[13px] text-muted-foreground">
-            The game server box &mdash; process, CPU, memory, network. Polled over SSH.
+          <h1 className="text-2xl font-semibold tracking-tight">Host</h1>
+          <p className="text-sm text-muted-foreground">
+            The game server box &mdash; whether FXServer is running, which commit
+            it is on, and how hard the machine is working.
           </p>
         </div>
         <HostBoard initial={hostView()} />

@@ -15,6 +15,7 @@ import {
 
 import { FeedStatus } from '@/components/FeedStatus'
 import { ThemeToggle } from '@/components/ThemeToggle'
+import { UpdateBadge } from '@/components/UpdateBadge'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -184,7 +185,7 @@ export function AppShell({
 }: {
   children: React.ReactNode
   active?: string
-  user?: { name: string; scopes: string[] } | null
+  user?: { name: string; avatarUrl?: string | null } | null
   badges?: NavBadges
   /**
    * Feed status for the header chip. Omit on pages that draw nothing from the
@@ -201,7 +202,10 @@ export function AppShell({
 }) {
   return (
     <div className="flex min-h-screen">
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/70 backdrop-blur-xl md:flex">
+      {/* Sticky and viewport-tall so the nav stays put while the page scrolls.
+          Its own overflow-y on the <nav> handles a nav list taller than the
+          screen; the sidebar itself never moves. */}
+      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/70 backdrop-blur-xl md:flex">
         <div className="flex items-center gap-2.5 px-4 py-5">
           <div className="relative flex size-8 items-center justify-center rounded-lg bg-primary/15 ring-1 ring-inset ring-primary/25">
             {/* The storm circle, which is where the name comes from. */}
@@ -209,7 +213,7 @@ export function AppShell({
           </div>
           <div className="leading-tight">
             <div className="text-sm font-semibold">Ringmaster</div>
-            <div className="text-[11px] text-muted-foreground">FiveM Royale</div>
+            <div className="text-[11px] text-muted-foreground">Blitz Royale</div>
           </div>
         </div>
 
@@ -240,33 +244,26 @@ export function AppShell({
         <div className="p-3">
           {user ? (
             <div className="group/user flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/50">
-              <div className="flex size-7 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/25">
-                {user.name.slice(0, 2).toUpperCase()}
-              </div>
+              {/* Discord avatar when we have one, initials as the fallback —
+                  a broken image on an admin's own name reads as "something is
+                  wrong with my account", so the fallback is a real design
+                  state, not an afterthought. */}
+              {user.avatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={user.avatarUrl}
+                  alt=""
+                  width={28}
+                  height={28}
+                  className="size-7 shrink-0 rounded-full object-cover ring-1 ring-inset ring-primary/25"
+                />
+              ) : (
+                <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/25">
+                  {user.name.slice(0, 2).toUpperCase()}
+                </div>
+              )}
               <div className="min-w-0 flex-1 leading-tight">
-                <div className="truncate text-[13px]">{user.name}</div>
-                {/*
-                  Scopes, not a role. There is no "admin" in this system —
-                  someone who can kick may well not be able to ban, and showing
-                  the actual grant set is how they find that out before a
-                  button refuses them.
-                */}
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <div className="truncate text-[10px] text-muted-foreground" />
-                    }
-                  >
-                    {user.scopes.length
-                      ? user.scopes.join(' · ')
-                      : 'no scopes granted'}
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="max-w-[18rem]">
-                    Your grants. Every action re-checks these server-side at the
-                    moment it runs — hiding a button is a courtesy, not the
-                    boundary.
-                  </TooltipContent>
-                </Tooltip>
+                <div className="truncate text-sm">{user.name}</div>
               </div>
               {/*
                 Sign out, revealed on hover. This deletes the session RECORD in
@@ -323,6 +320,7 @@ export function AppShell({
                 live={feed.live}
               />
             )}
+            <UpdateBadge />
             {badges.maintenance && (
               <Badge
                 variant="outline"
@@ -337,12 +335,6 @@ export function AppShell({
                 Maintenance {badges.maintenance}
               </Badge>
             )}
-            <Badge
-              variant="outline"
-              className="border-primary/25 bg-primary/10 text-[10px] font-medium uppercase tracking-wider text-primary"
-            >
-              Slice 1 · read only
-            </Badge>
             <ThemeToggle />
           </div>
         </header>

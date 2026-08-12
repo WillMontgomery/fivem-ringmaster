@@ -30,13 +30,13 @@ export default async function LivePlayersPage() {
   return (
     <AppShell
       active="/"
-      user={{ name: admin.name, scopes: admin.scopes }}
+      user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
       feed={{ lastPushAt: view.lastPushAt, bootEpoch: view.bootEpoch, now, live: true }}
     >
-      <div className="mx-auto max-w-6xl">
+      <div>
         <div className="mb-5">
-          <h1 className="text-xl font-semibold tracking-tight">Live players</h1>
-          <p className="text-[13px] text-muted-foreground">
+          <h1 className="text-2xl font-semibold tracking-tight">Live players</h1>
+          <p className="text-sm text-muted-foreground">
             Everyone on the server right now, by match and squad.
           </p>
         </div>

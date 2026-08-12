@@ -20,6 +20,8 @@ import { grantsForDiscordId, type Grant, type Scope } from '@/lib/grants'
 export interface CurrentAdmin {
   /** Display name from Discord, for the sidebar. */
   name: string
+  /** Discord avatar URL, persisted by the adapter from the OAuth profile. */
+  avatarUrl: string | null
   discordId: string | null
   /** null until a grants row links this Discord account to a license. */
   license: string | null
@@ -65,14 +67,16 @@ export async function currentAdmin(): Promise<CurrentAdmin | null> {
   if (!session?.user?.id) return null
 
   const name = session.user.name ?? 'Unknown'
+  const avatarUrl = session.user.image ?? null
 
   const discordId = await discordIdFor(session.user.id)
-  if (!discordId) return { name, discordId: null, license: null, scopes: [], grant: null }
+  if (!discordId) return { name, avatarUrl, discordId: null, license: null, scopes: [], grant: null }
 
   const grant = await grantsForDiscordId(discordId)
 
   return {
     name,
+    avatarUrl,
     discordId,
     license: grant?.license ?? null,
     scopes: grant?.scopes ?? [],

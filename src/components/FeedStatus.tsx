@@ -73,14 +73,14 @@ const TONE: Record<Tone, { chip: string; dot: string; label: string }> = {
 
 export function FeedStatus({
   lastPushAt: initialLastPushAt,
-  bootEpoch: initialBootEpoch,
   now: initialNow,
   intervalMs = 2_000,
   live = false,
 }: {
   /** Absolute timestamp of the last push, so the age can tick. */
   lastPushAt: number | null
-  bootEpoch: string | null
+  /** Accepted for call-site symmetry with the live view; not shown. */
+  bootEpoch?: string | null
   /** Server-rendered clock, so first paint matches and hydration is clean. */
   now: number
   intervalMs?: number
@@ -91,7 +91,6 @@ export function FeedStatus({
   // chip can never claim an age the table contradicts.
   const polled = useLiveState(live)
   const lastPushAt = polled?.view.lastPushAt ?? initialLastPushAt
-  const bootEpoch = polled?.view.bootEpoch ?? initialBootEpoch
   const [now, setNow] = useState(initialNow)
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
@@ -119,39 +118,29 @@ export function FeedStatus({
         {tone === 'offline' ? (
           <WifiOff className="size-3" />
         ) : (
-          <Radio className="size-3" />
+          <Radio className={cn('size-3', tone === 'live' && 'animate-fade-pulse')} />
         )}
-        {t.label}
+        {/* The word itself breathes when live — the single most persistent
+            "data is still arriving" cue on the page. */}
+        <span className={cn(tone === 'live' && 'animate-fade-pulse')}>
+          {t.label}
+        </span>
         {ageMs !== null && (
           <span className="tabular-nums opacity-70">{ago(ageMs)}</span>
-        )}
-        {tone === 'live' && (
-          <span className="relative flex size-1.5">
-            <span className={cn('absolute inline-flex size-full animate-ping rounded-full opacity-70', t.dot)} />
-            <span className={cn('relative inline-flex size-1.5 rounded-full', t.dot)} />
-          </span>
         )}
       </TooltipTrigger>
 
       <TooltipContent side="bottom" className="max-w-[21rem]">
         {tone === 'offline' ? (
           <span>
-            Nothing has been received from the game server. That is the correct
-            display when <code className="font-mono">br_ringmaster</code> is not
-            configured — not an error.
+            Nothing has been received from the game server yet. That is the
+            correct display before the server starts sending data — not an
+            error.
           </span>
         ) : (
           <span>
-            Last push {ago(ageMs!)} ago; expected every{' '}
+            Last update {ago(ageMs!)} ago. The board refreshes every{' '}
             {(intervalMs / 1000).toFixed(0)}s.
-            {bootEpoch && (
-              <>
-                {' '}
-                Boot epoch <code className="font-mono">{bootEpoch}</code>, which
-                changes on every{' '}
-                <code className="font-mono">restart br_ringmaster</code>.
-              </>
-            )}
           </span>
         )}
       </TooltipContent>

@@ -241,6 +241,14 @@
     @apply border-border outline-ring/50;
   }
 
+  /* The whole UI a step larger. Bumping the root rather than every utility
+     scales type AND the rem-based spacing with it, so nothing gets cramped as
+     the text grows. An admin reads this on a second monitor across a room as
+     often as up close. */
+  html {
+    font-size: 17px;
+  }
+
   body {
     /* `font-sans` is not optional here: without it the theme's font tokens are
        defined and never applied, and everything falls back to system-ui. It
@@ -301,6 +309,19 @@
 
   .animate-rise { animation: var(--animate-rise); }
   .animate-slide-in { animation: var(--animate-slide-in); }
+
+  /*
+   * The live pulse, as a fade rather than a blink. It is the one thing on
+   * screen whose whole job is to say "still arriving", so it breathes slowly
+   * and evenly — fast enough to read as alive, slow enough to ignore for an
+   * hour. Reduced-motion (below) freezes it at full opacity, which is the
+   * honest resting state.
+   */
+  @keyframes fade-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .animate-fade-pulse { animation: fade-pulse 2.2s ease-in-out infinite; }
 
   /*
    * Stagger. Entrance animations fire in reading order rather than all at once,

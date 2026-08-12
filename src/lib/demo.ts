@@ -11,7 +11,7 @@ import type { NavBadges } from '@/components/AppShell'
 
 export const DEMO_USER = {
   name: 'Will',
-  scopes: ['view', 'kick', 'ban', 'grant'],
+  avatarUrl: null,
 }
 
 /**
