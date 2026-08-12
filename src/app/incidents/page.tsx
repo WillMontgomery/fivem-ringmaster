@@ -1,16 +1,46 @@
-import { AppShell } from '@/components/AppShell'
-import { Wireframe } from '@/components/Wireframe'
-import { DEMO_BADGES } from '@/lib/demo'
+import { redirect } from 'next/navigation'
 
-export default function Page() {
+import { AppShell } from '@/components/AppShell'
+import { IncidentQueue } from '@/components/IncidentQueue'
+import { CATEGORY_LABEL, all, queue } from '@/lib/incidents'
+import { currentAdmin } from '@/lib/session'
+import { liveView } from '@/lib/state'
+
+/**
+ * The incident queue.
+ *
+ * THE LANDING VIEW IS WHAT IS WAITING, because an incident nobody sees is the
+ * same as no incident. Everything ever filed is one tab away for when somebody
+ * is looking for a pattern rather than a job.
+ */
+export const dynamic = 'force-dynamic'
+
+export default async function IncidentsPage() {
+  const admin = await currentAdmin()
+  if (!admin) redirect('/login')
+
+  const now = Date.now()
+  const view = liveView(now)
+
+  const [pending, history] = await Promise.all([queue(), all()])
+
   return (
-    <AppShell active="/incidents">
-      <Wireframe
-        title="Incidents"
-        milestone="M5"
-        intent={"One record shape, two triggers: the anticheat escalating on repeated refusals, and a player pressing Report in game. Both open the same evidence bundle - recent refusals, inventory and position history, and a screenshot from the reported player own client."}
-        needs={["The event channel, for both triggers","S3 and presigned upload URLs - screenshot-basic uploads from the client NUI browser directly, so the image never transits either server","The in-game Report button and its rate limit, where a refused-for-rate report is still recorded because spamming reports is itself a signal"]}
-        blocks={[{"h":16,"label":"Queue filters - open / reviewed / actioned / dismissed"},{"h":30,"label":"Incident list"},{"h":52,"label":"Detail - evidence bundle, screenshot, refusal history, actions","cols":2}]}
+    <AppShell
+      active="/incidents"
+      user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
+      badges={{ incidents: pending.length }}
+      feed={{
+        lastPushAt: view.lastPushAt,
+        bootEpoch: view.bootEpoch,
+        now,
+        live: true,
+      }}
+    >
+      <IncidentQueue
+        pending={pending}
+        history={history}
+        now={now}
+        categoryLabel={CATEGORY_LABEL}
       />
     </AppShell>
   )

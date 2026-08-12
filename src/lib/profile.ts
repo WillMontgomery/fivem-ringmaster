@@ -28,12 +28,17 @@ export interface ProfileIdentifier {
 
 export interface ProfileIncident {
   id: string
-  kind: 'anticheat' | 'report'
+  kind: 'anticheat' | 'report' | 'identifier_reuse'
   at: number
   summary: string
-  /** Open incidents are what the nav badge counts. */
-  state: 'open' | 'reviewed' | 'actioned' | 'dismissed'
-  /** For reports: who filed it. Absent for anticheat escalations. */
+  /**
+   * TWO STATES, AND NO WAY BACK (owner, 2026-08-12). `pending_review` is what
+   * the nav badge counts. See lib/incidents for why re-opening is disallowed —
+   * briefly: it keeps the queue strictly shrinking, and a recurrence is a new
+   * incident rather than an old one changing its mind.
+   */
+  state: 'pending_review' | 'resolved'
+  /** For reports: who filed it. Absent for system-filed incidents. */
   reportedBy?: string
 }
 

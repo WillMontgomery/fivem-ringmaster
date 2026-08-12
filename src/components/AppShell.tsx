@@ -133,8 +133,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
       {
         href: '/incidents',
         label: 'Incidents',
-        icon: FileSearch,
-        soon: 'M5',
+        icon: FileSearch,
         badge: (b) => <IncidentBadge n={b.incidents ?? 0} />,
       },
       { href: '/audit', label: 'Audit log', icon: ScrollText },

@@ -7,6 +7,7 @@ import * as audit from '@/lib/audit'
 import { avatarFor } from '@/lib/discord'
 import * as bans from '@/lib/bans'
 import { gameProfileFor } from '@/lib/gameProfile'
+import * as incidents from '@/lib/incidents'
 import { can } from '@/lib/grants'
 import * as players from '@/lib/players'
 import type { Profile } from '@/lib/profile'
@@ -28,7 +29,8 @@ import { liveView } from '@/lib/state'
  *   stats, progression, wallet  br-players, written by the game at match end
  *   live presence               the snapshot feed
  *   bans                        the bans table
- *   incidents, match history    NOTHING YET — and they render as absent
+ *   incidents                   ringmaster-incidents, both directions
+ *   match history               NOTHING YET — and it renders as absent
  *
  * THREE READS, IN PARALLEL, AND NONE OF THEM BLOCKS THE OTHERS. A moderator
  * opening a profile is usually trying to answer "who is this and should I act",
@@ -62,12 +64,14 @@ export default async function PlayerProfilePage({
   // The real snapshot, not a fixture: are they on the server right now?
   const live = view.players.find((p) => p.license === license) ?? null
 
-  const [ban, canBan, record, game, actions] = await Promise.all([
+  const [ban, canBan, record, game, actions, against, filed] = await Promise.all([
     bans.banFor(license),
     can(admin.license, 'ban'),
     players.playerFor(license),
     gameProfileFor(license),
     audit.forTarget(license),
+    incidents.forSubject(license),
+    incidents.filedBy(license),
   ])
 
   // The Discord id is the newest sighting, not the first: somebody who changed
@@ -216,12 +220,27 @@ export default async function PlayerProfilePage({
       reason: a.reason,
     })),
 
-    // NO SOURCE YET, AND EMPTY IS THE TRUTHFUL RENDER. The incidents system
-    // does not exist, and nothing records per-match session history. These used
-    // to be filled from the fixture, which meant a moderator could read an
-    // invented anticheat escalation on a real person's profile.
-    incidents: [],
-    reportsFiled: [],
+    // REAL NOW. Both directions matter: what has been filed against them, and
+    // what they have filed against others -- somebody who reports everybody is
+    // itself a signal, and it is only visible if you can see what they sent.
+    incidents: against.map((i) => ({
+      id: i.incidentId,
+      kind: i.kind === 'anticheat' ? ('anticheat' as const)
+        : i.kind === 'identifier_reuse' ? ('identifier_reuse' as const)
+        : ('report' as const),
+      at: i.openedAt,
+      summary: i.summary,
+      state: i.state,
+      reportedBy: i.reporterName ?? undefined,
+    })),
+    reportsFiled: filed.map((i) => ({
+      id: i.incidentId,
+      kind: 'report' as const,
+      at: i.openedAt,
+      summary: i.summary,
+      state: i.state,
+      reportedBy: i.reporterName ?? undefined,
+    })),
     recentSessions: [],
   }
 

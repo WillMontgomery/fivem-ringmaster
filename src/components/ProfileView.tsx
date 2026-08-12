@@ -88,10 +88,13 @@ function Figure({
 }
 
 const INCIDENT_STATE: Record<ProfileIncident['state'], string> = {
-  open: 'text-warn ring-warn/30 bg-warn/10',
-  reviewed: 'text-info ring-info/25 bg-info/10',
-  actioned: 'text-danger ring-danger/25 bg-danger/10',
-  dismissed: 'text-muted-foreground ring-border bg-muted/40',
+  pending_review: 'text-warn ring-warn/30 bg-warn/10',
+  resolved: 'text-muted-foreground ring-border bg-muted/40',
+}
+
+const INCIDENT_STATE_LABEL: Record<ProfileIncident['state'], string> = {
+  pending_review: 'pending review',
+  resolved: 'resolved',
 }
 
 function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
@@ -113,7 +116,14 @@ function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="text-sm">{i.summary}</div>
+        {/* The summary is the link. Somebody reading a profile who wants the
+            detail should not have to go back through the queue to find it. */}
+        <Link
+          href={`/incidents/${i.id}`}
+          className="text-sm underline underline-offset-2 transition-colors hover:text-foreground"
+        >
+          {i.summary}
+        </Link>
         <div className="mt-0.5 text-xs text-muted-foreground">
           {when(i.at)} · {ago(i.at, now)}
         </div>
@@ -126,7 +136,7 @@ function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
           INCIDENT_STATE[i.state],
         )}
       >
-        {i.state}
+        {INCIDENT_STATE_LABEL[i.state]}
       </Badge>
     </li>
   )
@@ -501,9 +511,9 @@ export function ProfileView({
         title="Incidents involving this player"
         provenance={<ProvenanceTag kind="moderation" />}
         action={
-          p.incidents.filter((i) => i.state === 'open').length > 0 ? (
+          p.incidents.filter((i) => i.state === 'pending_review').length > 0 ? (
             <Badge className="border-0 bg-warn/10 text-xs font-semibold uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
-              {p.incidents.filter((i) => i.state === 'open').length} open
+              {p.incidents.filter((i) => i.state === 'pending_review').length} pending
             </Badge>
           ) : null
         }

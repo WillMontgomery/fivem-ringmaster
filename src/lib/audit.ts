@@ -33,6 +33,10 @@ export type AuditAction =
   | 'maintenance.cancel'
   | 'maintenance.drain'
   | 'maintenance.deploy'
+  // Closing an incident is a moderation decision and belongs in the same log
+  // as every other one. "Who decided nothing was wrong" is exactly the kind of
+  // thing that has to be comparable across actions later.
+  | 'incident.resolve'
 
 export type AuditOutcome = 'pending' | 'ok' | 'failed'
 
