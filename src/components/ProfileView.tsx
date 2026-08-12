@@ -224,29 +224,38 @@ export function ProfileView({
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Section title="Identifiers" provenance={<ProvenanceTag kind="identity" />}>
-          <ul className="space-y-1.5">
-            {p.identifiers.map((id) => (
-              <li key={id.kind} className="flex items-baseline gap-3">
-                <span className="w-16 shrink-0 text-xs uppercase tracking-wider text-muted-foreground">
-                  {id.kind}
-                </span>
-                <code className="min-w-0 flex-1 truncate font-mono text-xs">
-                  {id.value}
-                </code>
-              </li>
-            ))}
-          </ul>
           {/*
-            The absence is the point, so it is stated rather than left as a
-            gap somebody assumes is a bug.
+            EVERY VALUE, NOT EVERY KIND. A player can present more than one
+            value for the same kind over time — a second Steam account, a
+            reissued license — and each of those is a separate row here.
+
+            The key is kind+value rather than kind, which it used to be: two
+            sightings of one kind collided, React kept the first, and the extra
+            value silently vanished from a page whose whole job is to show what
+            we know about somebody.
           */}
-          <p className="mt-3 border-t border-border/60 pt-3 text-xs leading-relaxed text-muted-foreground/70">
-            No IP address is recorded, by design. The identifier scan is an
-            allowlist, so anything FiveM adds later is excluded by construction
-            rather than collected by default. The cost is that evasion matching
-            is weaker — every identifier above is one a determined evader can
-            change.
-          </p>
+          {p.identifiers.length === 0 ? (
+            <Empty>
+              No identifiers recorded. They are captured on connect, so this
+              fills in the next time this player joins.
+            </Empty>
+          ) : (
+            <ul className="space-y-1.5">
+              {p.identifiers.map((id) => (
+                <li
+                  key={`${id.kind}:${id.value}`}
+                  className="flex items-baseline gap-3"
+                >
+                  <span className="w-16 shrink-0 text-xs uppercase tracking-wider text-muted-foreground">
+                    {id.kind}
+                  </span>
+                  <code className="min-w-0 flex-1 truncate font-mono text-xs">
+                    {id.value}
+                  </code>
+                </li>
+              ))}
+            </ul>
+          )}
         </Section>
 
         <Section
@@ -309,7 +318,7 @@ export function ProfileView({
                 <Figure
                   icon={Clock}
                   value={p.progress.balance.toLocaleString()}
-                  label="credits"
+                  label="volts"
                 />
               </div>
               <p className="mt-3 text-xs text-muted-foreground">

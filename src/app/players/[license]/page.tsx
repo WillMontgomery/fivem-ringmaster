@@ -80,15 +80,33 @@ export default async function PlayerProfilePage({
     name,
 
     // ---- identity, from the console's own registry ----
-    identifiers: record
-      ? Object.entries(record.identifiers).flatMap(([kind, sightings]) =>
-          (sightings ?? []).map((s) => ({
-            kind,
-            value: s.value,
-            firstSeen: s.firstSeen,
-          })),
-        )
-      : [],
+    // THE LICENSE IS ADDED BACK HERE, and its absence was not obvious.
+    //
+    // The game strips `license` from the identifier map before emitting
+    // player_seen — reasonably, since it is the partition key and repeating it
+    // inside the row would be redundant storage. But the profile page is not
+    // storage: a moderator looking at "every identifier we have" and not seeing
+    // the license has to go find it in the URL, and would reasonably conclude
+    // it was never captured.
+    //
+    // Sorted with the license first and the rest alphabetically, so two
+    // profiles are comparable at a glance rather than following whatever order
+    // a DynamoDB map happened to deserialise in.
+    identifiers: [
+      { kind: 'license', value: license.replace(/^license:/, ''), firstSeen: record?.firstSeen ?? 0 },
+      ...(record
+        ? Object.entries(record.identifiers)
+            .flatMap(([kind, sightings]) =>
+              (sightings ?? []).map((s) => ({
+                kind,
+                value: s.value,
+                firstSeen: s.firstSeen,
+              })),
+            )
+            .filter((id) => id.kind !== 'license')
+            .sort((a, b) => a.kind.localeCompare(b.kind) || a.value.localeCompare(b.value))
+        : []),
+    ],
     names: record?.names ?? [],
     firstSeen: record?.firstSeen ?? 0,
     lastSeen: record?.lastSeen ?? 0,

@@ -124,6 +124,18 @@ async function persistIdentity(
   now: number,
 ): Promise<void> {
   for (const ev of env_.events) {
+    /**
+     * SESSION CLOSE. Without this every player's session count sat at zero
+     * forever: recordDisconnect had no caller anywhere and the game emitted no
+     * disconnect event, so playtime — which is accumulated on close rather than
+     * derived from first-to-last-seen — never accumulated anything.
+     */
+    if (ev.kind === 'player_left') {
+      const d = ev.data as { license?: string }
+      if (d.license) await players.recordDisconnect(d.license, now)
+      continue
+    }
+
     if (ev.kind !== 'player_seen') continue
 
     const d = ev.data as {
