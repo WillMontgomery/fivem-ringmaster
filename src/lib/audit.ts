@@ -202,6 +202,30 @@ export async function audited<T>(
  * `ScanIndexForward: false` walks the sort key backwards, which is how you get
  * "latest" out of DynamoDB without sorting client-side.
  */
+/**
+ * Every action taken against one player.
+ *
+ * THE BANS TABLE CANNOT ANSWER THIS. It is keyed on license alone — one row per
+ * player — so issuing a second ban overwrites the first and the history is
+ * gone. The audit log is append-only and is the only place a player's
+ * moderation past actually survives, which is exactly what an audit log is for.
+ *
+ * READS THE WHOLE RECENT LOG AND FILTERS, rather than querying an index. Admin
+ * actions are measured in tens per day, so scanning the last few hundred is
+ * cheaper than the GSI it would take to avoid it — and the whole log lives in
+ * one partition anyway (see the note on `pk`). When either of those stops being
+ * true this needs a `targetLicense` index, and the same comment on `pk` marks
+ * the moment.
+ *
+ * INTENT ROWS WITHOUT AN OUTCOME ARE INCLUDED, deliberately. A kick that was
+ * dispatched and never confirmed is a thing a moderator needs to see — dropping
+ * it would present a cleaner history than actually happened.
+ */
+export async function forTarget(license: string, limit = 50): Promise<AuditRow[]> {
+  const rows = await recent(400)
+  return rows.filter((r) => r.targetLicense === license).slice(0, limit)
+}
+
 export async function recent(limit = 100): Promise<AuditRow[]> {
   const res = await ddb.query({
     TableName: tables.audit,

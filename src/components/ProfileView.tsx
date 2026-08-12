@@ -129,9 +129,22 @@ function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
   )
 }
 
-function Empty({ children }: { children: React.ReactNode }) {
+/**
+ * The empty state, and it says the same thing everywhere on purpose.
+ *
+ * Each of these used to carry its own paragraph explaining why that particular
+ * box had nothing in it — which stream was missing, what would fill it, why
+ * absent was not the same as zero. All true, all useful exactly once, and then
+ * permanent furniture on a page a moderator reads dozens of times a week.
+ *
+ * The explanations now live in the code and the issues, where they are read by
+ * whoever is changing this. The page says what it knows, which is nothing.
+ */
+function Empty({ children }: { children?: React.ReactNode }) {
   return (
-    <p className="py-2 text-sm text-muted-foreground/70">{children}</p>
+    <p className="py-2 text-sm text-muted-foreground/70">
+      {children ?? 'Nothing recorded for this player.'}
+    </p>
   )
 }
 
@@ -163,9 +176,21 @@ export function ProfileView({
           the wrong person. */}
       <Card className="surface-edge animate-rise gap-0 overflow-hidden px-5 py-4">
         <div className="flex flex-wrap items-start gap-4">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary ring-1 ring-inset ring-primary/25">
-            {p.name.slice(0, 2).toUpperCase()}
-          </div>
+          {/* THE FACE, when Discord gives us one. Falls back to initials rather
+              than to a broken image, and the fallback is also what a player
+              with no Discord link gets — which is a real state, not an error. */}
+          {p.avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={p.avatarUrl}
+              alt=""
+              className="size-12 shrink-0 rounded-xl object-cover ring-1 ring-inset ring-primary/25"
+            />
+          ) : (
+            <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary ring-1 ring-inset ring-primary/25">
+              {p.name.slice(0, 2).toUpperCase()}
+            </div>
+          )}
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -200,9 +225,9 @@ export function ProfileView({
                 </Badge>
               )}
             </div>
-            <code className="mt-1 block font-mono text-xs text-muted-foreground">
-              {p.license}
-            </code>
+            {/* The license used to sit here as well as in the identifiers box.
+                One copy is enough, and the box is where somebody looking for an
+                identifier will go. */}
           </div>
 
           <div className="flex gap-6 text-right">
@@ -212,12 +237,17 @@ export function ProfileView({
               </div>
               <div className="mt-1 text-sm">{when(p.firstSeen)}</div>
             </div>
-            <div>
-              <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                Last seen
+            {/* LAST SEEN IS MEANINGLESS WHILE THEY ARE HERE. "2 minutes ago"
+                next to "On the server now" is either confusing or wrong, and
+                the badge already answers the question better. */}
+            {!p.live && (
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                  Last seen
+                </div>
+                <div className="mt-1 text-sm">{ago(p.lastSeen, now)}</div>
               </div>
-              <div className="mt-1 text-sm">{ago(p.lastSeen, now)}</div>
-            </div>
+            )}
           </div>
         </div>
       </Card>
@@ -235,10 +265,7 @@ export function ProfileView({
             we know about somebody.
           */}
           {p.identifiers.length === 0 ? (
-            <Empty>
-              No identifiers recorded. They are captured on connect, so this
-              fills in the next time this player joins.
-            </Empty>
+            <Empty />
           ) : (
             <ul className="space-y-1.5">
               {p.identifiers.map((id) => (
@@ -288,12 +315,7 @@ export function ProfileView({
               </p>
             </>
           ) : (
-            <Empty>
-              No match has been recorded for this player. That is different from
-              a record of zeroes — this page shows nothing rather than a career
-              of losses, because the two read very differently to whoever is
-              deciding what to do about someone.
-            </Empty>
+            <Empty />
           )}
         </Section>
       </div>
@@ -339,10 +361,7 @@ export function ProfileView({
               </p>
             </>
           ) : (
-            <Empty>
-              No game record for this license yet. It is created the first time
-              a match of theirs ends.
-            </Empty>
+            <Empty />
           )}
         </Section>
 
@@ -385,9 +404,7 @@ export function ProfileView({
               )}
             </>
           ) : (
-            <Empty>
-              This license has never connected while the registry was running.
-            </Empty>
+            <Empty />
           )}
         </Section>
       </div>
@@ -410,7 +427,91 @@ export function ProfileView({
             ))}
           </ul>
         ) : (
-          <Empty>Nothing recorded against this player.</Empty>
+          <Empty />
+        )}
+      </Section>
+
+      {/*
+        KICKS AND BANS, FROM THE AUDIT LOG.
+        The bans table holds one row per license, so a second ban overwrites the
+        first — asking it for history returns only the current state. The audit
+        log is append-only and is the only place a player's moderation past
+        actually survives.
+
+        THE ACTING ADMIN LINKS TO THEIR OWN PROFILE. Moderation is a thing
+        people do to other people, and "who decided this" should be one click
+        rather than a name to go and look up.
+      */}
+      <Section
+        title="Kicks and bans"
+        provenance={<ProvenanceTag kind="moderation" />}
+        action={
+          p.actions.length > 0 ? (
+            <Badge
+              variant="outline"
+              className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
+            >
+              {p.actions.length}
+            </Badge>
+          ) : null
+        }
+      >
+        {p.actions.length ? (
+          <ul>
+            {p.actions.map((a, i) => (
+              <li
+                key={`${a.at}-${i}`}
+                className="flex items-start gap-3 border-t border-border/60 py-2.5 first:border-t-0 first:pt-0"
+              >
+                <div
+                  className={cn(
+                    'mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset',
+                    a.action.startsWith('ban')
+                      ? 'bg-danger/10 text-danger ring-danger/25'
+                      : 'bg-warn/10 text-warn ring-warn/25',
+                  )}
+                >
+                  <Ban className="size-3.5" />
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm">
+                    <span className="font-medium">{a.action}</span>
+                    {a.reason ? <span className="text-muted-foreground"> — {a.reason}</span> : null}
+                  </div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {when(a.at)} · by{' '}
+                    {a.actorLicense ? (
+                      <Link
+                        href={`/players/${encodeURIComponent(a.actorLicense)}`}
+                        className="underline underline-offset-2 transition-colors hover:text-foreground"
+                      >
+                        {a.actorName}
+                      </Link>
+                    ) : (
+                      a.actorName
+                    )}
+                  </div>
+                </div>
+
+                {/* The outcome, because a dispatched kick that never confirmed
+                    is a different fact from one that landed. */}
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    'shrink-0 rounded-md border-0 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
+                    a.outcome === 'ok'
+                      ? 'bg-muted/40 text-muted-foreground ring-border'
+                      : 'bg-danger/10 text-danger ring-danger/25',
+                  )}
+                >
+                  {a.outcome}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <Empty />
         )}
       </Section>
 
@@ -425,21 +526,13 @@ export function ProfileView({
             ))}
           </ul>
         ) : (
-          <Empty>
-            None. Worth having on the page even when empty — somebody reporting
-            everybody is itself a signal, and it is only visible if you can see
-            what they have filed.
-          </Empty>
+          <Empty />
         )}
       </Section>
 
       <Section title="Match history" provenance={<ProvenanceTag kind="stats" />}>
         {p.recentSessions.length === 0 ? (
-          <Empty>
-            Per-match history is not recorded anywhere yet. Career totals above
-            are real; the match-by-match breakdown needs a row written per match
-            rather than an accumulated total, which nothing does today.
-          </Empty>
+          <Empty />
         ) : (
         <ul className="space-y-0">
           {p.recentSessions.map((s, i) => (

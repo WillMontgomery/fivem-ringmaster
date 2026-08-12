@@ -198,6 +198,29 @@ export function PlayerSearch({
 export function PlayerSearchTrigger() {
   const [open, setOpen] = useState(false)
 
+  /**
+   * THE HINT HAS TO MATCH THE KEYBOARD IN FRONT OF THE PERSON READING IT.
+   *
+   * The binding has always accepted either modifier; the label was hardcoded to
+   * ⌘K, so every Windows and Linux admin was told to press a key their keyboard
+   * does not have.
+   *
+   * DETECTED AFTER MOUNT, NOT DURING RENDER. The server has no idea what the
+   * viewer is typing on, so deciding this while rendering would produce one
+   * answer on the server and possibly another in the browser — a hydration
+   * mismatch. Starting at the cross-platform label and correcting in an effect
+   * means the wrong-but-harmless answer shows for one frame instead.
+   */
+  const [mac, setMac] = useState(false)
+  useEffect(() => {
+    // `userAgentData.platform` is the modern spelling and `platform` the
+    // deprecated one that still works everywhere; iPadOS reports MacIntel,
+    // which is fine — it wants the ⌘ label too.
+    const nav = navigator as Navigator & { userAgentData?: { platform?: string } }
+    const plat = nav.userAgentData?.platform || navigator.platform || ''
+    setMac(/mac|iphone|ipad|ipod/i.test(plat))
+  }, [])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
@@ -219,7 +242,9 @@ export function PlayerSearchTrigger() {
       >
         <Search className="size-3.5" />
         <span className="hidden sm:inline">Search players by name or license…</span>
-        <CommandShortcut className="ml-auto hidden sm:inline">⌘K</CommandShortcut>
+        <CommandShortcut className="ml-auto hidden sm:inline">
+          {mac ? '⌘K' : 'Ctrl K'}
+        </CommandShortcut>
       </button>
       <PlayerSearch open={open} onOpenChange={setOpen} />
     </>

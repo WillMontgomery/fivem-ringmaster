@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { AppShell } from '@/components/AppShell'
 import { PlayerActions } from '@/components/PlayerActions'
 import { ProfileView } from '@/components/ProfileView'
+import * as audit from '@/lib/audit'
 import * as bans from '@/lib/bans'
 import { gameProfileFor } from '@/lib/gameProfile'
 import { can } from '@/lib/grants'
@@ -40,6 +41,9 @@ import { liveView } from '@/lib/state'
  */
 export const dynamic = 'force-dynamic'
 
+/** Identifier reading order. Anything absent from this list sorts after it. */
+const ID_ORDER = ['license', 'license2', 'discord', 'fivem', 'xbl', 'live', 'steam']
+
 export default async function PlayerProfilePage({
   params,
 }: {
@@ -57,11 +61,12 @@ export default async function PlayerProfilePage({
   // The real snapshot, not a fixture: are they on the server right now?
   const live = view.players.find((p) => p.license === license) ?? null
 
-  const [ban, canBan, record, game] = await Promise.all([
+  const [ban, canBan, record, game, actions] = await Promise.all([
     bans.banFor(license),
     can(admin.license, 'ban'),
     players.playerFor(license),
     gameProfileFor(license),
+    audit.forTarget(license),
   ])
 
   // Name resolution, best first: what they asked to be called, then whoever is
@@ -75,9 +80,14 @@ export default async function PlayerProfilePage({
 
   const bannedNow = ban !== null && bans.isActive(ban, now)
 
+  // The Discord id is the newest sighting, not the first: somebody who changed
+  // accounts should show the face attached to the one they use now.
+  const discordId = record?.identifiers.discord?.at(-1)?.value ?? null
+
   const profile: Profile = {
     license,
     name,
+    avatarUrl: players.discordAvatar(discordId),
 
     // ---- identity, from the console's own registry ----
     // THE LICENSE IS ADDED BACK HERE, and its absence was not obvious.
@@ -89,9 +99,12 @@ export default async function PlayerProfilePage({
     // the license has to go find it in the URL, and would reasonably conclude
     // it was never captured.
     //
-    // Sorted with the license first and the rest alphabetically, so two
-    // profiles are comparable at a glance rather than following whatever order
-    // a DynamoDB map happened to deserialise in.
+    // A FIXED ORDER, NOT ALPHABETICAL. License and license2 are the two this
+    // system actually keys on, Discord is how a human recognises somebody, and
+    // the console identifiers matter least — so that is the reading order.
+    // Alphabetical put `discord` above `license`, which buries the identity
+    // every other table is joined on. Anything not on the list still renders,
+    // after the ones that are.
     identifiers: [
       { kind: 'license', value: license.replace(/^license:/, ''), firstSeen: record?.firstSeen ?? 0 },
       ...(record
@@ -104,7 +117,17 @@ export default async function PlayerProfilePage({
               })),
             )
             .filter((id) => id.kind !== 'license')
-            .sort((a, b) => a.kind.localeCompare(b.kind) || a.value.localeCompare(b.value))
+            .sort((a, b) => {
+              const rank = (k: string) => {
+                const i = ID_ORDER.indexOf(k)
+                return i === -1 ? ID_ORDER.length : i
+              }
+              return (
+                rank(a.kind) - rank(b.kind) ||
+                a.kind.localeCompare(b.kind) ||
+                a.value.localeCompare(b.value)
+              )
+            })
         : []),
     ],
     names: record?.names ?? [],
@@ -173,6 +196,19 @@ export default async function PlayerProfilePage({
           },
         ]
       : [],
+
+    // EVERY KICK AND BAN, FROM THE AUDIT LOG. The bans table holds one row per
+    // license, so a second ban overwrites the first — `p.bans` above is the
+    // CURRENT ban only, and this is the history. They are different questions
+    // and the page asks both.
+    actions: actions.map((a) => ({
+      at: a.ts,
+      action: a.action,
+      outcome: a.outcome,
+      actorName: a.actorName,
+      actorLicense: a.actorLicense,
+      reason: a.reason,
+    })),
 
     // NO SOURCE YET, AND EMPTY IS THE TRUTHFUL RENDER. The incidents system
     // does not exist, and nothing records per-match session history. These used

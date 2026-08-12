@@ -45,9 +45,22 @@ export interface ProfileSession {
   kills: number
 }
 
+/** One moderation action, from the append-only audit log. */
+export interface ProfileAction {
+  at: number
+  action: string
+  outcome: string
+  actorName: string
+  /** Links to the acting admin's own profile. Null for system actions. */
+  actorLicense: string | null
+  reason?: string | null
+}
+
 export interface Profile {
   license: string
   name: string
+  /** Discord CDN avatar, when we have a Discord id for them. */
+  avatarUrl?: string | null
 
   /** identity — the allowlisted scan, minus `ip`, which is never collected. */
   identifiers: ProfileIdentifier[]
@@ -125,6 +138,15 @@ export interface Profile {
     liftedAt?: number
     liftedBy?: string
   }>
+
+  /**
+   * Kicks and bans taken against them, newest first.
+   *
+   * FROM THE AUDIT LOG, NOT THE BANS TABLE. That table holds one row per
+   * license, so a second ban overwrites the first — the history only exists in
+   * the append-only log.
+   */
+  actions: ProfileAction[]
 
   /** Per-match history. NOTHING RECORDS THIS YET — it renders as absent. */
   recentSessions: ProfileSession[]
