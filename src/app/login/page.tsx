@@ -43,15 +43,9 @@ export default async function LoginPage({
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden px-6">
       {/* Aurora: slow-drifting colour fields behind the card. */}
       <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-        <div className="aurora-blob absolute -left-32 -top-32 size-[38rem] rounded-full bg-[oklch(0.55_0.22_295_/_30%)] blur-3xl" />
-        <div
-          className="aurora-blob absolute -right-40 top-8 size-[34rem] rounded-full bg-[oklch(0.60_0.16_235_/_26%)] blur-3xl"
-          style={{ animationDelay: '-6s' }}
-        />
-        <div
-          className="aurora-blob absolute -bottom-40 left-1/3 size-[36rem] rounded-full bg-[oklch(0.62_0.16_165_/_22%)] blur-3xl"
-          style={{ animationDelay: '-12s' }}
-        />
+        <div className="aurora-a absolute -left-40 -top-40 size-[40rem] rounded-full bg-[oklch(0.55_0.24_295_/_45%)] blur-3xl" />
+        <div className="aurora-b absolute -right-48 top-0 size-[36rem] rounded-full bg-[oklch(0.60_0.19_235_/_40%)] blur-3xl" />
+        <div className="aurora-c absolute -bottom-48 left-1/4 size-[38rem] rounded-full bg-[oklch(0.64_0.18_165_/_34%)] blur-3xl" />
       </div>
 
       <div className="w-full max-w-sm">

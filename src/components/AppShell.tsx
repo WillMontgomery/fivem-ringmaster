@@ -7,27 +7,54 @@ import {
   FileSearch,
   Gauge,
   ScrollText,
-  Search,
   Settings2,
   ShieldAlert,
   Users,
 } from 'lucide-react'
 
 import { FeedStatus } from '@/components/FeedStatus'
+import { PlayerSearchTrigger } from '@/components/PlayerSearch'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { UpdateBadge } from '@/components/UpdateBadge'
+import { UpdateWatcher } from '@/components/UpdateWatcher'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
+} from '@/components/ui/sidebar'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { DEMO_BADGES } from '@/lib/demo'
 import { currentAdmin } from '@/lib/session'
 import { cn } from '@/lib/utils'
 
 /**
  * The console chrome.
+ *
+ * BUILT ON shadcn's Sidebar rather than the hand-rolled rail this replaced.
+ * The hand-rolled one looked the part but had none of the behaviour: no
+ * collapse, no persistence, no mobile sheet, no keyboard affordance. Those are
+ * exactly the things you do not notice missing until you are working in the
+ * tool at 2am on a laptop. The real component brings icon-mode collapse
+ * (cookie-persisted, so it survives a reload), a rail you can drag, ⌘B, and a
+ * proper off-canvas sheet on mobile.
  *
  * NAVIGATION MIRRORS THE MILESTONES, and the not-yet-built entries are
  * deliberate rather than lazy. An admin panel that hides everything it cannot
@@ -65,7 +92,7 @@ interface NavItem {
 function IncidentBadge({ n }: { n: number }) {
   if (!n) return null
   return (
-    <span className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-warn ring-1 ring-inset ring-warn/30">
+    <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-warn/15 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-warn ring-1 ring-inset ring-warn/30">
       {n > 99 ? '99+' : n}
     </span>
   )
@@ -75,7 +102,7 @@ function MaintenanceBadge({ state }: { state: 'scheduled' | 'draining' }) {
   return (
     <span
       className={cn(
-        'ml-auto inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ring-1 ring-inset',
+        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ring-1 ring-inset',
         state === 'draining'
           ? 'bg-warn/15 text-warn ring-warn/30'
           : 'bg-info/15 text-info ring-info/30',
@@ -94,7 +121,6 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
     group: 'Observe',
     items: [
       { href: '/', label: 'Live players', icon: Users },
-      { href: '/players', label: 'Player search', icon: Search },
       { href: '/host', label: 'Host', icon: Gauge },
       { href: '/anticheat', label: 'Anticheat', icon: ShieldAlert, soon: 'M5' },
     ],
@@ -130,58 +156,11 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
   },
 ]
 
-function NavLink({
-  item,
-  active,
-  badges,
-}: {
-  item: NavItem
-  active: boolean
-  badges: NavBadges
-}) {
-  const Icon = item.icon
-  const badge = item.badge?.(badges)
-
-  return (
-    <Link
-      href={item.href}
-      className={cn(
-        'group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-all duration-200',
-        active
-          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-          : item.soon
-            ? 'text-muted-foreground/55 hover:bg-sidebar-accent/40 hover:text-muted-foreground'
-            : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
-      )}
-    >
-      {/* Active marker as a bar rather than a background alone — it survives
-          being seen at the edge of vision, which a fill does not. */}
-      {active && (
-        <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-primary" />
-      )}
-      <Icon
-        className={cn(
-          'size-4 shrink-0 transition-colors',
-          active ? 'text-primary' : 'text-muted-foreground/60',
-        )}
-      />
-      <span className="truncate">{item.label}</span>
-
-      {badge ??
-        (item.soon ? (
-          <span className="ml-auto text-[10px] uppercase tracking-wider text-muted-foreground/35">
-            {item.soon}
-          </span>
-        ) : null)}
-    </Link>
-  )
-}
-
 export async function AppShell({
   children,
   active = '/',
   user,
-  badges = {},
+  badges,
   feed,
 }: {
   children: React.ReactNode
@@ -194,6 +173,12 @@ export async function AppShell({
    * to force the signed-out state (the preview harness).
    */
   user?: { name: string; avatarUrl?: string | null } | null
+  /**
+   * Badge counts. Defaults rather than being required, because a badge that
+   * appears only on the pages that remembered to pass it is worse than none —
+   * the whole point is that an unread incident is visible from wherever you
+   * happen to be standing.
+   */
   badges?: NavBadges
   /**
    * Feed status for the header chip. Omit on pages that draw nothing from the
@@ -215,116 +200,145 @@ export async function AppShell({
         )
       : user
 
+  // Placeholder counts until M5 (incidents) and M6 (maintenance) produce real
+  // ones. Centralised here so there is exactly one line to change then.
+  const b = badges ?? DEMO_BADGES
+
   return (
-    <div className="flex min-h-screen">
-      {/* Sticky and viewport-tall so the nav stays put while the page scrolls.
-          Its own overflow-y on the <nav> handles a nav list taller than the
-          screen; the sidebar itself never moves. */}
-      <aside className="sidebar-surface sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/70 backdrop-blur-xl md:flex">
-        <div className="flex items-center gap-2.5 px-4 py-5">
-          <div className="relative flex size-8 items-center justify-center rounded-lg bg-primary/15 ring-1 ring-inset ring-primary/25">
-            {/* The storm circle, which is where the name comes from. */}
-            <div className="size-3.5 rounded-full border-2 border-primary" />
+    <SidebarProvider>
+      <Sidebar collapsible="icon" className="sidebar-surface">
+        <SidebarHeader>
+          <div className="flex items-center gap-2.5 px-1 py-1.5">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/15 ring-1 ring-inset ring-primary/25">
+              {/* The storm circle, which is where the name comes from. */}
+              <div className="size-3.5 rounded-full border-2 border-primary" />
+            </div>
+            <div className="leading-tight group-data-[collapsible=icon]:hidden">
+              <div className="text-sm font-semibold">Ringmaster</div>
+              <div className="text-[11px] text-muted-foreground">
+                Blitz Royale
+              </div>
+            </div>
           </div>
-          <div className="leading-tight">
-            <div className="text-sm font-semibold">Ringmaster</div>
-            <div className="text-[11px] text-muted-foreground">Blitz Royale</div>
-          </div>
-        </div>
+        </SidebarHeader>
 
-        <Separator className="bg-sidebar-border" />
+        <SidebarSeparator />
 
-        <nav className="flex-1 space-y-5 overflow-y-auto px-2.5 py-4">
+        <SidebarContent>
           {NAV.map((section) => (
-            <div key={section.group}>
-              <div className="px-2.5 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
-                {section.group}
-              </div>
-              <div className="space-y-0.5">
-                {section.items.map((item) => (
-                  <NavLink
-                    key={item.href}
-                    item={item}
-                    active={item.href === active}
-                    badges={badges}
-                  />
-                ))}
-              </div>
-            </div>
+            <SidebarGroup key={section.group}>
+              <SidebarGroupLabel>{section.group}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {section.items.map((item) => {
+                    const Icon = item.icon
+                    const badge = item.badge?.(b)
+                    return (
+                      <SidebarMenuItem key={item.href}>
+                        {/* Base UI takes `render`, not Radix's `asChild` — the
+                            same difference that bites every shadcn snippet
+                            copied from the docs into this app. */}
+                        <SidebarMenuButton
+                          render={<Link href={item.href} />}
+                          isActive={item.href === active}
+                          tooltip={item.label}
+                          className={cn(item.soon && 'text-muted-foreground/60')}
+                        >
+                          <Icon />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                        {badge ? (
+                          <SidebarMenuBadge>{badge}</SidebarMenuBadge>
+                        ) : item.soon ? (
+                          <SidebarMenuBadge className="text-[10px] uppercase tracking-wider text-muted-foreground/40">
+                            {item.soon}
+                          </SidebarMenuBadge>
+                        ) : null}
+                      </SidebarMenuItem>
+                    )
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
           ))}
-        </nav>
+        </SidebarContent>
 
-        <Separator className="bg-sidebar-border" />
-
-        <div className="p-3">
+        <SidebarFooter>
           {resolvedUser ? (
-            <div className="group/user flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/50">
-              {/* Discord avatar when we have one, initials as the fallback —
-                  a broken image on an admin's own name reads as "something is
-                  wrong with my account", so the fallback is a real design
-                  state, not an afterthought. */}
-              {resolvedUser.avatarUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={resolvedUser.avatarUrl}
-                  alt=""
-                  width={28}
-                  height={28}
-                  className="size-7 shrink-0 rounded-full object-cover ring-1 ring-inset ring-primary/25"
-                />
-              ) : (
-                <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/25">
-                  {resolvedUser.name.slice(0, 2).toUpperCase()}
-                </div>
-              )}
-              <div className="min-w-0 flex-1 leading-tight">
-                <div className="truncate text-sm">{resolvedUser.name}</div>
-              </div>
-              {/*
-                Sign out, revealed on hover. This deletes the session RECORD in
-                DynamoDB via Auth.js -- which clearing cookies does not: that
-                merely orphans the row until TTL. With server-side sessions,
-                the button is the revocation-correct exit, not a nicety.
-                focus-visible keeps it reachable by keyboard, where "revealed
-                on hover" would otherwise mean "does not exist".
-              */}
-              <form
-                action={async () => {
-                  'use server'
-                  const { signOut } = await import('@/auth')
-                  await signOut({ redirectTo: '/login' })
-                }}
-              >
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="submit"
-                        aria-label="Sign out"
-                        className="flex size-7 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-all hover:bg-danger/10 hover:text-danger focus-visible:opacity-100 group-hover/user:opacity-100"
-                      />
-                    }
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <div className="group/user flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/50 group-data-[collapsible=icon]:px-0">
+                  {/* Discord avatar when we have one, initials as the fallback
+                      — a broken image on an admin's own name reads as
+                      "something is wrong with my account", so the fallback is a
+                      real design state, not an afterthought. */}
+                  {resolvedUser.avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={resolvedUser.avatarUrl}
+                      alt=""
+                      width={28}
+                      height={28}
+                      className="size-7 shrink-0 rounded-full object-cover ring-1 ring-inset ring-primary/25"
+                    />
+                  ) : (
+                    <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/25">
+                      {resolvedUser.name.slice(0, 2).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
+                    <div className="truncate text-sm">{resolvedUser.name}</div>
+                  </div>
+                  {/*
+                    Sign out, revealed on hover. This deletes the session RECORD
+                    in DynamoDB via Auth.js -- which clearing cookies does not:
+                    that merely orphans the row until TTL. With server-side
+                    sessions, the button is the revocation-correct exit, not a
+                    nicety. focus-visible keeps it reachable by keyboard, where
+                    "revealed on hover" would otherwise mean "does not exist".
+                  */}
+                  <form
+                    className="group-data-[collapsible=icon]:hidden"
+                    action={async () => {
+                      'use server'
+                      const { signOut } = await import('@/auth')
+                      await signOut({ redirectTo: '/login' })
+                    }}
                   >
-                    <LogOut className="size-3.5" />
-                  </TooltipTrigger>
-                  <TooltipContent side="top">Sign out</TooltipContent>
-                </Tooltip>
-              </form>
-            </div>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="submit"
+                            aria-label="Sign out"
+                            className="flex size-7 items-center justify-center rounded-md text-muted-foreground/60 opacity-0 transition-all hover:bg-danger/10 hover:text-danger focus-visible:opacity-100 group-hover/user:opacity-100"
+                          />
+                        }
+                      >
+                        <LogOut className="size-3.5" />
+                      </TooltipTrigger>
+                      <TooltipContent side="top">Sign out</TooltipContent>
+                    </Tooltip>
+                  </form>
+                </div>
+              </SidebarMenuItem>
+            </SidebarMenu>
           ) : (
-            <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+            <div className="px-2 py-1.5 text-[11px] text-muted-foreground group-data-[collapsible=icon]:hidden">
               Not signed in
             </div>
           )}
-        </div>
-      </aside>
+        </SidebarFooter>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+        {/* The drag rail — the affordance that makes collapse discoverable. */}
+        <SidebarRail />
+      </Sidebar>
+
+      <SidebarInset className="min-w-0">
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-background/70 px-5 backdrop-blur-xl">
-          <div className="flex items-center gap-2 md:hidden">
-            <div className="size-3 rounded-full border-2 border-primary" />
-            <span className="text-sm font-semibold">Ringmaster</span>
-          </div>
+          <SidebarTrigger className="-ml-1.5" />
+
+          <PlayerSearchTrigger />
 
           <div className="ml-auto flex items-center gap-2">
             {feed && (
@@ -336,26 +350,30 @@ export async function AppShell({
               />
             )}
             <UpdateBadge />
-            {badges.maintenance && (
+            {b.maintenance && (
               <Badge
                 variant="outline"
                 className={cn(
                   'gap-1.5 border-0 text-[10px] font-medium uppercase tracking-wider ring-1 ring-inset',
-                  badges.maintenance === 'draining'
+                  b.maintenance === 'draining'
                     ? 'bg-warn/10 text-warn ring-warn/30'
                     : 'bg-info/10 text-info ring-info/30',
                 )}
               >
                 <CalendarClock className="size-3" />
-                Maintenance {badges.maintenance}
+                Maintenance {b.maintenance}
               </Badge>
             )}
             <ThemeToggle />
           </div>
         </header>
 
+        {/* Announces an available update once per session, and again whenever
+            one appears while the console is open. */}
+        <UpdateWatcher />
+
         <main className="animate-rise min-w-0 flex-1 px-5 py-6">{children}</main>
-      </div>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   )
 }

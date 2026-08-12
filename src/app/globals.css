@@ -347,20 +347,37 @@
   }
 
   /*
-   * The login aurora. Large blurred colour fields drifting slowly behind the
-   * card — the one place in the app a bit of ambient motion is welcome,
-   * because nobody is monitoring it for an hour. Frozen by reduced-motion
-   * below, where it becomes a static gradient.
+   * The login aurora. Large blurred colour fields drifting behind the card —
+   * the one place in the app ambient motion is welcome, because nobody
+   * monitors a login screen for an hour.
+   *
+   * THREE DISTINCT PATHS, NOT ONE SHARED KEYFRAME WITH DELAYS. Offsetting a
+   * single animation makes every blob trace the same shape a few seconds
+   * apart, which the eye reads as one rigid object rotating — the first
+   * version travelled ~6% and was, correctly, described as not obviously
+   * moving at all. These travel a third of the viewport on independent paths
+   * and periods, so the fields cross each other and the colour where they
+   * overlap genuinely changes. Frozen by reduced-motion below.
    */
-  @keyframes aurora {
+  @keyframes aurora-a {
     0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-    33% { transform: translate3d(6%, -4%, 0) scale(1.18); }
-    66% { transform: translate3d(-5%, 3%, 0) scale(0.92); }
+    25% { transform: translate3d(26vw, 12vh, 0) scale(1.35); }
+    50% { transform: translate3d(12vw, 30vh, 0) scale(0.85); }
+    75% { transform: translate3d(-14vw, 14vh, 0) scale(1.15); }
   }
-  .aurora-blob {
-    will-change: transform;
-    animation: aurora 18s ease-in-out infinite;
+  @keyframes aurora-b {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1.1); }
+    30% { transform: translate3d(-28vw, 18vh, 0) scale(0.8); }
+    60% { transform: translate3d(-10vw, -16vh, 0) scale(1.4); }
   }
+  @keyframes aurora-c {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(0.95); }
+    35% { transform: translate3d(20vw, -22vh, 0) scale(1.3); }
+    70% { transform: translate3d(-22vw, -8vh, 0) scale(1.05); }
+  }
+  .aurora-a { will-change: transform; animation: aurora-a 14s ease-in-out infinite; }
+  .aurora-b { will-change: transform; animation: aurora-b 19s ease-in-out infinite; }
+  .aurora-c { will-change: transform; animation: aurora-c 16s ease-in-out infinite; }
 
   /*
    * Stagger. Entrance animations fire in reading order rather than all at once,

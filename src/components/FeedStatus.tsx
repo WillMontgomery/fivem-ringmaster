@@ -5,10 +5,10 @@ import { useEffect, useState } from 'react'
 
 import { useLiveState } from '@/lib/livePoll'
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from '@/components/ui/hover-card'
 import { cn } from '@/lib/utils'
 
 /**
@@ -108,7 +108,7 @@ export function FeedStatus({
   const [frozenAge, setFrozenAge] = useState<number | null>(null)
 
   return (
-    <Tooltip
+    <HoverCard
       onOpenChange={(open) => {
         if (open) {
           setFrozenAge(
@@ -117,7 +117,7 @@ export function FeedStatus({
         }
       }}
     >
-      <TooltipTrigger
+      <HoverCardTrigger
         render={
           <span
             role="status"
@@ -139,15 +139,22 @@ export function FeedStatus({
           />
         )}
         {t.label}
-      </TooltipTrigger>
+      </HoverCardTrigger>
 
-      <TooltipContent side="bottom" className="max-w-[21rem]">
-        {frozenAge === null ? (
-          <span>No update received yet.</span>
-        ) : (
-          <span>Last update: {ago(frozenAge)} ago</span>
-        )}
-      </TooltipContent>
-    </Tooltip>
+      <HoverCardContent side="bottom" align="end" className="w-64">
+        <div className="flex items-center gap-2">
+          <span className={cn('size-2 rounded-full', t.dot)} />
+          <span className="text-sm font-medium">{t.label}</span>
+        </div>
+        <p className="mt-1.5 text-[13px] text-muted-foreground">
+          {frozenAge === null
+            ? 'No update received yet.'
+            : `Last update: ${ago(frozenAge)} ago`}
+        </p>
+        <p className="mt-2 text-[11px] text-muted-foreground/60">
+          The board refreshes every {(intervalMs / 1000).toFixed(0)}s.
+        </p>
+      </HoverCardContent>
+    </HoverCard>
   )
 }

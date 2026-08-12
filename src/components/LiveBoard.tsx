@@ -44,7 +44,9 @@ export function LiveBoard({
   // renders exactly what it was given.
   const polled = useLiveState(live)
   const view = polled?.view ?? initialView
-  const [mode, setMode] = useState<'match' | 'all'>('match')
+  // "All players" is the default view: the first question on opening the
+  // console is almost always "who is on", not "how are the matches arranged".
+  const [mode, setMode] = useState<'match' | 'all'>('all')
 
   /**
    * A ticking clock, so "connected for" counts up between pushes instead of
@@ -132,8 +134,8 @@ export function LiveBoard({
             <div className="flex gap-0.5 rounded-lg border border-border bg-card/60 p-1">
               {(
                 [
-                  { k: 'match', label: 'By match', icon: LayoutGrid },
                   { k: 'all', label: 'All players', icon: Rows3 },
+                  { k: 'match', label: 'By match', icon: LayoutGrid },
                 ] as const
               ).map(({ k, label, icon: Icon }) => (
                 <button

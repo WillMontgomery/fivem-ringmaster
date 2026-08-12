@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 }
 
 /**
- * Applies the stored theme before first paint.
+ * Applies the theme before first paint.
  *
  * WITHOUT THIS THE PAGE FLASHES. React cannot restore the choice until it
  * hydrates, so a dark-theme user would get a white screen for a beat on every
@@ -30,14 +30,17 @@ export const metadata: Metadata = {
  * A blocking inline script in <head> is the standard fix and the only one that
  * runs early enough.
  *
- * Light is the default: no stored value means no class, and `:root` is light.
- * A stored choice beats the OS preference, because someone who has clicked the
- * toggle has expressed a stronger opinion than their system setting.
+ * THE OS PREFERENCE IS THE DEFAULT, and a stored choice beats it — someone who
+ * has clicked the toggle has expressed a stronger opinion than their system
+ * setting, so the toggle is not silently overridden on the next navigation.
+ * This previously carried a literal `&& false` on the media-query branch, which
+ * disabled OS detection entirely and hard-defaulted everyone to light.
  */
 const themeScript = `
 try {
   var t = localStorage.getItem('ringmaster.theme');
-  if (t === 'dark' || (!t && matchMedia('(prefers-color-scheme: dark)').matches && false)) {
+  var osDark = window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches;
+  if (t === 'dark' || (!t && osDark)) {
     document.documentElement.classList.add('dark');
   }
 } catch (e) {}
