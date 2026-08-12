@@ -52,6 +52,7 @@ export default async function PlayerProfilePage({
   // Name resolution, best first: whoever is connected now, then whoever the
   // ban record remembers, then nothing. Never a guess.
   const name = live?.name ?? ban?.playerName ?? 'Unknown player'
+  const bannedNow = ban !== null && bans.isActive(ban, now)
 
   // The stand-in sections. Everything the profile shows that has no source yet
   // still comes from here, and ProfileView marks it — see the note above.
@@ -95,14 +96,20 @@ export default async function PlayerProfilePage({
         live: true,
       }}
     >
+      {/*
+        ACTIONS ABOVE THE RECORD. A moderator opening a profile has usually
+        already decided something is wrong; putting the controls under match
+        history optimises for the rare visit over the common one.
+      */}
       <div className="max-w-5xl space-y-4">
-        <ProfileView p={profile} now={now} />
         <PlayerActions
           license={license}
           name={name}
           ban={ban}
+          online={live !== null}
           canBan={canBan}
         />
+        <ProfileView p={profile} now={now} banned={bannedNow} />
       </div>
     </AppShell>
   )

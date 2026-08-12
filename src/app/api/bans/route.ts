@@ -9,6 +9,8 @@ import {
 } from '@/lib/actions'
 import * as audit from '@/lib/audit'
 import * as bans from '@/lib/bans'
+import { kickPlayer, sshConfigured } from '@/lib/ssh'
+import { liveView } from '@/lib/state'
 
 /**
  * Bans: list and issue.
@@ -90,7 +92,63 @@ export async function POST(req: Request): Promise<Response> {
         }),
     )
 
-    return Response.json({ ok: true, ban }, { status: 201 })
+    /**
+     * If they are on the server right now, remove them immediately.
+     *
+     * WITHOUT THIS A BAN IS A PROMISE ABOUT THEIR NEXT LOGIN. The connect gate
+     * only runs at connect, so banning someone mid-match left them playing —
+     * which is exactly backwards for the case bans are usually issued in, where
+     * an admin is watching somebody ruin a match right now.
+     *
+     * IT NEVER FAILS THE BAN. The record is the source of truth and it is
+     * already written; the kick is enforcement of it. If the channel is down,
+     * the ban still stands and the connect gate catches them next time — so a
+     * failed kick is reported alongside a successful ban rather than turning
+     * the whole request into an error the admin would retry, double-writing
+     * the audit log.
+     */
+    const online = liveView(Date.now()).players.some(
+      (p) => p.license === input.license,
+    )
+
+    let kicked: { attempted: boolean; ok: boolean; error?: string } = {
+      attempted: false,
+      ok: false,
+    }
+
+    if (online && sshConfigured()) {
+      const { commandId, ts } = await audit.begin({
+        action: 'player.kick',
+        actor,
+        targetLicense: input.license,
+        targetName: input.playerName ?? null,
+        reason: input.reason,
+        detail: { becauseOf: 'ban.issue' },
+      })
+
+      try {
+        // The message the player sees as they are dropped. Same words as the
+        // connect gate uses, so being removed and being refused read alike.
+        const msg =
+          expiresAt === null
+            ? `Banned: ${input.reason}`
+            : `Banned until ${new Date(expiresAt).toISOString().slice(0, 16).replace('T', ' ')} UTC: ${input.reason}`
+
+        const res = await kickPlayer(input.license, msg, commandId)
+        if (!res.ok) throw new Error(res.error ?? 'kick refused')
+
+        // ACCEPTED, not confirmed. The real outcome arrives as an event
+        // carrying this commandId; until it does the row stays honest about
+        // not knowing.
+        kicked = { attempted: true, ok: true }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        await audit.resolve(ts, 'failed', message)
+        kicked = { attempted: true, ok: false, error: message }
+      }
+    }
+
+    return Response.json({ ok: true, ban, online, kicked }, { status: 201 })
   } catch (e) {
     return errorResponse(e)
   }

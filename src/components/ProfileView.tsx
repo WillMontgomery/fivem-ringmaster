@@ -135,7 +135,16 @@ function Empty({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function ProfileView({ p, now }: { p: Profile; now: number }) {
+export function ProfileView({
+  p,
+  now,
+  banned = false,
+}: {
+  p: Profile
+  now: number
+  /** Currently banned — shown beside the name, where identity is confirmed. */
+  banned?: boolean
+}) {
   const kd = p.stats && p.stats.deaths > 0
     ? (p.stats.kills / p.stats.deaths).toFixed(2)
     : '—'
@@ -161,6 +170,16 @@ export function ProfileView({ p, now }: { p: Profile; now: number }) {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold tracking-tight">{p.name}</h1>
+              {/* BANNED SITS NEXT TO THE NAME, not down in a moderation panel.
+                  It is the single most important fact about a player when it
+                  is true, and it has to be visible in the same glance that
+                  confirms you are looking at the right person. */}
+              {banned && (
+                <Badge className="gap-1 border-0 bg-danger/10 text-[10px] font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
+                  <Ban className="size-3" />
+                  Currently banned
+                </Badge>
+              )}
               {p.live ? (
                 <Badge className="gap-1 border-0 bg-live/10 text-[10px] font-semibold uppercase tracking-wider text-live ring-1 ring-inset ring-live/25">
                   <span className="size-1.5 rounded-full bg-live" />
