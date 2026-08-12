@@ -110,4 +110,16 @@ export const tables = {
   get playerIds() {
     return `${env().DDB_TABLE_PREFIX}player-ids`
   },
+  /**
+   * The GAME's player row — a different prefix because it is a different owner.
+   *
+   * br_ddb on the game box writes this at the end of every match: career stats,
+   * progression, currency and owned cosmetics. Ringmaster only ever reads it.
+   * Keeping it under its own prefix is what lets the IAM policy say exactly
+   * that, rather than granting this box write access to the game's data
+   * through a wildcard that also covers everything above.
+   */
+  get gamePlayers() {
+    return `${env().DDB_GAME_TABLE_PREFIX}players`
+  },
 } as const

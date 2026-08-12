@@ -42,6 +42,9 @@ const schema = z.object({
   // --- AWS -------------------------------------------------------------
   AWS_REGION: z.string().default('us-east-2'),
   DDB_TABLE_PREFIX: z.string().default('ringmaster-'),
+  // The GAME's tables, which this box reads and never writes. Separate from the
+  // console's prefix so the two can be granted separately in IAM.
+  DDB_GAME_TABLE_PREFIX: z.string().default('br-'),
 
   // --- Ingest ----------------------------------------------------------
   // Shared secret the game server presents on its push. The endpoint is only

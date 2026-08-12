@@ -258,22 +258,126 @@ export function ProfileView({
               <div className="grid grid-cols-3 gap-4">
                 <Figure icon={Swords} value={p.stats.matches} label="matches" />
                 <Figure icon={Trophy} value={p.stats.wins} label="wins" />
-                <Figure
-                  icon={Clock}
-                  value={humanDuration(p.stats.playtimeMs)}
-                  label="played"
-                />
+                <Figure icon={Trophy} value={p.stats.top10s} label="top 10" />
                 <Figure icon={Crosshair} value={p.stats.kills} label="kills" />
                 <Figure icon={Skull} value={p.stats.deaths} label="deaths" />
                 <Figure icon={Crosshair} value={kd} label="k/d" />
+                <Figure
+                  icon={Clock}
+                  value={humanDuration(p.stats.playtimeMs)}
+                  label="in match"
+                />
+                <Figure icon={Skull} value={p.stats.downs} label="downs" />
+                <Figure icon={Trophy} value={p.stats.revives} label="revives" />
               </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                {p.stats.soloMatches} solo · {p.stats.squadMatches} squad ·{' '}
+                {p.stats.damageDealt.toLocaleString()} damage
+                {p.stats.lastMatchAt
+                  ? ` · last match ${ago(p.stats.lastMatchAt, now)}`
+                  : ''}
+              </p>
             </>
           ) : (
             <Empty>
-              No persistent stats yet — these arrive when match results start
-              being written to DynamoDB. The page is built to show nothing
-              rather than zeroes, because a returning player showing 0 matches
-              looks like a different person.
+              No match has been recorded for this player. That is different from
+              a record of zeroes — this page shows nothing rather than a career
+              of losses, because the two read very differently to whoever is
+              deciding what to do about someone.
+            </Empty>
+          )}
+        </Section>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/*
+          PROGRESSION AND WALLET. Same row as the play record and the same null
+          rule — but a separate section, because a moderator scanning for "is
+          this person new" reads level and matches differently from how they
+          read a balance.
+        */}
+        <Section title="Progression" provenance={<ProvenanceTag kind="stats" />}>
+          {p.progress ? (
+            <>
+              <div className="grid grid-cols-3 gap-4">
+                <Figure icon={Trophy} value={p.progress.level} label="level" />
+                <Figure
+                  icon={Swords}
+                  value={p.progress.xp.toLocaleString()}
+                  label="total xp"
+                />
+                <Figure
+                  icon={Clock}
+                  value={p.progress.balance.toLocaleString()}
+                  label="credits"
+                />
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                {p.progress.owned === 0
+                  ? 'No cosmetics purchased.'
+                  : `${p.progress.owned} cosmetic${p.progress.owned === 1 ? '' : 's'} owned.`}
+                {Object.keys(p.progress.equipped).length > 0 && (
+                  <>
+                    {' '}
+                    Wearing{' '}
+                    {Object.entries(p.progress.equipped)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([kind, id]) => `${kind}: ${id}`)
+                      .join(' · ')}
+                    .
+                  </>
+                )}
+              </p>
+            </>
+          ) : (
+            <Empty>
+              No game record for this license yet. It is created the first time
+              a match of theirs ends.
+            </Empty>
+          )}
+        </Section>
+
+        {/*
+          TIME CONNECTED IS NOT TIME PLAYED, and they come from different
+          tables. Somebody with twenty hours on the server and forty minutes in
+          matches is a specific and interesting thing; one combined number
+          would hide it completely.
+        */}
+        <Section title="Sessions" provenance={<ProvenanceTag kind="identity" />}>
+          {p.connected ? (
+            <>
+              <div className="grid grid-cols-2 gap-4">
+                <Figure
+                  icon={Swords}
+                  value={p.connected.sessions}
+                  label="sessions"
+                />
+                <Figure
+                  icon={Clock}
+                  value={humanDuration(p.connected.playtimeMs)}
+                  label="connected"
+                />
+              </div>
+              {p.names.length > 1 && (
+                <div className="mt-3">
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Also known as
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {/* A rename right before an incident is itself a signal,
+                        which is why the history is kept rather than the latest
+                        name overwriting it. */}
+                    {p.names
+                      .slice(1)
+                      .map((n) => n.name)
+                      .join(' · ')}
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <Empty>
+              This license has never connected while the registry was running.
             </Empty>
           )}
         </Section>
@@ -320,7 +424,14 @@ export function ProfileView({
         )}
       </Section>
 
-      <Section title="Recent sessions" provenance={<ProvenanceTag kind="stats" />}>
+      <Section title="Match history" provenance={<ProvenanceTag kind="stats" />}>
+        {p.recentSessions.length === 0 ? (
+          <Empty>
+            Per-match history is not recorded anywhere yet. Career totals above
+            are real; the match-by-match breakdown needs a row written per match
+            rather than an accumulated total, which nothing does today.
+          </Empty>
+        ) : (
         <ul className="space-y-0">
           {p.recentSessions.map((s, i) => (
             <li
@@ -345,16 +456,16 @@ export function ProfileView({
             </li>
           ))}
         </ul>
+        )}
       </Section>
 
       <Separator />
       <p className="text-xs leading-relaxed text-muted-foreground/60">
-        <span className="text-warn">Demo data.</span> Only the live panel is
-        wired to anything real. Identifiers arrive with the{' '}
-        <code className="font-mono">player_seen</code> event stream, the play
-        record with persistent stats, and incidents and bans with Slice 2. The
-        layout exists now so the shape can be argued with before any of it is
-        expensive to change.
+        Every section above reads a real source. Identity and sessions come from
+        the player registry, the play record and progression from the game
+        server&apos;s own table, presence from the live snapshot, and bans from
+        the ban table. Incidents and match history are the two with no source
+        yet, and they say so rather than rendering empty.
       </p>
     </div>
   )

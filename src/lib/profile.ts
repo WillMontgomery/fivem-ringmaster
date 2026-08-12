@@ -1,19 +1,20 @@
 /**
  * A player's full record.
  *
- * ALMOST NONE OF THIS EXISTS YET, and pretending otherwise would be the worst
- * thing this file could do. Each field below is annotated with where it will
- * really come from, so the profile page can be designed against the shape it
- * will have rather than the shape that is convenient today — and so nobody
- * later mistakes a demo for a feature.
+ * MOST OF THIS IS REAL NOW. The two that are not — incidents and per-match
+ * session history — have no stream behind them at all, and they render as
+ * absent rather than as empty-but-plausible. That distinction is load-bearing
+ * on a page a moderator acts on.
  *
- * The provenance matters because these come from four different places with
- * four different freshness and trust properties:
+ * The provenance matters because these come from five different places with
+ * five different freshness and trust properties:
  *
- *   live      the current snapshot. Two seconds old at worst, gone on restart.
- *   identity  the `player_seen` event stream. Durable, appended on connect.
- *   stats     br_stats / DynamoDB (M7b). Durable, written at match end.
- *   moderation Ringmaster's own tables — bans, incidents, audit (Slice 2+).
+ *   live       the current snapshot. Two seconds old at worst, gone on restart.
+ *   identity   ringmaster-players, this console's registry. Durable.
+ *   stats      br-players, written by the GAME at match end. Durable, and not
+ *              writable from here — Ringmaster only reads it.
+ *   moderation Ringmaster's own tables — bans, audit.
+ *   (nothing)  incidents and match history. No source yet; always empty.
  */
 
 export type Provenance = 'live' | 'identity' | 'stats' | 'moderation'
@@ -53,15 +54,56 @@ export interface Profile {
   firstSeen: number
   lastSeen: number
 
-  /** stats — M7b. Absent until that lands, and the UI must survive that. */
+  /**
+   * stats — REAL NOW, read from the game's own `br-players` row.
+   *
+   * NULL MEANS "NO MATCH RECORDED", NOT ZERO. A profile showing 0 matches and 0
+   * wins reads as somebody who turned up and lost every time; that is a
+   * different and much less flattering claim than never having played. The UI
+   * has to keep distinguishing the two.
+   */
   stats: {
     matches: number
     wins: number
+    top10s: number
     kills: number
     deaths: number
+    downs: number
+    revives: number
     damageDealt: number
+    /** In-match time. Distinct from `connected`, which is time on the server. */
+    playtimeMs: number
+    soloMatches: number
+    squadMatches: number
+    lastMatchAt: number | null
+  } | null
+
+  /** Progression and the market wallet. Same row, same source, same null rule. */
+  progress: {
+    level: number
+    xp: number
+    balance: number
+    /** How many cosmetics they have bought. The list itself is not shown. */
+    owned: number
+    equipped: Record<string, string>
+  } | null
+
+  /**
+   * Time on the server, from THIS console's registry rather than the game's.
+   *
+   * Deliberately separate from `stats.playtimeMs`: one is how long they were
+   * connected, the other is how long they were in a match. A player with twenty
+   * hours connected and forty minutes played is a very specific thing, and
+   * collapsing the two would hide it.
+   */
+  connected: {
+    sessions: number
     playtimeMs: number
   } | null
+
+  /** Every name they have used, newest first. A rename before an incident is
+   *  itself a signal, which is why the history is kept rather than the latest. */
+  names: Array<{ name: string; firstSeen: number; lastSeen: number }>
 
   /** live — only present while they are actually connected. */
   live: {
@@ -84,76 +126,21 @@ export interface Profile {
     liftedBy?: string
   }>
 
+  /** Per-match history. NOTHING RECORDS THIS YET — it renders as absent. */
   recentSessions: ProfileSession[]
 }
 
-/**
- * Demo data for the design harness.
+/*
+ * demoProfile() USED TO LIVE HERE, and it is gone rather than deprecated.
  *
- * Deterministic, derived from the license so two different players look
- * different and the same player looks the same twice. Everything here is
- * FABRICATED and the page says so on screen — a profile page that silently
- * invents an inventory is how a moderator ends up acting on nothing.
+ * It existed to give this page something to render before the streams behind
+ * it were real, and it was honest about being fabricated. But its only caller
+ * was the profile page, every field it invented now has a genuine source, and
+ * a fixture that produces a plausible Profile is a loaded gun in a repo where
+ * the thing being faked is a record a moderator acts on. Deleting it means
+ * there is no longer any code path that can put an invented anticheat
+ * escalation on a real person's page.
+ *
+ * If a design harness needs one again, it should live under a test directory
+ * and be impossible to import from src/app.
  */
-export function demoProfile(license: string, name: string): Profile {
-  let h = 0
-  for (let i = 0; i < license.length; i++) h = (h * 31 + license.charCodeAt(i)) >>> 0
-  const pick = (n: number, salt: number) => ((h >> salt) % n + n) % n
-
-  const now = 1_754_784_000_000
-  const day = 86_400_000
-
-  return {
-    license,
-    name,
-    identifiers: [
-      { kind: 'license', value: license.replace('license:', ''), firstSeen: now - 47 * day },
-      { kind: 'discord', value: `99887766554433${pick(90, 3) + 10}`, firstSeen: now - 47 * day },
-      { kind: 'steam', value: `1100001${(10000000 + pick(9000000, 5)).toString()}`, firstSeen: now - 47 * day },
-    ],
-    firstSeen: now - (30 + pick(300, 2)) * day,
-    lastSeen: now - pick(60, 7) * 60_000,
-    stats: {
-      matches: 40 + pick(300, 4),
-      wins: pick(30, 6),
-      kills: 100 + pick(900, 8),
-      deaths: 40 + pick(300, 9),
-      damageDealt: 20_000 + pick(200_000, 10),
-      playtimeMs: (8 + pick(200, 11)) * 3_600_000,
-    },
-    live: null,
-    incidents:
-      pick(3, 12) === 0
-        ? [
-            {
-              id: 'inc_8f21',
-              kind: 'anticheat',
-              at: now - 2 * day,
-              summary: '8 refusals in 10s — TOO_FAR ×6, NO_AMMO ×2',
-              state: 'open',
-            },
-          ]
-        : [],
-    reportsFiled:
-      pick(4, 13) === 0
-        ? [
-            {
-              id: 'inc_1a90',
-              kind: 'report',
-              at: now - 5 * day,
-              summary: 'Reported "kettle" — shooting through walls',
-              state: 'dismissed',
-              reportedBy: license,
-            },
-          ]
-        : [],
-    bans: [],
-    recentSessions: Array.from({ length: 6 }, (_, i) => ({
-      at: now - (i + 1) * day * (1 + pick(2, i)),
-      durationMs: (20 + pick(90, i + 2)) * 60_000,
-      matchId: 40 - i,
-      placement: pick(20, i + 3) + 1,
-      kills: pick(8, i + 4),
-    })),
-  }
-}

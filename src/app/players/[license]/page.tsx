@@ -4,8 +4,10 @@ import { AppShell } from '@/components/AppShell'
 import { PlayerActions } from '@/components/PlayerActions'
 import { ProfileView } from '@/components/ProfileView'
 import * as bans from '@/lib/bans'
+import { gameProfileFor } from '@/lib/gameProfile'
 import { can } from '@/lib/grants'
-import { demoProfile } from '@/lib/profile'
+import * as players from '@/lib/players'
+import type { Profile } from '@/lib/profile'
 import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
 
@@ -17,13 +19,24 @@ import { liveView } from '@/lib/state'
  * different human by the time somebody clicked the link in Discord. Every ban,
  * grant and audit row keys on the license for the same reason.
  *
- * WHAT IS REAL HERE AND WHAT IS NOT. Live presence comes from the actual
- * snapshot and the ban record from the actual table — those are the two things
- * a moderator acts on, so they are never fabricated. Stats, incidents and
- * session history are still stand-ins, because the streams behind them (M7b
- * and M5) do not exist; ProfileView labels them as such. This page used to draw
- * ALL of it from a fixture, including whether the person was online, which
- * meant it would happily show a moderator a player who was not there.
+ * NOTHING ON THIS PAGE IS FABRICATED ANY MORE. It used to compose a fixture and
+ * overwrite the two fields that mattered; now every section has a real source:
+ *
+ *   identity, names, sessions   ringmaster-players, this console's registry
+ *   stats, progression, wallet  br-players, written by the game at match end
+ *   live presence               the snapshot feed
+ *   bans                        the bans table
+ *   incidents, match history    NOTHING YET — and they render as absent
+ *
+ * THREE READS, IN PARALLEL, AND NONE OF THEM BLOCKS THE OTHERS. A moderator
+ * opening a profile is usually trying to answer "who is this and should I act",
+ * and the identity half must not be held up by a stats table being slow — so
+ * every source degrades to null independently rather than failing the page.
+ *
+ * ABSENT IS NOT ZERO. A player with no game row gets `stats: null`, which the
+ * view renders as "no match recorded" — not as a career of forty losses. That
+ * distinction is the entire reason gameProfileFor returns null rather than a
+ * zeroed object.
  */
 export const dynamic = 'force-dynamic'
 
@@ -44,46 +57,113 @@ export default async function PlayerProfilePage({
   // The real snapshot, not a fixture: are they on the server right now?
   const live = view.players.find((p) => p.license === license) ?? null
 
-  const [ban, canBan] = await Promise.all([
+  const [ban, canBan, record, game] = await Promise.all([
     bans.banFor(license),
     can(admin.license, 'ban'),
+    players.playerFor(license),
+    gameProfileFor(license),
   ])
 
-  // Name resolution, best first: whoever is connected now, then whoever the
-  // ban record remembers, then nothing. Never a guess.
-  const name = live?.name ?? ban?.playerName ?? 'Unknown player'
+  // Name resolution, best first: what they asked to be called, then whoever is
+  // connected now, then the registry, then the ban record. Never a guess.
+  const name =
+    record?.preferredName ??
+    live?.name ??
+    record?.name ??
+    ban?.playerName ??
+    'Unknown player'
+
   const bannedNow = ban !== null && bans.isActive(ban, now)
 
-  // The stand-in sections. Everything the profile shows that has no source yet
-  // still comes from here, and ProfileView marks it — see the note above.
-  const profile = demoProfile(license, name)
+  const profile: Profile = {
+    license,
+    name,
 
-  profile.bans = ban
-    ? [
-        {
-          at: ban.at,
-          reason: ban.reason,
-          by: ban.byName,
-          liftedAt: ban.liftedAt ?? undefined,
-          liftedBy: ban.liftedByName ?? undefined,
-        },
-      ]
-    : []
+    // ---- identity, from the console's own registry ----
+    identifiers: record
+      ? Object.entries(record.identifiers).flatMap(([kind, sightings]) =>
+          (sightings ?? []).map((s) => ({
+            kind,
+            value: s.value,
+            firstSeen: s.firstSeen,
+          })),
+        )
+      : [],
+    names: record?.names ?? [],
+    firstSeen: record?.firstSeen ?? 0,
+    lastSeen: record?.lastSeen ?? 0,
+    connected: record
+      ? { sessions: record.sessions, playtimeMs: record.playtimeMs }
+      : null,
 
-  profile.live = live
-    ? {
-        src: live.src,
-        state: live.state,
-        matchId: live.matchId,
-        squadId: live.squadId,
-        hp: live.hp,
-        // The roster holds an inventory per player and deliberately keeps it
-        // out of PUBLIC_FIELDS. It is not in the snapshot yet — adding it means
-        // widening RINGMASTER_FIELDS, which is a decision to take on purpose
-        // rather than by accident.
-        inventory: [],
-      }
-    : null
+    // ---- career, from the game's own row ----
+    // `matches` is the honest test for "has this person played". A row can
+    // exist with a balance and no matches, and reporting that as a career of
+    // zeroes would be a lie the player could see.
+    stats:
+      game && game.matches > 0
+        ? {
+            matches: game.matches,
+            wins: game.wins,
+            top10s: game.top10s,
+            kills: game.kills,
+            deaths: game.deaths,
+            downs: game.downs,
+            revives: game.revives,
+            damageDealt: game.damageDealt,
+            playtimeMs: game.playtimeSec * 1000,
+            soloMatches: game.soloMatches,
+            squadMatches: game.squadMatches,
+            lastMatchAt: game.lastMatchAt,
+          }
+        : null,
+    progress: game
+      ? {
+          level: game.level,
+          xp: game.xp,
+          balance: game.balance,
+          owned: game.owned.length,
+          equipped: game.equipped,
+        }
+      : null,
+
+    // ---- live presence, from the snapshot ----
+    live: live
+      ? {
+          src: live.src,
+          state: live.state,
+          matchId: live.matchId,
+          squadId: live.squadId,
+          hp: live.hp,
+          // The roster holds an inventory per player and deliberately keeps it
+          // out of PUBLIC_FIELDS. It is not in the snapshot yet — adding it
+          // means widening RINGMASTER_FIELDS, which is a decision to take on
+          // purpose rather than by accident.
+          inventory: [],
+        }
+      : null,
+
+    // ---- moderation ----
+    bans: ban
+      ? [
+          {
+            at: ban.at,
+            reason: ban.reason,
+            by: ban.byName,
+            liftedAt: ban.liftedAt ?? undefined,
+            liftedBy: ban.liftedByName ?? undefined,
+          },
+        ]
+      : [],
+
+    // NO SOURCE YET, AND EMPTY IS THE TRUTHFUL RENDER. The incidents system
+    // does not exist, and nothing records per-match session history. These used
+    // to be filled from the fixture, which meant a moderator could read an
+    // invented anticheat escalation on a real person's profile.
+    incidents: [],
+    reportsFiled: [],
+    recentSessions: [],
+  }
 
   return (
     <AppShell
