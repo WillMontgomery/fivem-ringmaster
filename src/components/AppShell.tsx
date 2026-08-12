@@ -42,6 +42,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DEMO_BADGES } from '@/lib/demo'
+import * as maint from '@/lib/maintenance'
 import { currentAdmin } from '@/lib/session'
 import { cn } from '@/lib/utils'
 
@@ -146,7 +147,6 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
         href: '/maintenance',
         label: 'Maintenance',
         icon: CalendarClock,
-        soon: 'M6',
         badge: (b) =>
           b.maintenance ? <MaintenanceBadge state={b.maintenance} /> : null,
       },
@@ -212,7 +212,25 @@ export async function AppShell({
    * Pages that know their badge state pass it; Maintenance does. The rest show
    * none until M5 and M6 produce real counts.
    */
-  const b = badges ?? {}
+  /**
+   * RESOLVED HERE, NOT PASSED IN.
+   *
+   * Badges used to come from each page, which produced three separate wrongs:
+   * the wireframe pages passed DEMO_BADGES and permanently displayed a
+   * scheduled maintenance window that did not exist, the real pages passed
+   * nothing and showed no badge at all, and only /maintenance ever showed the
+   * truth. A badge that is right on one page and invented on the next is worse
+   * than no badge, because you cannot tell which kind you are looking at.
+   *
+   * One read per render, from the same row the game polls. Pages can still
+   * override — the preview harness passes its own to show the states off.
+   */
+  const b: NavBadges =
+    badges ??
+    (await maint
+      .current()
+      .then((w) => ({ maintenance: maint.badgeState(w) }))
+      .catch(() => ({})))
 
   return (
     <SidebarProvider>

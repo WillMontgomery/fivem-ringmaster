@@ -4,7 +4,7 @@ import { DEMO_BADGES } from '@/lib/demo'
 
 export default function Page() {
   return (
-    <AppShell active="/incidents" badges={DEMO_BADGES}>
+    <AppShell active="/incidents">
       <Wireframe
         title="Incidents"
         milestone="M5"

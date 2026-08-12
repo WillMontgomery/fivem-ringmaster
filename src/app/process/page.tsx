@@ -4,7 +4,7 @@ import { DEMO_BADGES } from '@/lib/demo'
 
 export default function Page() {
   return (
-    <AppShell active="/process" badges={DEMO_BADGES}>
+    <AppShell active="/process">
       <Wireframe
         title="Process control"
         milestone="M6"

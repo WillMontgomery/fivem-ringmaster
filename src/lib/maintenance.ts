@@ -374,16 +374,44 @@ export async function markDeploying(input?: {
 }
 
 export async function markComplete(error?: string | null): Promise<void> {
+  /**
+   * CLEARS THE UPDATE SIGNAL ON SUCCESS, and that is a bug fix rather than
+   * tidying.
+   *
+   * `updateAvailable` is refreshed from the host's `status`, which only
+   * re-checks the remote on a throttle — so for a minute or so after a
+   * successful deploy the row still said an update was waiting. The console
+   * duly offered to schedule maintenance for an update that had just been
+   * applied: a restart that would end every match in progress and change
+   * nothing.
+   *
+   * Clearing it here makes the console correct immediately and the next poll
+   * simply re-confirms zero. A FAILED deploy deliberately leaves the signal
+   * alone — the update genuinely is still waiting, and hiding it would be the
+   * opposite mistake.
+   */
+  const clearSignal = !error
+
   await ddb.update({
     TableName: tables.maintenance,
     Key: { id: CURRENT },
-    UpdateExpression: 'SET #s = :complete, completedAt = :t, deployError = :e',
+    UpdateExpression: clearSignal
+      ? 'SET #s = :complete, completedAt = :t, deployError = :e, updateAvailable = :z, updateFirstSeenAt = :null'
+      : 'SET #s = :complete, completedAt = :t, deployError = :e',
     ExpressionAttributeNames: { '#s': 'state' },
-    ExpressionAttributeValues: {
-      ':complete': 'complete',
-      ':t': Date.now(),
-      ':e': error ?? null,
-    },
+    ExpressionAttributeValues: clearSignal
+      ? {
+          ':complete': 'complete',
+          ':t': Date.now(),
+          ':e': null,
+          ':z': 0,
+          ':null': null,
+        }
+      : {
+          ':complete': 'complete',
+          ':t': Date.now(),
+          ':e': error,
+        },
   })
 }
 

@@ -538,7 +538,7 @@ function MaintenanceExplainer() {
   const steps = [
     {
       title: 'An update appears',
-      body: 'Ringmaster notices the server is behind main, badges it here and in the header, and tells any admin in game so somebody schedules it.',
+      body: 'Ringmaster asks the game host every 15 seconds whether it is behind main, and the host re-checks GitHub at most once a minute — so a new commit shows up here within about a minute of being merged. It then badges it, and tells any admin in game so somebody schedules it.',
     },
     {
       title: 'You schedule it',

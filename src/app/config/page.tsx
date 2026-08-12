@@ -4,7 +4,7 @@ import { DEMO_BADGES } from '@/lib/demo'
 
 export default function Page() {
   return (
-    <AppShell active="/config" badges={DEMO_BADGES}>
+    <AppShell active="/config">
       <Wireframe
         title="Live config"
         milestone="M6"
