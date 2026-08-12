@@ -128,7 +128,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
   {
     group: 'Act',
     items: [
-      { href: '/moderation', label: 'Kick & ban', icon: CircleDot, soon: 'M4' },
+      { href: '/moderation', label: 'Kick & ban', icon: CircleDot },
       {
         href: '/incidents',
         label: 'Incidents',
@@ -136,7 +136,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
         soon: 'M5',
         badge: (b) => <IncidentBadge n={b.incidents ?? 0} />,
       },
-      { href: '/audit', label: 'Audit log', icon: ScrollText, soon: 'M4' },
+      { href: '/audit', label: 'Audit log', icon: ScrollText },
     ],
   },
   {
