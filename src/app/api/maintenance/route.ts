@@ -19,12 +19,15 @@ export const dynamic = 'force-dynamic'
 
 const scheduleSchema = z
   .object({
-    /** Shown to players turned away at the door while draining. */
-    note: z
-      .string()
-      .trim()
-      .min(5, 'Say what the maintenance is for — players see this.')
-      .max(200),
+    /**
+     * Shown to players turned away at the door.
+     *
+     * OPTIONAL AND USUALLY ABSENT. The console generates it from the commit
+     * count, because a maintenance window is always the same thing -- deploy
+     * the update -- and asking somebody to type that every time produces
+     * either the same sentence or an empty one.
+     */
+    note: z.string().trim().max(200).optional(),
     /** Minutes from now until the server stops accepting players. */
     drainInMinutes: z.number().int().min(0).max(1440),
     deployMode: z.enum(['when-empty', 'at-time']),
@@ -63,17 +66,61 @@ export async function POST(req: Request): Promise<Response> {
     const now = Date.now()
     const drainStartsAt = now + input.drainInMinutes * 60_000
 
+    /**
+     * NOTHING TO DEPLOY, NOTHING TO SCHEDULE.
+     *
+     * A maintenance window with no update behind it costs a restart and every
+     * match in progress, and delivers exactly the code that was already
+     * running. There is no version of that which is what somebody meant.
+     */
+    const existing = await maint.current()
+    const behind = existing?.updateAvailable ?? 0
+    if (behind <= 0) {
+      throw new ActionError(
+        'The server is already running the latest code — there is nothing to deploy.',
+        409,
+      )
+    }
+
     if (input.deployMode === 'at-time' && input.deployAt! <= drainStartsAt) {
       throw new ActionError(
         'The deploy time has to be after draining starts, or nobody gets a chance to finish.',
       )
     }
 
+    /**
+     * A DEPLOY TIME PAST THE AUTOMATIC DEADLINE WOULD NEVER HAPPEN. The
+     * automation schedules its own window once an update has waited 72 hours,
+     * and that window would run first — so a later choice here is not a longer
+     * delay, it is a setting that silently does nothing. Refusing it with the
+     * reason is better than accepting it and being wrong later.
+     */
+    const deadline = maint.autoDeadline(existing?.updateFirstSeenAt)
+    if (
+      input.deployMode === 'at-time' &&
+      deadline !== null &&
+      input.deployAt! > deadline
+    ) {
+      throw new ActionError(
+        `That is after ${new Date(deadline).toLocaleString()}, when this update ` +
+          `is scheduled automatically because it will have been waiting 72 hours. ` +
+          `Pick an earlier time, or let the automation handle it.`,
+      )
+    }
+
+    // Generated rather than typed, unless somebody supplied one. Players see
+    // this at the door, so it says what is happening in their terms — not
+    // "3 commits behind main", which means nothing to them.
+    const noteText =
+      input.note && input.note.length > 0
+        ? input.note
+        : 'a server update'
+
     const w = await audit.audited(
       {
         action: 'maintenance.schedule',
         actor,
-        reason: input.note,
+        reason: noteText,
         detail: {
           drainStartsAt,
           deployMode: input.deployMode,
@@ -84,7 +131,7 @@ export async function POST(req: Request): Promise<Response> {
         maint.schedule({
           createdBy: actor.license,
           createdByName: actor.name,
-          note: input.note,
+          note: noteText,
           drainStartsAt,
           deployMode: input.deployMode,
           deployAt: input.deployAt ?? null,

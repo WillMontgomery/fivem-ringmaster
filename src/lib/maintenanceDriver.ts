@@ -1,6 +1,7 @@
 import * as audit from './audit'
 import * as maint from './maintenance'
 import { runVerb, sshConfigured } from './ssh'
+import { ensurePolling, hostView } from './telemetry'
 import { liveView } from './state'
 
 /**
@@ -64,10 +65,56 @@ export async function tick(): Promise<void> {
   globalForDriver.ringMaintBusy = true
 
   try {
-    const w = await maint.current()
-    if (!maint.isLive(w)) return
-
+    let w = await maint.current()
     const now = Date.now()
+
+    /**
+     * Keep the update signal fresh on the row the game polls.
+     *
+     * READ FROM THE TELEMETRY POLLER rather than making an SSH call of our own:
+     * it already asks the host for `status` every fifteen seconds, and a second
+     * caller would double the traffic to learn a number that is already in
+     * memory.
+     */
+    const behind = hostView().status?.behindMain ?? 0
+    await maint.noteUpdateAvailable(behind).catch(() => {})
+
+    /**
+     * The automation. An update nobody schedules is the normal outcome of a
+     * busy week, and the cost is silent drift — so after three days the console
+     * schedules the window itself, attributed to `system` so the audit log
+     * never implies a person chose this moment.
+     *
+     * Re-read after noteUpdateAvailable so `updateFirstSeenAt` is the value
+     * just written rather than the one from before this tick.
+     */
+    if (!maint.isLive(w) && behind > 0) {
+      const fresh = await maint.current()
+      const deadline = maint.autoDeadline(fresh?.updateFirstSeenAt)
+      if (deadline !== null && now >= deadline) {
+        await maint
+          .schedule({
+            createdBy: null,
+            createdByName: 'system',
+            note: `Automatic update — ${behind} commit${behind === 1 ? '' : 's'} behind for over 72 hours`,
+            drainStartsAt: now,
+            deployMode: 'when-empty',
+            deployAt: null,
+          })
+          .then(async () => {
+            await audit.begin({
+              action: 'maintenance.schedule',
+              actor: { license: null, name: 'system', discordId: null },
+              reason: 'Update available for more than 72 hours',
+              detail: { behind, automatic: true },
+            })
+          })
+          .catch(() => {})
+        w = await maint.current()
+      }
+    }
+
+    if (!maint.isLive(w)) return
 
     // scheduled -> draining, once the clock passes.
     if (w.state === 'scheduled' && now >= w.drainStartsAt) {
@@ -150,6 +197,9 @@ export async function tick(): Promise<void> {
  */
 export function ensureDriver(): void {
   if (globalForDriver.ringMaintTimer) return
+  // The driver reads behindMain out of the telemetry window, so that poller
+  // has to be running for the update signal to mean anything.
+  ensurePolling()
   globalForDriver.ringMaintTimer = setInterval(() => void tick(), TICK_MS)
   void tick()
 }

@@ -1,13 +1,17 @@
 'use client'
 
 import {
+  ArrowUpCircle,
   CalendarClock,
+  ChevronDown,
+  CircleCheck,
+  Info,
   Loader2,
   Rocket,
   X,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/ConfirmDialog'
@@ -24,9 +28,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
 import { postJson } from '@/lib/api'
-import type { MaintenanceWindow } from '@/lib/maintenance'
+import { AUTO_AFTER_MS, type MaintenanceWindow } from '@/lib/maintenance'
 import { cn } from '@/lib/utils'
 
 /**
@@ -82,8 +85,8 @@ export function MaintenancePanel({
   const [players, setPlayers] = useState(initialPlayers)
   const [now, setNow] = useState(() => Date.now())
 
-  const [note, setNote] = useState('')
-  const [drainIn, setDrainIn] = useState('30')
+  const [drainIn, setDrainIn] = useState('0')
+  const [advanced, setAdvanced] = useState(false)
   const [timed, setTimed] = useState(false)
   const [deployAt, setDeployAt] = useState(() =>
     localInput(Date.now() + 60 * 60_000),
@@ -92,8 +95,23 @@ export function MaintenancePanel({
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmForce, setConfirmForce] = useState(false)
 
-  // Poll rather than rely on the page render: a window that starts draining, or
-  // a server that empties, changes this display without anybody navigating.
+  // Last state we announced. null until the first poll, so opening the page
+  // during a live window does not toast about something already underway.
+  const seenState = useRef<string | null>(null)
+
+  /**
+   * Poll, and announce what changed.
+   *
+   * EVERY OPEN CONSOLE LEARNS WHAT EVERY OTHER ADMIN DID, which matters because
+   * maintenance is the one action here whose effects another admin will notice
+   * before they notice the cause: the player count starts falling and joins
+   * stop. Deriving the toast from a state CHANGE rather than pushing a message
+   * costs nothing — the poll already runs — and works for the admin who opened
+   * the page thirty seconds after somebody else clicked.
+   *
+   * The previous state is held in a ref so a re-render cannot re-fire a toast
+   * that has already been shown.
+   */
   useEffect(() => {
     const tick = async () => {
       setNow(Date.now())
@@ -104,7 +122,33 @@ export function MaintenancePanel({
           window?: MaintenanceWindow | null
           players?: number
         }
-        setW(d.window ?? null)
+        const next = d.window ?? null
+        const prev = seenState.current
+        const nextState = next?.state ?? 'none'
+
+        if (prev !== null && prev !== nextState) {
+          if (nextState === 'scheduled') {
+            toast.info(
+              `${next?.createdByName ?? 'Someone'} scheduled a server update.`,
+              { description: 'It deploys once the server empties.' },
+            )
+          } else if (nextState === 'draining') {
+            toast.warning('The server has stopped accepting new players.', {
+              description: 'The update runs as soon as everyone has left.',
+            })
+          } else if (nextState === 'deploying') {
+            toast.info('The update is being deployed now.')
+          } else if (prev === 'deploying' && nextState === 'complete') {
+            toast.success('Server update completed. The server is back open.')
+          } else if (nextState === 'cancelled') {
+            toast.info(
+              `${next?.cancelledByName ?? 'Someone'} cancelled the maintenance window.`,
+            )
+          }
+        }
+
+        seenState.current = nextState
+        setW(next)
         setPlayers(d.players ?? 0)
       } catch {
         /* keep the last view; the clock still ticks */
@@ -122,7 +166,6 @@ export function MaintenancePanel({
     setBusy(true)
     try {
       await postJson('/api/maintenance', {
-        note: note.trim(),
         drainInMinutes: Number(drainIn),
         deployMode: timed ? 'at-time' : 'when-empty',
         deployAt: timed ? new Date(deployAt).getTime() : null,
@@ -132,7 +175,6 @@ export function MaintenancePanel({
           ? `Maintenance scheduled. Deploy at ${clock(new Date(deployAt).getTime())}.`
           : 'Maintenance scheduled. It will deploy once the server empties.',
       )
-      setNote('')
       router.refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not schedule.')
@@ -334,99 +376,236 @@ export function MaintenancePanel({
 
   // ------------------------------------------------------------ schedule ----
 
-  if (!canRun) {
-    return (
-      <Card className="surface-edge gap-0 px-5 py-4">
-        <h2 className="text-sm font-medium">No maintenance scheduled</h2>
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          Scheduling maintenance needs the{' '}
-          <code className="font-mono">process</code> scope — it restarts the game
-          server.
-        </p>
-      </Card>
-    )
-  }
+  const behind = w?.updateAvailable ?? 0
+  const deadline = w?.updateFirstSeenAt
+    ? w.updateFirstSeenAt + AUTO_AFTER_MS
+    : null
+
+  return (
+    <div className="space-y-4">
+      {behind > 0 ? (
+        <Card className="surface-edge gap-0 px-5 py-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-medium">Update available</h2>
+                <Badge className="gap-1 border-0 bg-info/10 text-[10px] uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
+                  <ArrowUpCircle className="size-3" />
+                  {behind} commit{behind === 1 ? '' : 's'} behind
+                </Badge>
+              </div>
+              <p className="mt-1 text-[13px] text-muted-foreground">
+                Schedule it and the server drains, then deploys once everyone
+                has left. Nobody loses a match.
+              </p>
+              {deadline && (
+                <p className="mt-1 text-[11px] text-muted-foreground/70">
+                  If nobody schedules it, this runs automatically on{' '}
+                  <span className="text-foreground">{clock(deadline)}</span>.
+                </p>
+              )}
+            </div>
+
+            {canRun && (
+              <Button disabled={busy} onClick={schedule}>
+                {busy ? <Loader2 className="animate-spin" /> : <CalendarClock />}
+                Schedule update
+              </Button>
+            )}
+          </div>
+
+          {canRun && (
+            <>
+              {/*
+                The default path is one button. Everything below is folded away
+                because choosing a time is the rare case — and a form with four
+                controls makes the common action look as considered as the
+                uncommon one.
+              */}
+              <button
+                type="button"
+                onClick={() => setAdvanced((v) => !v)}
+                className="mt-3 flex w-fit items-center gap-1.5 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <ChevronDown
+                  className={cn(
+                    'size-3.5 transition-transform',
+                    advanced && 'rotate-180',
+                  )}
+                />
+                {advanced ? 'Hide options' : 'Options'}
+              </button>
+
+              {advanced && (
+                <div className="mt-3 space-y-4 border-t border-border pt-4">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="m-drain">Stop accepting players</Label>
+                    <Select
+                      value={drainIn}
+                      onValueChange={(v) => setDrainIn(v ?? '0')}
+                    >
+                      <SelectTrigger id="m-drain" className="w-full max-w-xs">
+                        <SelectValue>
+                          {(value) =>
+                            DRAIN_CHOICES.find((d) => d.value === value)?.label ??
+                            'Choose when'
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DRAIN_CHOICES.map((d) => (
+                          <SelectItem key={d.value} value={d.value}>
+                            {d.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex items-center gap-2.5">
+                    <Checkbox
+                      id="m-timed"
+                      checked={timed}
+                      onCheckedChange={(v) => setTimed(v === true)}
+                    />
+                    <Label htmlFor="m-timed" className="font-normal">
+                      Deploy at a specific time instead of waiting for the server
+                      to empty
+                    </Label>
+                  </div>
+
+                  {timed && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="m-at">Deploy at</Label>
+                      <Input
+                        id="m-at"
+                        type="datetime-local"
+                        value={deployAt}
+                        max={deadline ? localInput(deadline) : undefined}
+                        onChange={(e) => setDeployAt(e.target.value)}
+                        className="max-w-xs"
+                      />
+                      <p className="text-[11px] text-warn">
+                        Anyone still connected at that moment is disconnected
+                        mid-match.
+                      </p>
+                      {deadline && (
+                        <p className="text-[11px] text-muted-foreground/70">
+                          Cannot be later than {clock(deadline)} — the automatic
+                          window would already have run by then, so a later time
+                          would never happen.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+
+          {!canRun && (
+            <p className="mt-2 text-[12px] text-muted-foreground">
+              Scheduling needs the <code className="font-mono">process</code>{' '}
+              scope — it restarts the game server.
+            </p>
+          )}
+        </Card>
+      ) : (
+        <Card className="surface-edge items-center px-6 py-12 text-center">
+          <CircleCheck className="size-6 text-live" />
+          <p className="mt-2 text-sm">The server is running the latest code.</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-muted-foreground">
+            Maintenance can only be scheduled when there is an update to deploy
+            — a restart that changes nothing costs every match in progress and
+            delivers what was already running.
+          </p>
+        </Card>
+      )}
+
+      <MaintenanceExplainer />
+    </div>
+  )
+}
+
+/**
+ * What actually happens, in order.
+ *
+ * WORTH THE SPACE because this is the one page whose button ends other
+ * people's matches, and the sequence is not guessable from the controls. An
+ * admin who understands that draining is gradual and the deploy waits for
+ * empty will schedule it in the middle of the evening; one who assumes it
+ * restarts immediately will put it off until 4am and never do it.
+ */
+function MaintenanceExplainer() {
+  const steps = [
+    {
+      title: 'An update appears',
+      body: 'Ringmaster notices the server is behind main, badges it here and in the header, and tells any admin in game so somebody schedules it.',
+    },
+    {
+      title: 'You schedule it',
+      body: 'One button. The window is recorded in the audit log against your name, and everyone in the console and on the server is told what is coming.',
+    },
+    {
+      title: 'The server drains',
+      body: 'No new players are let in — they get an explanation at the door — and no new matches start. Everyone already playing carries on and finishes normally.',
+    },
+    {
+      title: 'The update runs',
+      body: 'Once the last player leaves, royale-deploy pulls main, syncs the resources and restarts FXServer. Nothing reboots; the box is up the whole time.',
+    },
+    {
+      title: 'Back to normal',
+      body: 'The server accepts players again and the result — success or failure — lands in the audit log.',
+    },
+  ]
 
   return (
     <Card className="surface-edge gap-0 px-5 py-4">
-      <h2 className="text-sm font-medium">Schedule maintenance</h2>
-      <p className="mt-0.5 text-[12px] text-muted-foreground">
-        The server stops accepting players, finishes the matches already running,
-        then deploys the latest main and restarts. Nothing reboots.
-      </p>
+      <div className="flex items-center gap-2">
+        <Info className="size-4 text-info" />
+        <h2 className="text-sm font-medium">How maintenance works</h2>
+      </div>
 
-      <div className="mt-4 space-y-4">
-        <div className="space-y-1.5">
-          <Label htmlFor="m-note">What is it for — players see this</Label>
-          <Textarea
-            id="m-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            rows={2}
-            placeholder="Deploying the storm-damage fix"
-          />
-        </div>
+      <ol className="mt-3 space-y-3">
+        {steps.map((s, i) => (
+          <li key={s.title} className="flex gap-3">
+            <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold tabular-nums text-muted-foreground">
+              {i + 1}
+            </span>
+            <div className="min-w-0">
+              <div className="text-[13px] font-medium">{s.title}</div>
+              <p className="text-[12px] leading-relaxed text-muted-foreground">
+                {s.body}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ol>
 
-        <div className="space-y-1.5">
-          <Label htmlFor="m-drain">Stop accepting players</Label>
-          <Select value={drainIn} onValueChange={(v) => setDrainIn(v ?? '30')}>
-            <SelectTrigger id="m-drain" className="w-full">
-              <SelectValue>
-                {(value) =>
-                  DRAIN_CHOICES.find((d) => d.value === value)?.label ??
-                  'Choose when'
-                }
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {DRAIN_CHOICES.map((d) => (
-                <SelectItem key={d.value} value={d.value}>
-                  {d.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/*
-          Waiting for empty is the default because it is the kind option and
-          almost always works. A fixed time is for a deadline you are willing to
-          end a match for — which is why it is a checkbox you have to reach for
-          rather than the thing already selected.
-        */}
-        <div className="flex items-center gap-2.5">
-          <Checkbox
-            id="m-timed"
-            checked={timed}
-            onCheckedChange={(v) => setTimed(v === true)}
-          />
-          <Label htmlFor="m-timed" className="font-normal">
-            Deploy at a specific time instead of waiting for the server to empty
-          </Label>
-        </div>
-
-        {timed && (
-          <div className="space-y-1.5">
-            <Label htmlFor="m-at">Deploy at</Label>
-            <Input
-              id="m-at"
-              type="datetime-local"
-              value={deployAt}
-              onChange={(e) => setDeployAt(e.target.value)}
-              className="max-w-xs"
-            />
-            <p className="text-[11px] text-warn">
-              Anyone still connected at that moment is disconnected mid-match.
-            </p>
-          </div>
-        )}
-
-        <div className="flex justify-end">
-          <Button disabled={busy || note.trim().length < 5} onClick={schedule}>
-            {busy ? <Loader2 className="animate-spin" /> : <CalendarClock />}
-            Schedule
-          </Button>
-        </div>
+      <div className="mt-4 space-y-2 border-t border-border pt-3 text-[12px] leading-relaxed text-muted-foreground">
+        <p>
+          <span className="font-medium text-foreground">
+            You can cancel any time before the deploy starts.
+          </span>{' '}
+          The server goes straight back to accepting players. Once the deploy is
+          running it cannot be called off — the restart is already happening.
+        </p>
+        <p>
+          <span className="font-medium text-foreground">
+            An update left for 72 hours schedules itself.
+          </span>{' '}
+          It runs the same drain, and the audit log records it as initiated by{' '}
+          <code className="font-mono">system</code>. This exists because an
+          unscheduled update is the normal end of a busy week, and the cost is
+          silent: the server drifts further from main and the eventual deploy
+          carries more change.
+        </p>
+        <p>
+          <span className="font-medium text-foreground">Deploy now</span> skips
+          the waiting and disconnects whoever is still playing. It asks first,
+          and records who chose it and how many people were on.
+        </p>
       </div>
     </Card>
   )
