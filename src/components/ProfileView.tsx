@@ -1,3 +1,5 @@
+'use client'
+
 import {
   ArrowLeft,
   Ban,
@@ -9,6 +11,7 @@ import {
   Swords,
   Trophy,
 } from 'lucide-react'
+import { useState } from 'react'
 import Link from 'next/link'
 
 import { ProvenanceTag } from '@/components/Provenance'
@@ -148,6 +151,89 @@ function Empty({ children }: { children?: React.ReactNode }) {
   )
 }
 
+/**
+ * Audit action names, in English.
+ *
+ * `ban.issue` and `player.kick` are wire identifiers — stable, greppable, and
+ * exactly right in the audit table. They are not what a moderator should be
+ * reading at a glance, and a profile page is read at a glance.
+ *
+ * Falls through to the raw identifier for anything unmapped, so a new action
+ * shows up as itself rather than disappearing.
+ */
+const ACTION_LABEL: Record<string, string> = {
+  'ban.issue': 'Banned',
+  'ban.lift': 'Ban lifted',
+  'player.kick': 'Kicked',
+  'maintenance.schedule': 'Scheduled a server update',
+  'maintenance.cancel': 'Cancelled a server update',
+  'host.deploy': 'Ran a server update',
+}
+
+function actionLabel(action: string): string {
+  return ACTION_LABEL[action] ?? action
+}
+
+/**
+ * A list that does not grow without bound.
+ *
+ * Every moderation section on this page is append-only, so on a long-lived
+ * player each one grows forever and the page becomes a scroll. Ten at a time,
+ * with the control hidden entirely when there is only one page — pagination on
+ * a three-row list is noise.
+ *
+ * NEWEST FIRST is the caller's job, not this component's. It slices whatever
+ * order it is given.
+ */
+function Paged<T>({
+  items,
+  perPage = 10,
+  children,
+}: {
+  items: T[]
+  perPage?: number
+  children: (slice: T[]) => React.ReactNode
+}) {
+  const [page, setPage] = useState(0)
+  const pages = Math.ceil(items.length / perPage)
+  // Guard against the list shrinking under a page that no longer exists — a
+  // resolved incident or a lifted ban can do that.
+  const current = Math.min(page, Math.max(0, pages - 1))
+  const slice = items.slice(current * perPage, current * perPage + perPage)
+
+  return (
+    <>
+      {children(slice)}
+      {pages > 1 && (
+        <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
+          <span className="text-xs text-muted-foreground">
+            {current * perPage + 1}–{Math.min((current + 1) * perPage, items.length)} of{' '}
+            {items.length}
+          </span>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              disabled={current === 0}
+              onClick={() => setPage(current - 1)}
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground"
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              disabled={current >= pages - 1}
+              onClick={() => setPage(current + 1)}
+              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 export function ProfileView({
   p,
   now,
@@ -175,7 +261,9 @@ export function ProfileView({
       {/* Identity. First, because every other panel is worthless if this is
           the wrong person. */}
       <Card className="surface-edge animate-rise gap-0 overflow-hidden px-5 py-4">
-        <div className="flex flex-wrap items-start gap-4">
+        {/* items-center: the name sits on the avatar's midline rather than
+              hanging off its top edge. */}
+        <div className="flex flex-wrap items-center gap-4">
           {/* THE FACE, when Discord gives us one. Falls back to initials rather
               than to a broken image, and the fallback is also what a player
               with no Discord link gets — which is a real state, not an error. */}
@@ -457,59 +545,60 @@ export function ProfileView({
         }
       >
         {p.actions.length ? (
-          <ul>
-            {p.actions.map((a, i) => (
-              <li
-                key={`${a.at}-${i}`}
-                className="flex items-start gap-3 border-t border-border/60 py-2.5 first:border-t-0 first:pt-0"
-              >
-                <div
-                  className={cn(
-                    'mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset',
-                    a.action.startsWith('ban')
-                      ? 'bg-danger/10 text-danger ring-danger/25'
-                      : 'bg-warn/10 text-warn ring-warn/25',
-                  )}
-                >
-                  <Ban className="size-3.5" />
-                </div>
+          <Paged items={p.actions}>
+            {(slice) => (
+              <ul>
+                {slice.map((a, i) => (
+                  <li
+                    key={`${a.at}-${i}`}
+                    className="flex items-start gap-3 border-t border-border/60 py-2.5 first:border-t-0 first:pt-0"
+                  >
+                    <div
+                      className={cn(
+                        'mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset',
+                        a.action.startsWith('ban')
+                          ? 'bg-danger/10 text-danger ring-danger/25'
+                          : 'bg-warn/10 text-warn ring-warn/25',
+                      )}
+                    >
+                      <Ban className="size-3.5" />
+                    </div>
 
-                <div className="min-w-0 flex-1">
-                  <div className="text-sm">
-                    <span className="font-medium">{a.action}</span>
-                    {a.reason ? <span className="text-muted-foreground"> — {a.reason}</span> : null}
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {when(a.at)} · by{' '}
-                    {a.actorLicense ? (
-                      <Link
-                        href={`/players/${encodeURIComponent(a.actorLicense)}`}
-                        className="underline underline-offset-2 transition-colors hover:text-foreground"
-                      >
-                        {a.actorName}
-                      </Link>
-                    ) : (
-                      a.actorName
-                    )}
-                  </div>
-                </div>
-
-                {/* The outcome, because a dispatched kick that never confirmed
-                    is a different fact from one that landed. */}
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    'shrink-0 rounded-md border-0 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
-                    a.outcome === 'ok'
-                      ? 'bg-muted/40 text-muted-foreground ring-border'
-                      : 'bg-danger/10 text-danger ring-danger/25',
-                  )}
-                >
-                  {a.outcome}
-                </Badge>
-              </li>
-            ))}
-          </ul>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm">
+                        <span className="font-medium">{actionLabel(a.action)}</span>
+                        {a.reason ? (
+                          <span className="text-muted-foreground"> — {a.reason}</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-0.5 text-xs text-muted-foreground">
+                        {when(a.at)} · by{' '}
+                        {a.actorLicense ? (
+                          <Link
+                            href={`/players/${encodeURIComponent(a.actorLicense)}`}
+                            className="underline underline-offset-2 transition-colors hover:text-foreground"
+                          >
+                            {a.actorName}
+                          </Link>
+                        ) : (
+                          a.actorName
+                        )}
+                        {/* THE OUTCOME BADGE IS GONE, but a failure is not.
+                            "OK / PENDING / FAILED" meant nothing to somebody
+                            reading a player's history — a successful action
+                            does not need announcing. An action that did NOT
+                            happen still does: a kick shown identically to one
+                            that landed is a false record. */}
+                        {a.outcome === 'failed' && (
+                          <span className="text-danger"> · did not go through</span>
+                        )}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Paged>
         ) : (
           <Empty />
         )}
@@ -534,41 +623,36 @@ export function ProfileView({
         {p.recentSessions.length === 0 ? (
           <Empty />
         ) : (
-        <ul className="space-y-0">
-          {p.recentSessions.map((s, i) => (
-            <li
-              key={i}
-              className="flex items-center gap-4 border-t border-border/60 py-2 text-sm first:border-t-0 first:pt-0"
-            >
-              <span className="w-36 shrink-0 text-muted-foreground">
-                {when(s.at)}
-              </span>
-              <span className="w-20 shrink-0 font-mono text-muted-foreground">
-                {humanDuration(s.durationMs)}
-              </span>
-              <span className="w-24 shrink-0 font-mono text-muted-foreground">
-                match {s.matchId}
-              </span>
-              <span className="w-16 shrink-0 font-mono">
-                {s.placement ? `#${s.placement}` : '—'}
-              </span>
-              <span className="font-mono text-muted-foreground">
-                {s.kills} kills
-              </span>
-            </li>
-          ))}
-        </ul>
+          <Paged items={p.recentSessions}>
+            {(slice) => (
+              <ul className="space-y-0">
+                {slice.map((s, i) => (
+                  <li
+                    key={i}
+                    className="flex items-center gap-4 border-t border-border/60 py-2 text-sm first:border-t-0 first:pt-0"
+                  >
+                    <span className="w-36 shrink-0 text-muted-foreground">
+                      {when(s.at)}
+                    </span>
+                    <span className="w-20 shrink-0 font-mono text-muted-foreground">
+                      {humanDuration(s.durationMs)}
+                    </span>
+                    <span className="w-24 shrink-0 font-mono text-muted-foreground">
+                      match {s.matchId}
+                    </span>
+                    <span className="w-16 shrink-0 font-mono">
+                      {s.placement ? `#${s.placement}` : '—'}
+                    </span>
+                    <span className="font-mono text-muted-foreground">
+                      {s.kills} kills
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Paged>
         )}
       </Section>
-
-      <Separator />
-      <p className="text-xs leading-relaxed text-muted-foreground/60">
-        Every section above reads a real source. Identity and sessions come from
-        the player registry, the play record and progression from the game
-        server&apos;s own table, presence from the live snapshot, and bans from
-        the ban table. Incidents and match history are the two with no source
-        yet, and they say so rather than rendering empty.
-      </p>
     </div>
   )
 }

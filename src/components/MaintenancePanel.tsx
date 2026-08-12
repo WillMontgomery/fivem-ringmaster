@@ -264,8 +264,12 @@ export function MaintenancePanel({
                   {w.state}
                 </Badge>
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">“{w.note}”</p>
-              <p className="mt-0.5 text-xs text-muted-foreground/60">
+              {/* The note is gone from here. Every window says the same thing
+                  -- "a server update" -- because that is the only kind of
+                  window this system schedules, so quoting it back added a line
+                  of text that never varied. Who and when do vary, and they are
+                  what an admin arriving at this page needs. */}
+              <p className="mt-1 text-xs text-muted-foreground/60">
                 Scheduled by {w.createdByName} · {clock(w.createdAt)}
               </p>
             </div>

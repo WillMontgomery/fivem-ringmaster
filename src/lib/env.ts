@@ -21,6 +21,20 @@ const schema = z.object({
   DISCORD_CLIENT_ID: z.string().min(1),
   DISCORD_CLIENT_SECRET: z.string().min(1),
 
+  /**
+   * OPTIONAL, and the only thing that makes real profile pictures possible.
+   *
+   * A Discord user id cannot be turned into an avatar URL on its own — the CDN
+   * path needs the account's current avatar hash, which only the API knows.
+   * Without this the console shows Discord's generic default avatar, which is
+   * never that person.
+   *
+   * The bot needs no privileged intents and no server membership: `GET
+   * /users/{id}` returns username and avatar hash to any bot, and cannot read
+   * messages, see servers, or act on anyone.
+   */
+  DISCORD_BOT_TOKEN: z.string().optional(),
+
   // The guild membership check that gates login before any grant lookup
   // runs — a stranger with a Discord account never reaches the scope check.
   DISCORD_GUILD_ID: z.string().min(1),

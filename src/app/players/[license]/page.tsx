@@ -4,6 +4,7 @@ import { AppShell } from '@/components/AppShell'
 import { PlayerActions } from '@/components/PlayerActions'
 import { ProfileView } from '@/components/ProfileView'
 import * as audit from '@/lib/audit'
+import { avatarFor } from '@/lib/discord'
 import * as bans from '@/lib/bans'
 import { gameProfileFor } from '@/lib/gameProfile'
 import { can } from '@/lib/grants'
@@ -69,6 +70,15 @@ export default async function PlayerProfilePage({
     audit.forTarget(license),
   ])
 
+  // The Discord id is the newest sighting, not the first: somebody who changed
+  // accounts should show the face attached to the one they use now.
+  //
+  // Resolved AFTER the batch above because it depends on `record`. It is one
+  // cached call and it degrades to the default avatar without a bot token, so
+  // it cannot hold the page up.
+  const discordId = record?.identifiers.discord?.at(-1)?.value ?? null
+  const avatarUrl = await avatarFor(discordId)
+
   // Name resolution, best first: what they asked to be called, then whoever is
   // connected now, then the registry, then the ban record. Never a guess.
   const name =
@@ -80,14 +90,10 @@ export default async function PlayerProfilePage({
 
   const bannedNow = ban !== null && bans.isActive(ban, now)
 
-  // The Discord id is the newest sighting, not the first: somebody who changed
-  // accounts should show the face attached to the one they use now.
-  const discordId = record?.identifiers.discord?.at(-1)?.value ?? null
-
   const profile: Profile = {
     license,
     name,
-    avatarUrl: players.discordAvatar(discordId),
+    avatarUrl,
 
     // ---- identity, from the console's own registry ----
     // THE LICENSE IS ADDED BACK HERE, and its absence was not obvious.

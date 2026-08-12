@@ -327,23 +327,15 @@ export async function search(query: string, limit = 10): Promise<PlayerRecord[]>
   return matched.sort((a, b) => b.lastSeen - a.lastSeen).slice(0, limit)
 }
 
-/**
- * The Discord avatar URL for a player, if we know their Discord id.
+/*
+ * discordAvatar() LIVES IN lib/discord.ts NOW, and has a real implementation.
  *
- * BUILT FROM THE ID RATHER THAN STORED. Discord's CDN needs the avatar HASH,
- * which we never receive from the game — only the user id. So this returns the
- * default-avatar endpoint, which is deterministic from the id and never 404s.
- * A real avatar needs a Discord API call with a bot token, which is a decision
- * about adding a credential rather than a display detail.
+ * The version that was here could only ever return Discord's GENERIC DEFAULT
+ * avatar — one of six coloured logos derived arithmetically from the id —
+ * because a real profile picture needs the account's avatar hash and only the
+ * Discord API knows it. It was wired into the profile page and presented as
+ * showing the player's picture, which it never did.
+ *
+ * lib/discord.ts asks the API when DISCORD_BOT_TOKEN is set, caches the hash,
+ * and falls back to that same default when it is not.
  */
-export function discordAvatar(discordId: string | null | undefined): string | null {
-  if (!discordId) return null
-  // Discord's own fallback: (id >> 22) % 6 for the new username system.
-  let index = 0
-  try {
-    index = Number((BigInt(discordId) >> 22n) % 6n)
-  } catch {
-    return null
-  }
-  return `https://cdn.discordapp.com/embed/avatars/${index}.png`
-}
