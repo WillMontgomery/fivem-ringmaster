@@ -42,9 +42,9 @@ export default async function AuditPage() {
       active="/audit"
       user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
     >
-      <div className="max-w-5xl">
+      <div className="mx-auto max-w-5xl">
         <div className="mb-5">
-          <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
+          <h1 className="text-[13px]xl font-semibold tracking-tight">Audit log</h1>
           <p className="text-sm text-muted-foreground">
             Every action any admin took, including the ones that failed and the
             ones we never heard back about.

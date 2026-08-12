@@ -58,9 +58,9 @@ export default async function ModerationPage() {
       active="/moderation"
       user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
     >
-      <div className="max-w-5xl">
+      <div className="mx-auto max-w-5xl">
         <div className="mb-5">
-          <h1 className="text-2xl font-semibold tracking-tight">Kick &amp; ban</h1>
+          <h1 className="text-[13px]xl font-semibold tracking-tight">Kick &amp; ban</h1>
           <p className="text-sm text-muted-foreground">
             What moderation has done recently. To act on someone, open their
             profile — the live board and search both link straight to it.

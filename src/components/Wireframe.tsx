@@ -48,7 +48,7 @@ export function Wireframe({
       <div className="flex flex-wrap items-start gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+            <h1 className="text-[12px]l font-semibold tracking-tight">{title}</h1>
             <span className="inline-flex items-center gap-1 rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border">
               <Construction className="size-3" />
               {milestone}

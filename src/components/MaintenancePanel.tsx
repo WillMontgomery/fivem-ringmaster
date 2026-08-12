@@ -231,7 +231,7 @@ export function MaintenancePanel({
                   className={cn(
                     'gap-1 border-0 text-[10px] uppercase tracking-wider ring-1 ring-inset',
                     w.state === 'deploying'
-                      ? 'bg-primary/10 text-primary ring-primary/30'
+                      ? 'bg-primary/10 text-[12px]rimary ring-primary/30'
                       : draining
                         ? 'bg-warn/10 text-warn ring-warn/30'
                         : 'bg-info/10 text-info ring-info/30',
@@ -275,7 +275,7 @@ export function MaintenancePanel({
               </div>
               <div
                 className={cn(
-                  'mt-0.5 text-xl tabular-nums',
+                  'mt-0.5 text-[12px]l tabular-nums',
                   players === 0 ? 'text-live' : 'text-foreground',
                 )}
               >
@@ -294,7 +294,7 @@ export function MaintenancePanel({
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 Draining
               </div>
-              <div className="mt-0.5 text-xl">
+              <div className="mt-0.5 text-[12px]l">
                 {draining ? 'Now' : until(w.drainStartsAt, now)}
               </div>
               <div className="text-[11px] text-muted-foreground/60">
@@ -306,7 +306,7 @@ export function MaintenancePanel({
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
                 Deploy
               </div>
-              <div className="mt-0.5 text-xl">
+              <div className="mt-0.5 text-[12px]l">
                 {w.deployMode === 'when-empty'
                   ? players === 0
                     ? 'Any moment'
@@ -515,9 +515,7 @@ export function MaintenancePanel({
           <CircleCheck className="size-6 text-live" />
           <p className="mt-2 text-sm">The server is running the latest code.</p>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-muted-foreground">
-            Maintenance can only be scheduled when there is an update to deploy
-            — a restart that changes nothing costs every match in progress and
-            delivers what was already running.
+            Maintenance can only be scheduled when there is an update to deploy.
           </p>
         </Card>
       )}
@@ -552,7 +550,7 @@ function MaintenanceExplainer() {
     },
     {
       title: 'The update runs',
-      body: 'Once the last player leaves, royale-deploy pulls main, syncs the resources and restarts FXServer. Nothing reboots; the box is up the whole time.',
+      body: 'Once the last player leaves, royale-deploy pulls main, syncs the resources and restarts FXServer.',
     },
     {
       title: 'Back to normal',
@@ -596,10 +594,7 @@ function MaintenanceExplainer() {
             An update left for 72 hours schedules itself.
           </span>{' '}
           It runs the same drain, and the audit log records it as initiated by{' '}
-          <code className="font-mono">system</code>. This exists because an
-          unscheduled update is the normal end of a busy week, and the cost is
-          silent: the server drifts further from main and the eventual deploy
-          carries more change.
+          <code className="font-mono">system</code>.
         </p>
         <p>
           <span className="font-medium text-foreground">Deploy now</span> skips

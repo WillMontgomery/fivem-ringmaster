@@ -63,7 +63,7 @@ function StatCard({
         <Icon className="size-3.5" style={{ color: tone }} />
         {label}
       </div>
-      <div className="mt-1.5 text-xl">{children}</div>
+      <div className="mt-1.5 text-[12px]l">{children}</div>
     </Card>
   )
 }
@@ -155,7 +155,7 @@ export function HostBoard({ initial }: { initial: View }) {
               href={commitUrl(s.commit)}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-2 transition-colors hover:text-primary"
+              className="inline-flex items-center gap-2 transition-colors hover:text-[12px]rimary"
             >
               <code className="font-mono text-base underline decoration-dotted underline-offset-4">
                 {s.commit}

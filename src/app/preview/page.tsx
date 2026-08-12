@@ -49,6 +49,9 @@ async function Preview({
     bootEpoch: env.server.bootEpoch,
     counts: env.snapshot.counts,
     truncated: env.snapshot.truncated,
+    // The harness renders chrome, not the Anticheat page; null is the honest
+    // stand-in rather than an invented threshold.
+    anticheat: null,
     matches: env.snapshot.matches,
     players: env.snapshot.players,
     snapshotClock: { wallMs: env.server.wallMs, gameMs: env.server.gameMs },
@@ -97,7 +100,7 @@ async function Preview({
       <div className="mx-auto max-w-6xl">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">
+            <h1 className="text-[12px]l font-semibold tracking-tight">
               Live players
             </h1>
             <p className="text-[13px] text-muted-foreground">
@@ -113,7 +116,7 @@ async function Preview({
                 className={cn(
                   'rounded-md px-2.5 py-1 text-[11px] uppercase tracking-wider transition-colors',
                   k === key
-                    ? 'bg-primary/15 text-primary'
+                    ? 'bg-primary/15 text-[12px]rimary'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >

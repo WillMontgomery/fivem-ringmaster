@@ -45,14 +45,14 @@ const KIND: Record<
     detail:
       'From persistent stats, written at match end. Durable, but always one match behind a player who is mid-game.',
     icon: Trophy,
-    className: 'text-phase-warmup ring-phase-warmup/25 bg-phase-warmup/10',
+    className: 'text-[12px]hase-warmup ring-phase-warmup/25 bg-phase-warmup/10',
   },
   moderation: {
     label: 'Moderation',
     detail:
       "Ringmaster's own record — bans, incidents, audit. Authoritative, and the only data here that another admin wrote on purpose.",
     icon: ShieldAlert,
-    className: 'text-primary ring-primary/25 bg-primary/10',
+    className: 'text-[12px]rimary ring-primary/25 bg-primary/10',
   },
 }
 

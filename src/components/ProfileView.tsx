@@ -79,7 +79,7 @@ function Figure({
         <Icon className="size-3" />
         {label}
       </div>
-      <div className="mt-1 truncate font-mono text-xl tabular-nums">{value}</div>
+      <div className="mt-1 truncate font-mono text-[12px]l tabular-nums">{value}</div>
     </div>
   )
 }
@@ -163,13 +163,13 @@ export function ProfileView({
           the wrong person. */}
       <Card className="surface-edge animate-rise gap-0 overflow-hidden px-5 py-4">
         <div className="flex flex-wrap items-start gap-4">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary ring-1 ring-inset ring-primary/25">
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-[12px]rimary ring-1 ring-inset ring-primary/25">
             {p.name.slice(0, 2).toUpperCase()}
           </div>
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{p.name}</h1>
+              <h1 className="text-[12px]l font-semibold tracking-tight">{p.name}</h1>
               {/* BANNED SITS NEXT TO THE NAME, not down in a moderation panel.
                   It is the single most important fact about a player when it
                   is true, and it has to be visible in the same glance that

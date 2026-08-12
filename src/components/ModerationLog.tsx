@@ -86,7 +86,7 @@ function PersonLink({
     <Link
       href={`/players/${encodeURIComponent(license)}`}
       className={cn(
-        'underline-offset-4 transition-colors hover:text-primary hover:underline',
+        'underline-offset-4 transition-colors hover:text-[12px]rimary hover:underline',
         className,
       )}
     >

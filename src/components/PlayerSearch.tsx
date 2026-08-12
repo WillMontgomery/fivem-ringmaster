@@ -149,7 +149,7 @@ export function PlayerSearch({
                   go(`/players/${encodeURIComponent(p.license ?? '')}`)
                 }
               >
-                <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[10px] font-medium text-primary ring-1 ring-inset ring-primary/20">
+                <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-[10px] font-medium text-[12px]rimary ring-1 ring-inset ring-primary/20">
                   {p.name.slice(0, 2).toUpperCase()}
                 </div>
                 <div className="min-w-0 flex-1">

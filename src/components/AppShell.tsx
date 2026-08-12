@@ -122,7 +122,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
     items: [
       { href: '/', label: 'Live players', icon: Users },
       { href: '/host', label: 'Host', icon: Gauge },
-      { href: '/anticheat', label: 'Anticheat', icon: ShieldAlert, soon: 'M5' },
+      { href: '/anticheat', label: 'Anticheat', icon: ShieldAlert },
     ],
   },
   {
@@ -200,9 +200,19 @@ export async function AppShell({
         )
       : user
 
-  // Placeholder counts until M5 (incidents) and M6 (maintenance) produce real
-  // ones. Centralised here so there is exactly one line to change then.
-  const b = badges ?? DEMO_BADGES
+  /**
+   * NO PLACEHOLDER BADGES.
+   *
+   * This defaulted to DEMO_BADGES, so every page permanently showed
+   * "maintenance scheduled" and three unread incidents — fabricated state, on
+   * every screen, indistinguishable from the real thing. A badge nobody can
+   * trust is worse than no badge: the first genuine maintenance window would
+   * have looked exactly like the noise that was always there.
+   *
+   * Pages that know their badge state pass it; Maintenance does. The rest show
+   * none until M5 and M6 produce real counts.
+   */
+  const b = badges ?? {}
 
   return (
     <SidebarProvider>
@@ -282,7 +292,7 @@ export async function AppShell({
                       className="size-7 shrink-0 rounded-full object-cover ring-1 ring-inset ring-primary/25"
                     />
                   ) : (
-                    <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/25">
+                    <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-[12px]rimary ring-1 ring-inset ring-primary/25">
                       {resolvedUser.name.slice(0, 2).toUpperCase()}
                     </div>
                   )}
@@ -338,15 +348,18 @@ export async function AppShell({
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 relative border-b border-border bg-background/70 px-5 backdrop-blur-xl">
           <SidebarTrigger className="-ml-1.5" />
 
-          {/* Centred and given real width: the palette is the primary way to
-              reach a player, and a small button tucked beside the sidebar
-              toggle read as a minor control rather than the main one. */}
-          <div className="pointer-events-none absolute inset-x-0 hidden justify-center md:flex">
-            <div className="pointer-events-auto w-full max-w-md px-4">
-              <PlayerSearchTrigger />
-            </div>
-          </div>
-          <div className="md:hidden">
+          {/*
+            ONE INSTANCE. This was rendered twice — a centred desktop copy and a
+            separate mobile copy — and `hidden` only removes an element visually:
+            both stayed mounted, both registered the ⌘K listener, and both held
+            their own dialog. So the shortcut opened two stacked palettes and the
+            invisible one intercepted what you typed.
+
+            Centred and given real width because the palette is the primary way
+            to reach a player; a small button beside the sidebar toggle read as a
+            minor control.
+          */}
+          <div className="mx-auto w-full max-w-md px-4">
             <PlayerSearchTrigger />
           </div>
 

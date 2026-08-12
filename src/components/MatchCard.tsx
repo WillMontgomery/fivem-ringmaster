@@ -32,23 +32,23 @@ import { cn } from '@/lib/utils'
  */
 const PHASE: Record<string, { chip: string; bar: string }> = {
   WARMUP: {
-    chip: 'text-phase-warmup ring-phase-warmup/30 bg-phase-warmup/10',
+    chip: 'text-[12px]hase-warmup ring-phase-warmup/30 bg-phase-warmup/10',
     bar: 'bg-phase-warmup',
   },
   BUS: {
-    chip: 'text-phase-bus ring-phase-bus/30 bg-phase-bus/10',
+    chip: 'text-[12px]hase-bus ring-phase-bus/30 bg-phase-bus/10',
     bar: 'bg-phase-bus',
   },
   DROP: {
-    chip: 'text-phase-drop ring-phase-drop/30 bg-phase-drop/10',
+    chip: 'text-[12px]hase-drop ring-phase-drop/30 bg-phase-drop/10',
     bar: 'bg-phase-drop',
   },
   STORM: {
-    chip: 'text-phase-storm ring-phase-storm/30 bg-phase-storm/10',
+    chip: 'text-[12px]hase-storm ring-phase-storm/30 bg-phase-storm/10',
     bar: 'bg-phase-storm',
   },
   ENDED: {
-    chip: 'text-phase-ended ring-border bg-muted/40',
+    chip: 'text-[12px]hase-ended ring-border bg-muted/40',
     bar: 'bg-phase-ended',
   },
 }

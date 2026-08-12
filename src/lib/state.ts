@@ -185,6 +185,15 @@ export function liveView(now: number) {
     players: snap?.snapshot.players ?? [],
 
     /**
+     * The anticheat settings the game last reported.
+     *
+     * Null when br_core is not loaded or the game predates sending it. The
+     * Anticheat page shows "unknown" rather than a threshold it would then
+     * display as fact.
+     */
+    anticheat: snap?.snapshot.anticheat ?? null,
+
+    /**
      * The clock pair from the snapshot that produced these rows.
      *
      * Travels with the data rather than being read separately, because every

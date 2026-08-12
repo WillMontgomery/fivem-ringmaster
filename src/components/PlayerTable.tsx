@@ -175,7 +175,7 @@ export function PlayerTable({
                 className={cn(
                   'rounded-md px-2 py-1 text-[11px] transition-colors',
                   filter === f.key
-                    ? 'bg-primary/15 text-primary'
+                    ? 'bg-primary/15 text-[12px]rimary'
                     : 'text-muted-foreground hover:text-foreground',
                 )}
               >
@@ -250,7 +250,7 @@ export function PlayerTable({
               Searching a license from another session?{' '}
               <Link
                 href={`/players?q=${encodeURIComponent(query)}`}
-                className="text-primary underline-offset-2 hover:underline"
+                className="text-[12px]rimary underline-offset-2 hover:underline"
               >
                 Search everyone ever seen
               </Link>

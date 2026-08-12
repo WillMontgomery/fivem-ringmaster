@@ -101,7 +101,7 @@ export default async function PlayerProfilePage({
         already decided something is wrong; putting the controls under match
         history optimises for the rare visit over the common one.
       */}
-      <div className="max-w-5xl space-y-4">
+      <div className="mx-auto max-w-5xl space-y-4">
         <PlayerActions
           license={license}
           name={name}

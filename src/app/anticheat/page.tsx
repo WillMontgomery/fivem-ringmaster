@@ -1,17 +1,50 @@
-import { AppShell } from '@/components/AppShell'
-import { Wireframe } from '@/components/Wireframe'
-import { DEMO_BADGES } from '@/lib/demo'
+import { redirect } from 'next/navigation'
 
-export default function Page() {
+import { AnticheatBoard } from '@/components/AnticheatBoard'
+import { AppShell } from '@/components/AppShell'
+import { currentAdmin } from '@/lib/session'
+import { liveView } from '@/lib/state'
+
+/**
+ * Anticheat — what the system is, and what it will do on its own.
+ *
+ * REFERENCE RATHER THAN A FEED. Individual firings are incidents and belong on
+ * that page; this answers the questions asked once and relied on afterwards.
+ *
+ * The settings come from the live snapshot, so the page cannot claim a
+ * threshold or an enforcement mode the server does not actually have.
+ */
+export const dynamic = 'force-dynamic'
+
+export default async function AnticheatPage() {
+  const admin = await currentAdmin()
+  if (!admin) redirect('/login')
+
+  const now = Date.now()
+  const view = liveView(now)
+
   return (
-    <AppShell active="/anticheat" badges={DEMO_BADGES}>
-      <Wireframe
-        title="Anticheat"
-        milestone="M5"
-        intent={"Every refusalAction firing, searchable, with the player, count, reason breakdown, match and time. This is the whole output surface of the damage validator - the point is being able to see that one player has tripped it in nine separate matches, which no console scrollback will ever tell you."}
-        needs={["The event channel delivering refusal events through BR.Outbox","Durable storage - in-memory is fine for a live list and useless for \"nine matches ago\"","The second escalation tier, which is what turns repeated firings into one incident"]}
-        blocks={[{"h":20,"label":"Firings per hour, by reason"},{"h":16,"label":"Filters - reason, player, match, window"},{"h":60,"label":"Firing log - player, count, reasons, match, time"}]}
-      />
+    <AppShell
+      active="/anticheat"
+      user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
+      feed={{
+        lastPushAt: view.lastPushAt,
+        bootEpoch: view.bootEpoch,
+        now,
+        live: true,
+      }}
+    >
+      <div className="mx-auto max-w-4xl">
+        <div className="mb-5">
+          <h1 className="text-2xl font-semibold tracking-tight">Anticheat</h1>
+          <p className="text-sm text-muted-foreground">
+            Every hit is validated against what the server believes. This is
+            what it checks, what it does about it, and where it cannot help.
+          </p>
+        </div>
+
+        <AnticheatBoard config={view.anticheat ?? null} />
+      </div>
     </AppShell>
   )
 }

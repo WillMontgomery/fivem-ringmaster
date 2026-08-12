@@ -126,6 +126,26 @@ export const snapshotEnvelope = z.object({
     }),
     truncated: z.boolean(),
     matches: z.array(matchRow).max(512),
+
+    /**
+     * The anticheat's live settings, so the console can describe what the
+     * server will ACTUALLY do rather than what a page once said it would.
+     *
+     * OPTIONAL because br_core may not be loaded — br_ringmaster runs without
+     * it by design — and because an older game build will not send it. Both
+     * present as absent, and the page says "unknown" rather than guessing at a
+     * threshold it would then display as fact.
+     */
+    anticheat: z
+      .object({
+        action: z.enum(['log', 'notify', 'kick']),
+        limit: z.number(),
+        windowMs: z.number(),
+        selfLimit: z.number(),
+        selfWindow: z.number(),
+      })
+      .optional()
+      .nullable(),
     players: z.array(playerRow).max(2048),
   }),
 })

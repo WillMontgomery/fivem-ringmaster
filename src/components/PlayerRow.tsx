@@ -28,10 +28,10 @@ const STATE: Record<string, { label: string; className: string }> = {
   DEAD: { label: 'Dead', className: 'text-danger ring-danger/25 bg-danger/10' },
   SPECTATING: { label: 'Spectating', className: 'text-info ring-info/25 bg-info/10' },
   LOBBY: { label: 'Lobby', className: 'text-muted-foreground ring-border bg-muted/40' },
-  WARMUP: { label: 'Warmup', className: 'text-phase-warmup ring-phase-warmup/25 bg-phase-warmup/10' },
-  BUS: { label: 'Bus', className: 'text-phase-bus ring-phase-bus/25 bg-phase-bus/10' },
-  FREEFALL: { label: 'Freefall', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
-  GLIDE: { label: 'Glide', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
+  WARMUP: { label: 'Warmup', className: 'text-[12px]hase-warmup ring-phase-warmup/25 bg-phase-warmup/10' },
+  BUS: { label: 'Bus', className: 'text-[12px]hase-bus ring-phase-bus/25 bg-phase-bus/10' },
+  FREEFALL: { label: 'Freefall', className: 'text-[12px]hase-drop ring-phase-drop/25 bg-phase-drop/10' },
+  GLIDE: { label: 'Glide', className: 'text-[12px]hase-drop ring-phase-drop/25 bg-phase-drop/10' },
 }
 
 function StateChip({ state }: { state: string }) {
@@ -182,7 +182,7 @@ export function PlayerRowView({
           <Link
             href={`/players/${encodeURIComponent(p.license)}`}
             className={cn(
-              'text-sm underline-offset-4 transition-colors hover:text-primary hover:underline',
+              'text-sm underline-offset-4 transition-colors hover:text-[12px]rimary hover:underline',
               dim ? 'text-muted-foreground' : 'text-foreground',
             )}
           >

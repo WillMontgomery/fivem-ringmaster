@@ -145,7 +145,7 @@ export function LiveBoard({
                   className={cn(
                     'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] transition-colors',
                     mode === k
-                      ? 'bg-primary/15 text-primary'
+                      ? 'bg-primary/15 text-[12px]rimary'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
