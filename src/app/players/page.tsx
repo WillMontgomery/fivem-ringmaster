@@ -6,7 +6,7 @@ import { ProvenanceTag } from '@/components/Provenance'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { humanDuration } from '@/lib/duration'
-import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
+import { DEMO_BADGES } from '@/lib/demo'
 import { synthSnapshot } from '@/lib/__fixtures__/synth'
 
 /**
@@ -44,7 +44,7 @@ export default async function PlayersPage({
     .slice(0, 40)
 
   return (
-    <AppShell active="/players" user={DEMO_USER} badges={DEMO_BADGES}>
+    <AppShell active="/players" badges={DEMO_BADGES}>
       <div className="max-w-5xl space-y-4">
         <div>
           <div className="flex items-center gap-2">

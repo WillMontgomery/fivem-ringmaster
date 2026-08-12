@@ -1,10 +1,10 @@
 import { AppShell } from '@/components/AppShell'
 import { Wireframe } from '@/components/Wireframe'
-import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
+import { DEMO_BADGES } from '@/lib/demo'
 
 export default function Page() {
   return (
-    <AppShell active="/config" user={DEMO_USER} badges={DEMO_BADGES}>
+    <AppShell active="/config" badges={DEMO_BADGES}>
       <Wireframe
         title="Live config"
         milestone="M6"

@@ -1,6 +1,6 @@
 import { AppShell } from '@/components/AppShell'
 import { ProfileView } from '@/components/ProfileView'
-import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
+import { DEMO_BADGES } from '@/lib/demo'
 import { demoProfile } from '@/lib/profile'
 import { synthSnapshot } from '@/lib/__fixtures__/synth'
 
@@ -44,7 +44,7 @@ export default async function PlayerProfilePage({
   }
 
   return (
-    <AppShell active="/players" user={DEMO_USER} badges={DEMO_BADGES}>
+    <AppShell active="/players" badges={DEMO_BADGES}>
       <div className="mx-auto max-w-5xl">
         <ProfileView p={profile} now={Date.now()} />
       </div>

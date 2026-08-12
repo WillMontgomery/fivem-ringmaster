@@ -102,8 +102,18 @@
   /* Raised-surface treatment differs by theme: on light, a real shadow; on
      dark, a hairline highlight. Same intent, opposite physics. */
   --surface-shadow: 0 1px 2px oklch(0.22 0.02 285 / 6%), 0 1px 1px oklch(0.22 0.02 285 / 4%);
-  --page-wash-1: oklch(0.52 0.20 295 / 5%);
-  --page-wash-2: oklch(0.55 0.14 250 / 4%);
+  /* Three washes now, not two — violet top-left, blue top-right, teal rising
+     from the bottom. Enough colour that a large flat page reads as a designed
+     surface rather than a blank sheet, still faint enough to sit under text
+     people issue bans from. */
+  --page-wash-1: oklch(0.52 0.20 295 / 8%);
+  --page-wash-2: oklch(0.58 0.15 240 / 7%);
+  --page-wash-3: oklch(0.62 0.15 165 / 6%);
+
+  /* The sidebar gets its own colour, a vertical violet fade plus a corner
+     glow, so the nav is a surface with depth rather than a flat grey rail. */
+  --sidebar-wash-1: oklch(0.52 0.20 295 / 7%);
+  --sidebar-wash-2: oklch(0.58 0.16 250 / 6%);
 }
 
 .dark {
@@ -171,8 +181,12 @@
   --squad-8: oklch(0.72 0.16 340);
 
   --surface-shadow: inset 0 1px 0 0 oklch(1 0 0 / 6%);
-  --page-wash-1: oklch(0.62 0.19 295 / 9%);
-  --page-wash-2: oklch(0.70 0.15 250 / 6%);
+  --page-wash-1: oklch(0.62 0.19 295 / 14%);
+  --page-wash-2: oklch(0.70 0.15 240 / 10%);
+  --page-wash-3: oklch(0.72 0.15 165 / 8%);
+
+  --sidebar-wash-1: oklch(0.62 0.19 295 / 13%);
+  --sidebar-wash-2: oklch(0.70 0.15 250 / 9%);
 }
 
 @theme inline {
@@ -260,8 +274,9 @@
        nothing on top loses contrast — this sits under text people issue bans
        from. */
     background-image:
-      radial-gradient(60rem 40rem at 15% -10%, var(--page-wash-1), transparent 60%),
-      radial-gradient(50rem 35rem at 95% 0%, var(--page-wash-2), transparent 55%);
+      radial-gradient(55rem 38rem at 12% -8%, var(--page-wash-1), transparent 60%),
+      radial-gradient(48rem 34rem at 92% -4%, var(--page-wash-2), transparent 58%),
+      radial-gradient(52rem 42rem at 62% 110%, var(--page-wash-3), transparent 60%);
     background-attachment: fixed;
   }
 
@@ -322,6 +337,30 @@
     50% { opacity: 0.4; }
   }
   .animate-fade-pulse { animation: fade-pulse 2.2s ease-in-out infinite; }
+
+  /* The sidebar as a coloured surface: a violet fade down from the top and a
+     corner glow, over the base tint. Depth without noise. */
+  .sidebar-surface {
+    background-image:
+      linear-gradient(180deg, var(--sidebar-wash-1), transparent 42%),
+      radial-gradient(28rem 22rem at 0% 0%, var(--sidebar-wash-2), transparent 70%);
+  }
+
+  /*
+   * The login aurora. Large blurred colour fields drifting slowly behind the
+   * card — the one place in the app a bit of ambient motion is welcome,
+   * because nobody is monitoring it for an hour. Frozen by reduced-motion
+   * below, where it becomes a static gradient.
+   */
+  @keyframes aurora {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    33% { transform: translate3d(6%, -4%, 0) scale(1.18); }
+    66% { transform: translate3d(-5%, 3%, 0) scale(0.92); }
+  }
+  .aurora-blob {
+    will-change: transform;
+    animation: aurora 18s ease-in-out infinite;
+  }
 
   /*
    * Stagger. Entrance animations fire in reading order rather than all at once,

@@ -23,6 +23,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { currentAdmin } from '@/lib/session'
 import { cn } from '@/lib/utils'
 
 /**
@@ -176,7 +177,7 @@ function NavLink({
   )
 }
 
-export function AppShell({
+export async function AppShell({
   children,
   active = '/',
   user,
@@ -185,6 +186,13 @@ export function AppShell({
 }: {
   children: React.ReactNode
   active?: string
+  /**
+   * The signed-in user for the sidebar. Omit it and the shell resolves the
+   * real admin itself — so every page shows the actual person, avatar and all,
+   * without each one threading `currentAdmin()` through. Pass it explicitly
+   * (the live board and host page do) to avoid a second lookup, or pass `null`
+   * to force the signed-out state (the preview harness).
+   */
   user?: { name: string; avatarUrl?: string | null } | null
   badges?: NavBadges
   /**
@@ -200,12 +208,19 @@ export function AppShell({
     live?: boolean
   }
 }) {
+  const resolvedUser =
+    user === undefined
+      ? await currentAdmin().then((a) =>
+          a ? { name: a.name, avatarUrl: a.avatarUrl } : null,
+        )
+      : user
+
   return (
     <div className="flex min-h-screen">
       {/* Sticky and viewport-tall so the nav stays put while the page scrolls.
           Its own overflow-y on the <nav> handles a nav list taller than the
           screen; the sidebar itself never moves. */}
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/70 backdrop-blur-xl md:flex">
+      <aside className="sidebar-surface sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar/70 backdrop-blur-xl md:flex">
         <div className="flex items-center gap-2.5 px-4 py-5">
           <div className="relative flex size-8 items-center justify-center rounded-lg bg-primary/15 ring-1 ring-inset ring-primary/25">
             {/* The storm circle, which is where the name comes from. */}
@@ -242,16 +257,16 @@ export function AppShell({
         <Separator className="bg-sidebar-border" />
 
         <div className="p-3">
-          {user ? (
+          {resolvedUser ? (
             <div className="group/user flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-sidebar-accent/50">
               {/* Discord avatar when we have one, initials as the fallback —
                   a broken image on an admin's own name reads as "something is
                   wrong with my account", so the fallback is a real design
                   state, not an afterthought. */}
-              {user.avatarUrl ? (
+              {resolvedUser.avatarUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={user.avatarUrl}
+                  src={resolvedUser.avatarUrl}
                   alt=""
                   width={28}
                   height={28}
@@ -259,11 +274,11 @@ export function AppShell({
                 />
               ) : (
                 <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/15 text-[11px] font-medium text-primary ring-1 ring-inset ring-primary/25">
-                  {user.name.slice(0, 2).toUpperCase()}
+                  {resolvedUser.name.slice(0, 2).toUpperCase()}
                 </div>
               )}
               <div className="min-w-0 flex-1 leading-tight">
-                <div className="truncate text-sm">{user.name}</div>
+                <div className="truncate text-sm">{resolvedUser.name}</div>
               </div>
               {/*
                 Sign out, revealed on hover. This deletes the session RECORD in

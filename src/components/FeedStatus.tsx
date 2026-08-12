@@ -101,8 +101,22 @@ export function FeedStatus({
   const tone = toneOf(ageMs)
   const t = TONE[tone]
 
+  // The hover text is snapshotted the instant the tooltip opens and left
+  // alone — the user asked for "last update: x ago" drawn once, not a counter
+  // ticking under the cursor. The chip's own `now` keeps ticking so the tone
+  // (live/stale/dead) still ages honestly; only the words freeze.
+  const [frozenAge, setFrozenAge] = useState<number | null>(null)
+
   return (
-    <Tooltip>
+    <Tooltip
+      onOpenChange={(open) => {
+        if (open) {
+          setFrozenAge(
+            lastPushAt === null ? null : Math.max(0, Date.now() - lastPushAt),
+          )
+        }
+      }}
+    >
       <TooltipTrigger
         render={
           <span
@@ -115,33 +129,23 @@ export function FeedStatus({
           />
         }
       >
+        {/* Only the icon breathes — a change of intensity that reads as "alive"
+            without a word or a number moving. */}
         {tone === 'offline' ? (
           <WifiOff className="size-3" />
         ) : (
-          <Radio className={cn('size-3', tone === 'live' && 'animate-fade-pulse')} />
+          <Radio
+            className={cn('size-3', tone === 'live' && 'animate-fade-pulse')}
+          />
         )}
-        {/* The word itself breathes when live — the single most persistent
-            "data is still arriving" cue on the page. */}
-        <span className={cn(tone === 'live' && 'animate-fade-pulse')}>
-          {t.label}
-        </span>
-        {ageMs !== null && (
-          <span className="tabular-nums opacity-70">{ago(ageMs)}</span>
-        )}
+        {t.label}
       </TooltipTrigger>
 
       <TooltipContent side="bottom" className="max-w-[21rem]">
-        {tone === 'offline' ? (
-          <span>
-            Nothing has been received from the game server yet. That is the
-            correct display before the server starts sending data — not an
-            error.
-          </span>
+        {frozenAge === null ? (
+          <span>No update received yet.</span>
         ) : (
-          <span>
-            Last update {ago(ageMs!)} ago. The board refreshes every{' '}
-            {(intervalMs / 1000).toFixed(0)}s.
-          </span>
+          <span>Last update: {ago(frozenAge)} ago</span>
         )}
       </TooltipContent>
     </Tooltip>
