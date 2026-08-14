@@ -66,7 +66,13 @@ export function UpdateBadge() {
         }
       >
         <ArrowUpCircle className="size-3.5" />
-        Update available
+        {/*
+          Icon-only below `xl`, so the header's right-hand cluster cannot crowd the
+          search bar. Safe to hide here specifically because this badge already has
+          a tooltip carrying more than the label does -- it names how many commits
+          behind the server is.
+        */}
+        <span className="hidden xl:inline">Update available</span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[20rem]">
         The game server is {behind} commit{behind > 1 ? 's' : ''} behind main.

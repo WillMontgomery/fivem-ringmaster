@@ -133,7 +133,7 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
       {
         href: '/incidents',
         label: 'Incidents',
-        icon: FileSearch,
+        icon: FileSearch,
         badge: (b) => <IncidentBadge n={b.incidents ?? 0} />,
       },
       { href: '/audit', label: 'Audit log', icon: ScrollText },
@@ -362,7 +362,34 @@ export async function AppShell({
       </Sidebar>
 
       <SidebarInset className="min-w-0">
-        <header className="sticky top-0 z-20 flex h-14 items-center gap-3 relative border-b border-border bg-background/70 px-5 backdrop-blur-xl">
+        {/*
+          A THREE-TRACK GRID, NOT A FLEX ROW WITH AN ABSOLUTE CHILD.
+
+          The search used to be `absolute inset-x-0 justify-center px-28` -- out of
+          flow, centred on the header, reserving a hard-coded 112px on each side.
+          That reserve was the bug. The right-hand cluster is in normal flow and
+          runs to ~340px when the feed chip, an update badge and a maintenance
+          window are all present, so `ml-auto` (which only measures in-flow
+          siblings) grew it leftward UNDERNEATH the search, and the positioned
+          element painted on top: "Ctrl K" and the LIVE chip rendered over each
+          other. No amount of min-w-0 or shrink fixes that, because the two boxes
+          were not in the same layout -- and Badge is `shrink-0 whitespace-nowrap`
+          anyway.
+
+          It was reachable on every route, not just the ones that pass `badges`:
+          the maintenance chip falls back to a live read below, and on a
+          feed-bearing page "Falling behind" plus "Update available" plus the theme
+          toggle already crosses the reserve on their own.
+
+          One layout means they cannot overlap. The side tracks are `1fr` with
+          their natural min-content floor, so the middle track is centred on the
+          header at ordinary widths -- which is what the absolute positioning was
+          for -- and when the chips genuinely need more room the search shifts
+          instead of being painted over. Degrading the centring is the right thing
+          to lose; the previous `mx-auto` attempt lost it constantly, this loses it
+          only in the crowded case.
+        */}
+        <header className="sticky top-0 z-20 grid h-14 grid-cols-[1fr_minmax(2.5rem,28rem)_1fr] items-center gap-3 border-b border-border bg-background/70 px-5 backdrop-blur-xl">
           <SidebarTrigger className="-ml-1.5" />
 
           {/*
@@ -377,22 +404,27 @@ export async function AppShell({
             minor control.
           */}
           {/*
-            ABSOLUTELY positioned so it centres on the HEADER, not on whatever
-            space the flex row has left over. `mx-auto` inside the row put it
-            between the sidebar toggle and the status chips, which drifts as
-            those change width — the chips appear and disappear with feed state
-            and update availability, so the search bar visibly moved.
-
-            pointer-events-none on the wrapper keeps the rest of the header
-            clickable through it; the inner element takes them back.
+            The middle track. Centred on the header by the grid rather than by
+            being taken out of the flow, so it no longer needs pointer-events
+            juggling to keep the header clickable around it.
           */}
-          <div className="pointer-events-none absolute inset-x-0 flex justify-center px-28">
-            <div className="pointer-events-auto w-full max-w-md">
-              <PlayerSearchTrigger />
-            </div>
+          <div className="min-w-0">
+            <PlayerSearchTrigger />
           </div>
 
-          <div className="ml-auto flex items-center gap-2">
+          {/*
+            NO `min-w-0` HERE, deliberately, and it is the whole reason the grid
+            works. `1fr` means `minmax(auto, 1fr)`, so the track's floor is its
+            content's min-content width -- which is what pushes the middle track
+            narrower when the chips are wide. Adding min-w-0 sets that floor to
+            zero, and since Badge is `shrink-0 whitespace-nowrap` the cluster then
+            overflows its own track leftward and paints over the search. Which
+            looks exactly like the absolute-positioning bug this replaced, and cost
+            a round of measuring to tell apart.
+
+            The search keeps its min-w-0: that one SHOULD give way.
+          */}
+          <div className="flex items-center justify-end gap-2">
             {feed && (
               <FeedStatus
                 lastPushAt={feed.lastPushAt}
@@ -403,8 +435,17 @@ export async function AppShell({
             )}
             <UpdateBadge />
             {b.maintenance && (
+              /*
+                THE WIDEST THING IN THE HEADER at ~200px uppercased, and the one
+                that made the old overlap reachable. Below `xl` it keeps the icon
+                and drops the words, with the full text on the element's title --
+                the same trade PlayerSearchTrigger already makes with its
+                placeholder and its ⌘K hint. The sidebar still shows the state in
+                words, so nothing is only available here.
+              */
               <Badge
                 variant="outline"
+                title={`Maintenance ${b.maintenance}`}
                 className={cn(
                   'gap-1.5 border-0 text-xs font-medium uppercase tracking-wider ring-1 ring-inset',
                   b.maintenance === 'draining'
@@ -413,7 +454,9 @@ export async function AppShell({
                 )}
               >
                 <CalendarClock className="size-3" />
-                Maintenance {b.maintenance}
+                <span className="hidden xl:inline">
+                  Maintenance {b.maintenance}
+                </span>
               </Badge>
             )}
             <ThemeToggle />
