@@ -24,11 +24,17 @@ import { cn } from '@/lib/utils'
  * IT READS THE LIVE CONFIG rather than describing it from memory. A page that
  * hardcodes "eight refusals then a kick" lies the day somebody edits
  * config/match.lua, and the dangerous version of that lie is claiming
- * enforcement while the server is set to `log` and is removing nobody.
+ * enforcement that is not happening.
+ *
+ * WHICH IS WHAT THIS PAGE ITSELF USED TO CLAIM. The game no longer decides
+ * anything about a player: crossing the threshold files an incident and stops
+ * there. `incident` is what a current server reports; the three modes after it
+ * describe a build that still acted on its own, kept so this page can say the
+ * server is out of date instead of rendering "unknown" at it.
  */
 
 export interface AnticheatConfig {
-  action: 'log' | 'notify' | 'kick'
+  action: 'incident' | 'log' | 'notify' | 'kick'
   limit: number
   windowMs: number
   selfLimit: number
@@ -36,26 +42,33 @@ export interface AnticheatConfig {
 }
 
 const MODE = {
-  kick: {
-    label: 'Enforcing',
-    icon: Gavel,
-    cls: 'bg-live/10 text-live ring-live/30',
+  incident: {
+    label: 'Filing incidents',
+    icon: ShieldCheck,
+    cls: 'bg-info/10 text-info ring-info/30',
     blurb:
-      'The anticheat removes players on its own when they cross the threshold. Every removal is recorded.',
+      'Crossing the threshold files an incident with the match’s evidence attached, and tells the player nothing. What happens next is decided here, not on the game server.',
+  },
+  kick: {
+    label: 'Enforcing — out of date',
+    icon: Gavel,
+    cls: 'bg-warn/10 text-warn ring-warn/30',
+    blurb:
+      'This server removes players itself, before any incident exists and with a warning they can read. That behaviour was retired; the game build is behind.',
   },
   notify: {
-    label: 'Notifying',
+    label: 'Notifying — out of date',
     icon: TriangleAlert,
     cls: 'bg-warn/10 text-warn ring-warn/30',
     blurb:
-      'Detections are recorded and admins are alerted, but nobody is removed automatically.',
+      'This server warns the player their shots are not landing. That behaviour was retired; the game build is behind.',
   },
   log: {
-    label: 'Log only',
+    label: 'Log only — out of date',
     icon: Eye,
-    cls: 'bg-info/10 text-info ring-info/30',
+    cls: 'bg-warn/10 text-warn ring-warn/30',
     blurb:
-      'Detections are recorded and nothing else happens. Nobody is removed automatically — act on what you see from Incidents.',
+      'This server records detections to its console and files nothing. The game build predates incident filing.',
   },
 } as const
 
@@ -199,8 +212,8 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
           Counted toward the threshold
         </h3>
         <p className="text-sm text-muted-foreground">
-          These have no honest explanation. Enough of them in the window and the
-          anticheat acts.
+          These have no honest explanation. Enough of them in the window and an
+          incident is filed, with the match’s evidence attached.
         </p>
         <ul className="mt-2 divide-y divide-border/60 rounded-lg border border-border">
           {MEANS.map((d) => (

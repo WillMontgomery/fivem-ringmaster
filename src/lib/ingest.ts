@@ -138,7 +138,22 @@ export const snapshotEnvelope = z.object({
      */
     anticheat: z
       .object({
-        action: z.enum(['log', 'notify', 'kick']),
+        /**
+         * What the game does when the threshold trips.
+         *
+         * `incident` is what a current game server sends, and it is now the
+         * only thing it can send: the game files a case and decides nothing
+         * about the player, so this is constant rather than configurable.
+         *
+         * THE OTHER THREE ARE KEPT FOR AN OLDER GAME BUILD, not for symmetry.
+         * A value this schema does not know fails the whole envelope, which the
+         * outbox reads as a nack and retries forever — so dropping them would
+         * turn "the game is one deploy behind" into a retry storm that also
+         * loses the player list. They mean what they used to: the game acted on
+         * its own. Safe to delete once no server can still be running that
+         * build.
+         */
+        action: z.enum(['incident', 'log', 'notify', 'kick']),
         limit: z.number(),
         windowMs: z.number(),
         selfLimit: z.number(),
