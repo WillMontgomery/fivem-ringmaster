@@ -13,6 +13,10 @@ import { liveView } from '@/lib/state'
  *
  * The settings come from the live snapshot, so the page cannot claim a
  * threshold or an enforcement mode the server does not actually have.
+ *
+ * WRITTEN FOR AN ADMIN, NOT A DEVELOPER. The explainer under the status card is
+ * tabbed — detection, mitigation, prevention, blind spots — so each question
+ * can be answered on its own instead of read end to end. See AnticheatGuide.
  */
 export const dynamic = 'force-dynamic'
 
@@ -38,8 +42,9 @@ export default async function AnticheatPage() {
         <div className="mb-5">
           <h1 className="text-2xl font-semibold tracking-tight">Anticheat</h1>
           <p className="text-sm text-muted-foreground">
-            Every hit is validated against what the server believes. This is
-            what it checks, what it does about it, and where it cannot help.
+            Every hit is checked against what the server believes. What it
+            catches, what happens next, why there is less to catch than you
+            might expect — and, importantly, what it cannot see at all.
           </p>
         </div>
 
