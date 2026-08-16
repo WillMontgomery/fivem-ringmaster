@@ -6,7 +6,7 @@ import { ProfileView } from '@/components/ProfileView'
 import * as audit from '@/lib/audit'
 import { avatarFor } from '@/lib/discord'
 import * as bans from '@/lib/bans'
-import { gameProfileFor } from '@/lib/gameProfile'
+import { gameMatchesFor, gameProfileFor } from '@/lib/gameProfile'
 import * as incidents from '@/lib/incidents'
 import { can } from '@/lib/grants'
 import * as players from '@/lib/players'
@@ -31,9 +31,16 @@ import { liveView } from '@/lib/state'
  *   live presence               the snapshot feed
  *   bans                        the bans table
  *   incidents                   ringmaster-incidents, both directions
- *   match history               NOTHING YET — and it renders as absent
+ *   match history               br-players, one `match#...` row per match (#153)
  *
- * THREE READS, IN PARALLEL, AND NONE OF THEM BLOCKS THE OTHERS. A moderator
+ * MATCH HISTORY IS REAL AS OF #153, and it brought a distinction with it that
+ * did not exist while the list was permanently empty: an empty list no longer
+ * means "never played". A player whose every match predates the feature has
+ * career totals and no per-match rows, and must not be shown the same blank
+ * panel as somebody who has never connected. ProfileView says which is which,
+ * using `stats` to tell them apart.
+ *
+ * THE READS RUN IN PARALLEL AND NONE OF THEM BLOCKS THE OTHERS. A moderator
  * opening a profile is usually trying to answer "who is this and should I act",
  * and the identity half must not be held up by a stats table being slow — so
  * every source degrades to null independently rather than failing the page.
@@ -65,15 +72,21 @@ export default async function PlayerProfilePage({
   // The real snapshot, not a fixture: are they on the server right now?
   const live = view.players.find((p) => p.license === license) ?? null
 
-  const [ban, canBan, record, game, actions, against, filed] = await Promise.all([
-    bans.banFor(license),
-    can(admin.license, 'ban'),
-    players.playerFor(license),
-    gameProfileFor(license),
-    audit.forTarget(license),
-    incidents.forSubject(license),
-    incidents.filedBy(license),
-  ])
+  const [ban, canBan, record, game, matches, actions, against, filed] =
+    await Promise.all([
+      bans.banFor(license),
+      can(admin.license, 'ban'),
+      players.playerFor(license),
+      gameProfileFor(license),
+      // A SECOND READ OF THE SAME TABLE, and it has to be: the aggregate is a
+      // GetItem on one key and the history is a Query over a key range. They
+      // are different operations, so they are different calls — but they run in
+      // this same batch, so the page costs no extra round trip in wall time.
+      gameMatchesFor(license),
+      audit.forTarget(license),
+      incidents.forSubject(license),
+      incidents.filedBy(license),
+    ])
 
   // The Discord id is the newest sighting, not the first: somebody who changed
   // accounts should show the face attached to the one they use now.
@@ -252,7 +265,11 @@ export default async function PlayerProfilePage({
       state: i.state,
       reportedBy: i.reporterName ?? undefined,
     })),
-    recentSessions: [],
+    // REAL SINCE #153, and passed through untouched — including the null,
+    // which means the query failed and is NOT the same as an empty list. The
+    // view decides how to say each of the three cases; this page does not
+    // flatten them into one.
+    matches,
   }
 
   return (

@@ -1,20 +1,21 @@
 /**
  * A player's full record.
  *
- * MOST OF THIS IS REAL NOW. The two that are not — incidents and per-match
- * session history — have no stream behind them at all, and they render as
- * absent rather than as empty-but-plausible. That distinction is load-bearing
- * on a page a moderator acts on.
+ * ALL OF THIS IS REAL NOW. Match history was the last section with no stream
+ * behind it, and #153 gave it one. Nothing on this page is fabricated, and
+ * anything absent is absent because the source genuinely has nothing — which is
+ * rendered as absence rather than as empty-but-plausible. That distinction is
+ * load-bearing on a page a moderator acts on.
  *
- * The provenance matters because these come from five different places with
- * five different freshness and trust properties:
+ * The provenance matters because these come from four different places with
+ * four different freshness and trust properties:
  *
  *   live       the current snapshot. Two seconds old at worst, gone on restart.
  *   identity   ringmaster-players, this console's registry. Durable.
- *   stats      br-players, written by the GAME at match end. Durable, and not
- *              writable from here — Ringmaster only reads it.
- *   moderation Ringmaster's own tables — bans, audit.
- *   (nothing)  incidents and match history. No source yet; always empty.
+ *   stats      br-players, written by the GAME at match end — both the career
+ *              aggregate and, since #153, one row per match. Durable, and not
+ *              writable from here; Ringmaster only reads it.
+ *   moderation Ringmaster's own tables — bans, audit, incidents.
  */
 
 export type Provenance = 'live' | 'identity' | 'stats' | 'moderation'
@@ -42,12 +43,33 @@ export interface ProfileIncident {
   reportedBy?: string
 }
 
-export interface ProfileSession {
-  at: number
-  durationMs: number
-  matchId: number | null
-  placement: number | null
+/**
+ * One match this player was in, as the game recorded it when it ended.
+ *
+ * REAL SINCE #153. Nothing wrote these until then — every game-side write went
+ * to one aggregate row per player, so this list was permanently empty and the
+ * page rendered absence. It is now a genuine per-match record, which means the
+ * page has a NEW distinction to make and it matters: an empty list no longer
+ * means "never played". It can also mean "played only before this shipped",
+ * and those two must not look alike on screen.
+ */
+export interface ProfileMatch {
+  matchId: number
+  endedAt: number
+  mode: string
+  placement: number
+  /** Field size. Third of eight and third of ninety-six are different results. */
+  total: number
   kills: number
+  downs: number
+  revives: number
+  damage: number
+  /** Time alive, not time the match ran. */
+  survivedMs: number
+  xpEarned: number
+  voltsEarned: number
+  /** NOT `placement === 1` — a storm can take the last squad standing. */
+  won: boolean
 }
 
 /** One moderation action, from the append-only audit log. */
@@ -153,8 +175,23 @@ export interface Profile {
    */
   actions: ProfileAction[]
 
-  /** Per-match history. NOTHING RECORDS THIS YET — it renders as absent. */
-  recentSessions: ProfileSession[]
+  /**
+   * Per-match history, newest first — REAL SINCE #153.
+   *
+   * THREE STATES, NOT TWO, and the page renders all three differently:
+   *
+   *   null   the query failed. Say so; an unreadable table is not an empty one.
+   *   []     no per-match rows exist. Read together with `stats`: if the career
+   *          totals show matches played, this player's matches all predate the
+   *          feature and are only in the totals. If they do not, nobody has
+   *          recorded a match for this person at all.
+   *   rows   what they played.
+   *
+   * The middle case is the one that will be common for months and is the
+   * easiest to get wrong: a long-standing player must not be shown the same
+   * blank panel as somebody who has never connected.
+   */
+  matches: ProfileMatch[] | null
 }
 
 /*

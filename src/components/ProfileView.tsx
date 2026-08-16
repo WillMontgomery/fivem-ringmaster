@@ -20,7 +20,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { humanDuration } from '@/lib/duration'
-import type { Profile, ProfileIncident } from '@/lib/profile'
+import type { Profile, ProfileIncident, ProfileMatch } from '@/lib/profile'
 import { formatCount } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { progress } from '@/lib/xp'
@@ -161,6 +161,100 @@ function Empty({ children }: { children?: React.ReactNode }) {
     <p className="py-2 text-sm text-muted-foreground/70">
       {children ?? 'Nothing recorded for this player.'}
     </p>
+  )
+}
+
+/**
+ * Mode keys, as the GAME spells them, mapped to something a human reads.
+ *
+ * Falls through to the raw key, so a mode added on the game side shows up as
+ * itself rather than vanishing from the row.
+ */
+const MODE_LABEL: Record<string, string> = {
+  solo: 'Solo',
+  squad: 'Squad',
+}
+
+/**
+ * One match, as it was recorded when it ended.
+ *
+ * WINNING AND PLACING FIRST ARE DIFFERENT, and this row is the place a
+ * moderator would otherwise never learn that. The storm can take the last squad
+ * standing: they place first because nobody outlasted them, and the match has
+ * no winner. The game stores `won` for exactly this, and the badge only goes
+ * gold when it is true — a `#1` in plain grey with the explanation on hover is
+ * the honest rendering of the other case.
+ */
+function MatchRow({ m }: { m: ProfileMatch }) {
+  const firstButDead = m.placement === 1 && !m.won
+
+  return (
+    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/60 py-2.5 text-sm first:border-t-0 first:pt-0">
+      <span
+        className={cn(
+          'flex w-16 shrink-0 items-center justify-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs font-semibold ring-1 ring-inset',
+          m.won
+            ? 'bg-warn/10 text-warn ring-warn/30'
+            : 'bg-muted/40 text-muted-foreground ring-border',
+        )}
+        // BOTH CASES EXPLAIN THEMSELVES ON HOVER, because "#1 in gold" and "#1
+        // in grey" are otherwise a colour difference somebody has to already
+        // know the meaning of. The trophy is the non-colour half of the same
+        // signal; this is the sentence behind it.
+        title={
+          m.won
+            ? 'Won — still alive when the match ended.'
+            : firstButDead
+              ? 'Placed first but did not survive — the storm took the last squad, so the match had no winner.'
+              : undefined
+        }
+      >
+        {m.won && <Trophy className="size-3" />}
+        {m.placement > 0 ? `#${m.placement}` : '—'}
+      </span>
+
+      {/* THE FIELD SIZE SITS WITH THE PLACEMENT, because it is the half that
+          gives it meaning: third of eight and third of ninety-six are not the
+          same result, and the number alone cannot say which happened. */}
+      <span className="w-12 shrink-0 font-mono text-xs text-muted-foreground/70">
+        {m.total > 0 ? `of ${m.total}` : ''}
+      </span>
+
+      <span className="w-36 shrink-0 text-muted-foreground">
+        <LocalTime ms={m.endedAt} />
+      </span>
+
+      {/* The game server's own match number, kept so a row here can be lined up
+          against a line in the server log. */}
+      <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground/70">
+        match {m.matchId}
+      </span>
+
+      <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">
+        {MODE_LABEL[m.mode] ?? (m.mode || 'match')}
+      </span>
+
+      {/* TIME ALIVE, NOT MATCH LENGTH. Every player in one match shares its
+          duration; how long each of them survived is the interesting half. */}
+      <span
+        className="w-20 shrink-0 font-mono text-xs text-muted-foreground"
+        title="How long they stayed alive"
+      >
+        {humanDuration(m.survivedMs)}
+      </span>
+
+      <span className="font-mono text-xs text-muted-foreground">
+        {m.kills} {m.kills === 1 ? 'kill' : 'kills'} · {formatCount(m.damage)} dmg
+        {m.downs > 0 ? ` · ${m.downs} ${m.downs === 1 ? 'down' : 'downs'}` : ''}
+        {m.revives > 0
+          ? ` · ${m.revives} ${m.revives === 1 ? 'revive' : 'revives'}`
+          : ''}
+      </span>
+
+      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+        +{formatCount(m.xpEarned)} XP · +{formatCount(m.voltsEarned)} volts
+      </span>
+    </li>
   )
 }
 
@@ -646,34 +740,65 @@ export function ProfileView({
         )}
       </Section>
 
-      <Section title="Match history" provenance={<ProvenanceTag kind="stats" />}>
-        {p.recentSessions.length === 0 ? (
-          <Empty />
+      {/*
+        MATCH HISTORY, REAL SINCE #153 — and the empty state is now three
+        different statements rather than one.
+
+        While nothing wrote these rows, "no matches" and "never played" were
+        the same fact and one blank panel said both. They are no longer the
+        same fact. A player with four hundred matches in their career totals and
+        no per-match rows played all of them before this shipped; showing them
+        the same panel as somebody who has never connected would be a false
+        statement about a real person, on the page an admin acts from.
+
+        So the panel reads the career totals to decide which sentence to say,
+        and a failed read says a third thing — because a table that could not be
+        reached is not a player who did nothing.
+      */}
+      <Section
+        title="Match history"
+        provenance={<ProvenanceTag kind="stats" />}
+        action={
+          p.matches && p.matches.length > 0 ? (
+            <Badge
+              variant="outline"
+              className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
+            >
+              {p.matches.length}
+            </Badge>
+          ) : null
+        }
+      >
+        {p.matches === null ? (
+          <Empty>
+            Match history could not be read. This is a problem with the stats
+            table, not a statement about this player — nothing else on this page
+            is affected.
+          </Empty>
+        ) : p.matches.length === 0 ? (
+          p.stats ? (
+            <Empty>
+              No individual matches recorded. This player has{' '}
+              {formatCount(p.stats.matches)}{' '}
+              {p.stats.matches === 1 ? 'match' : 'matches'} in their career
+              totals above, all played before per-match history started being
+              kept — those matches counted, but they were never stored one by
+              one and cannot be recovered. Anything they play from now on
+              appears here.
+            </Empty>
+          ) : (
+            <Empty>
+              No match has ever been recorded for this player — not here, and not
+              in their career totals. As far as the game is concerned they have
+              never finished a match.
+            </Empty>
+          )
         ) : (
-          <Paged items={p.recentSessions}>
+          <Paged items={p.matches}>
             {(slice) => (
               <ul className="space-y-0">
-                {slice.map((s, i) => (
-                  <li
-                    key={i}
-                    className="flex items-center gap-4 border-t border-border/60 py-2 text-sm first:border-t-0 first:pt-0"
-                  >
-                    <span className="w-36 shrink-0 text-muted-foreground">
-                      <LocalTime ms={s.at} />
-                    </span>
-                    <span className="w-20 shrink-0 font-mono text-muted-foreground">
-                      {humanDuration(s.durationMs)}
-                    </span>
-                    <span className="w-24 shrink-0 font-mono text-muted-foreground">
-                      match {s.matchId}
-                    </span>
-                    <span className="w-16 shrink-0 font-mono">
-                      {s.placement ? `#${s.placement}` : '—'}
-                    </span>
-                    <span className="font-mono text-muted-foreground">
-                      {s.kills} kills
-                    </span>
-                  </li>
+                {slice.map((m) => (
+                  <MatchRow key={`${m.endedAt}-${m.matchId}`} m={m} />
                 ))}
               </ul>
             )}

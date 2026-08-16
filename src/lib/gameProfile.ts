@@ -16,10 +16,11 @@ import { ddb, tables } from './dynamo'
  * which is the safe direction, and the only direction used here.
  *
  * KEYED DIFFERENTLY, TOO. The registry is keyed on a bare `license`; the game
- * row is a composite `{pk: license, sk: 'profile'}` because the game may later
- * hang other rows off the same partition. Getting this wrong returns nothing
- * rather than erroring, which is exactly the sort of silent empty that reads as
- * "this player has never played".
+ * row is a composite `{pk: license, sk: 'profile'}` because the game hangs other
+ * rows off the same partition — `purchases`, and since #153 one `match#...` row
+ * per match played. Getting this wrong returns nothing rather than erroring,
+ * which is exactly the sort of silent empty that reads as "this player has never
+ * played".
  */
 export interface GameProfile {
   /** Career totals. Every one of these is an accumulated ADD, never a set. */
@@ -121,4 +122,107 @@ export async function gameProfileFor(license: string): Promise<GameProfile | nul
     equipped,
     lastMatchAt: typeof row.lastMatchAt === 'number' ? row.lastMatchAt : null,
   }
+}
+
+/**
+ * One match, as the game recorded it at the moment it ended.
+ *
+ * NOT A SLICE OF THE AGGREGATE. Every number here is what happened in that one
+ * match — the career row above is the running sum of these plus every match
+ * played before per-match records existed. The two are written by two separate
+ * DynamoDB operations from one payload, so they can disagree; when they do, the
+ * aggregate is the one the game treats as true.
+ */
+export interface GameMatch {
+  /** The game server's own match number. Not unique across restarts. */
+  matchId: number
+  /** Wall-clock ms. Also the first component of the sort key. */
+  endedAt: number
+  /** 'solo' | 'squad', as the game spells it. Rendered as-is if unrecognised. */
+  mode: string
+  placement: number
+  /** How many were in it. 3rd of 8 and 3rd of 96 are not the same result. */
+  total: number
+  kills: number
+  downs: number
+  revives: number
+  damage: number
+  /** How long they stayed alive. NOT how long the match ran. */
+  survivedMs: number
+  xpEarned: number
+  voltsEarned: number
+  /**
+   * NOT `placement === 1`. The last squad standing can be killed by the storm:
+   * they place first because nobody outlasted them, and they are dead, and a
+   * match that ends with no survivors has no winner. The game decides this and
+   * stores the answer so nothing downstream re-derives it and gets it wrong.
+   */
+  won: boolean
+}
+
+const MATCH_PREFIX = 'match#'
+
+/**
+ * One player's recent matches, newest first.
+ *
+ * A PLAIN QUERY, NO INDEX AND NO SCAN. The rows live under the same partition
+ * key as the profile with a sort key of `match#<endedAt>#<matchId>`, so walking
+ * the sort key backwards with a `Limit` IS "the most recent N". The zero-padded
+ * timestamp is what makes the lexicographic sort match the chronological one.
+ * `begins_with` keeps `profile` and `purchases` out of the result rather than
+ * fetching and discarding them.
+ *
+ * THREE DIFFERENT ANSWERS, AND THE CALLER MUST TELL THEM APART:
+ *
+ *   null   the read failed. Say so — do not present it as "no matches".
+ *   []     the query worked and this player has no per-match rows. Either they
+ *          have never played, or every match they played predates #153 and is
+ *          only in their career totals. The PAGE distinguishes those two by
+ *          looking at the aggregate; this function cannot and does not guess.
+ *   rows   what they played.
+ *
+ * THROWS NOTHING, like the profile read beside it. A moderator opening a page
+ * to answer "who is this and should I act" must not be blocked by a stats table
+ * being slow.
+ */
+export async function gameMatchesFor(
+  license: string,
+  limit = 50,
+): Promise<GameMatch[] | null> {
+  let items: Record<string, unknown>[]
+  try {
+    const res = await ddb.query({
+      TableName: tables.gamePlayers,
+      KeyConditionExpression: 'pk = :pk AND begins_with(sk, :sk)',
+      ExpressionAttributeValues: { ':pk': license, ':sk': MATCH_PREFIX },
+      // Backwards along the sort key. This is the whole reason the timestamp is
+      // the leading component of it.
+      ScanIndexForward: false,
+      Limit: limit,
+    })
+    items = (res.Items ?? []) as Record<string, unknown>[]
+  } catch (e) {
+    console.error('[gameProfile] match history read failed for', license, e)
+    return null
+  }
+
+  // PROJECTED FIELD BY FIELD rather than cast. These rows are written by the
+  // game server, which is a different repo on a different box — a field that
+  // arrives missing, renamed or as a string should cost that field, not throw
+  // inside a React render on a page somebody is trying to moderate from.
+  return items.map((row) => ({
+    matchId: num(row.matchId),
+    endedAt: num(row.endedAt),
+    mode: typeof row.mode === 'string' ? row.mode : '',
+    placement: num(row.placement),
+    total: num(row.total),
+    kills: num(row.kills),
+    downs: num(row.downs),
+    revives: num(row.revives),
+    damage: num(row.damage),
+    survivedMs: num(row.survivedMs),
+    xpEarned: num(row.xpEarned),
+    voltsEarned: num(row.voltsEarned),
+    won: row.won === true,
+  }))
 }
