@@ -32,12 +32,20 @@ jobs:
       # quietly resolving something newer than what was tested.
       - run: npm ci
 
-      # Secret scan first. It is the cheapest check and the only one whose
-      # failure is urgent — everything else can be fixed at leisure, a
-      # committed credential cannot be uncommitted.
-      - run: npm run check:secrets
-
-      - run: npm run typecheck
+      # ONE ENTRY POINT, ON PURPOSE — and this used to list the checks
+      # individually, which is exactly the drift it now avoids. `verify` gained
+      # the ban-rule and xp-curve contract checks and this workflow did not, so
+      # for a while CI was greener than the repo. Both of those pin a rule that
+      # exists twice (once here, once in Lua), which is precisely the kind of
+      # check that must not quietly stop running.
+      #
+      # THAT IS ALSO WHAT MAKES IT CHEAP TO MAINTAIN: adding a check means
+      # adding it to `npm run verify`, and this file does not change.
+      #
+      # Secret scanning runs first inside it, which is right — it is the
+      # cheapest check and the only one whose failure is urgent. Everything else
+      # can be fixed at leisure; a committed credential cannot be uncommitted.
+      - run: npm run verify
 
       # NO ENVIRONMENT IS SUPPLIED, AND THIS IS THE GATE THAT PROVES IT WORKS.
       #
