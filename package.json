@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit",
     "check:secrets": "node scripts/check-secrets.mjs",
     "verify": "npm run check:secrets && npm run check:banrule && npm run check:xpcurve && npm run typecheck",
-    "check:xpcurve": "node scripts/check-xp-curve.mjs",
+    "check:xpcurve": "tsx scripts/check-xp-curve.mjs",
     "check:banrule": "node scripts/check-ban-rule.mjs"
   },
   "dependencies": {
@@ -44,6 +44,7 @@
     "@types/react-dom": "^19.0.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.12",
     "typescript": "^5.7.0"
   }
 }
