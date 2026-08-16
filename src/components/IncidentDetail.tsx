@@ -5,16 +5,13 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 
+import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { postJson } from '@/lib/api'
 import type { Incident, IncidentCategory, IncidentKind } from '@/lib/incidents'
 import { cn } from '@/lib/utils'
-
-function when(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + 'Z'
-}
 
 /**
  * One incident, and the decision about it.
@@ -192,7 +189,7 @@ export function IncidentDetail({
                   {e.text ? <span className="text-muted-foreground"> — {e.text}</span> : null}
                 </div>
                 <div className="mt-0.5 text-xs text-muted-foreground">
-                  {when(e.at)} · {e.byName}
+                  <LocalTime ms={e.at} /> · {e.byName}
                 </div>
               </li>
             ))}
@@ -230,7 +227,7 @@ export function IncidentDetail({
           <p className="mt-1 text-sm text-muted-foreground">{incident.resolution}</p>
           <p className="mt-1 text-xs text-muted-foreground/70">
             {incident.resolvedByName}
-            {incident.resolvedAt ? ` · ${when(incident.resolvedAt)}` : ''}
+            {incident.resolvedAt ? ` · $<LocalTime ms={incident.resolvedAt} />` : ''}
           </p>
         </Card>
       )}

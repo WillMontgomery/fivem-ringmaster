@@ -4,6 +4,7 @@ import { FileWarning, Flag, Users } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 
+import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import type { Incident, IncidentCategory, IncidentKind } from '@/lib/incidents'
@@ -28,10 +29,6 @@ const KIND_TONE: Record<IncidentKind, string> = {
   report: 'bg-info/10 text-info ring-info/25',
   identifier_reuse: 'bg-warn/10 text-warn ring-warn/25',
   anticheat: 'bg-danger/10 text-danger ring-danger/25',
-}
-
-function when(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + 'Z'
 }
 
 function waiting(ms: number, now: number): string {
@@ -87,7 +84,7 @@ function Row({
         </div>
         <p className="mt-0.5 truncate text-sm text-muted-foreground">{i.summary}</p>
         <p className="mt-0.5 text-xs text-muted-foreground/70">
-          {when(i.openedAt)}
+          <LocalTime ms={i.openedAt} />
           {i.reporterName ? ` · reported by ${i.reporterName}` : ' · filed by the system'}
         </p>
       </div>

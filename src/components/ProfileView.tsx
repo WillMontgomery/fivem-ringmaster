@@ -15,6 +15,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 
 import { ProvenanceTag } from '@/components/Provenance'
+import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
@@ -126,7 +127,7 @@ function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
           {i.summary}
         </Link>
         <div className="mt-0.5 text-xs text-muted-foreground">
-          {when(i.at)} · {ago(i.at, now)}
+          <LocalTime ms={i.at} /> · {ago(i.at, now)}
         </div>
       </div>
 
@@ -334,7 +335,7 @@ export function ProfileView({
               <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 First seen
               </div>
-              <div className="mt-1 text-sm">{when(p.firstSeen)}</div>
+              <div className="mt-1 text-sm"><LocalTime ms={p.firstSeen} /></div>
             </div>
             {/* LAST SEEN IS MEANINGLESS WHILE THEY ARE HERE. "2 minutes ago"
                 next to "On the server now" is either confusing or wrong, and
@@ -592,7 +593,7 @@ export function ProfileView({
                         ) : null}
                       </div>
                       <div className="mt-0.5 text-xs text-muted-foreground">
-                        {when(a.at)} · by{' '}
+                        <LocalTime ms={a.at} /> · by{' '}
                         {a.actorLicense ? (
                           <Link
                             href={`/players/${encodeURIComponent(a.actorLicense)}`}
@@ -652,7 +653,7 @@ export function ProfileView({
                     className="flex items-center gap-4 border-t border-border/60 py-2 text-sm first:border-t-0 first:pt-0"
                   >
                     <span className="w-36 shrink-0 text-muted-foreground">
-                      {when(s.at)}
+                      <LocalTime ms={s.at} />
                     </span>
                     <span className="w-20 shrink-0 font-mono text-muted-foreground">
                       {humanDuration(s.durationMs)}
