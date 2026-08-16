@@ -12,6 +12,15 @@
  * exactly when somebody is about to level up.
  */
 
+/*
+ * RUN THROUGH `tsx`, NOT BARE NODE, and that is not a preference.
+ *
+ * This imports a .ts file so the contract is checked against the SAME source
+ * the app uses rather than a copy. Node 24 strips types natively and Node 20
+ * does not, so running it with `node` passed on my machine and failed in CI on
+ * the first run — which is exactly the version-dependent behaviour a contract
+ * check must not have. `tsx` makes it the same everywhere.
+ */
 import { levelFor, progress, thresholdFor } from '../src/lib/xp.ts'
 
 const CASES = [
