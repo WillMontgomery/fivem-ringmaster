@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { useFormatInstant } from '@/components/PrefsProvider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -48,15 +49,6 @@ const DRAIN_CHOICES = [
   { value: '60', label: 'In 1 hour' },
 ] as const
 
-function clock(ts: number): string {
-  return new Date(ts).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 function until(ts: number, now: number): string {
   const ms = ts - now
   if (ms <= 0) return 'now'
@@ -65,10 +57,27 @@ function until(ts: number, now: number): string {
   return `in ${Math.floor(m / 60)}h ${m % 60}m`
 }
 
-/** Local datetime string for an <input type="datetime-local"> default. */
+/**
+ * Local datetime string for an <input type="datetime-local"> default.
+ *
+ * THE OFFSET IS SAMPLED AT `ts`, NOT AT NOW, and that is a bug fix rather than
+ * a tidy-up. `new Date().getTimezoneOffset()` asks "what is the offset right
+ * now"; across a DST boundary the answer for the moment being rendered is an
+ * hour different. Scheduling a deploy for the far side of a clock change put
+ * the wrong hour in the field, and the field controls when the production game
+ * server restarts.
+ *
+ * STAYS BROWSER-LOCAL, deliberately, and is the one thing in this console that
+ * ignores the timezone preference. `<input type="datetime-local">` is parsed by
+ * the browser in the browser's zone (see the `new Date(deployAt)` in
+ * `schedule()`), so re-rendering the field in a different zone while the parse
+ * stayed browser-local would put the typed value and the resulting instant five
+ * hours apart on a form that restarts a live server. The form says which zone
+ * it is in instead — see the note beside the input.
+ */
 function localInput(ts: number): string {
-  const d = new Date(ts - new Date().getTimezoneOffset() * 60_000)
-  return d.toISOString().slice(0, 16)
+  const offsetAtTs = new Date(ts).getTimezoneOffset()
+  return new Date(ts - offsetAtTs * 60_000).toISOString().slice(0, 16)
 }
 
 export function MaintenancePanel({
@@ -94,6 +103,30 @@ export function MaintenancePanel({
   const [busy, setBusy] = useState(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmForce, setConfirmForce] = useState(false)
+
+  /**
+   * Every time this panel DISPLAYS is in the reader's stated zone and says so.
+   * The one time it READS — the datetime-local field — is in the browser's.
+   */
+  const { format, timeZone } = useFormatInstant()
+  const clock = (ts: number) => format(ts, { withYear: false })
+
+  /**
+   * The browser's own zone, read after mount because `Intl` during render is
+   * one answer on the server and another here.
+   *
+   * WHEN THE TWO DISAGREE THE FORM HAS TO SAY SO. This is the highest
+   * consequence surface in the console: the field below is parsed browser-local
+   * while every label around it is rendered in the preference zone. An admin
+   * whose preference is New York, sitting in London, would otherwise type 10:00
+   * meaning one and get the other — and the thing that moves is a production
+   * game-server restart, five hours early.
+   */
+  const [browserZone, setBrowserZone] = useState<string | null>(null)
+  useEffect(() => {
+    setBrowserZone(Intl.DateTimeFormat().resolvedOptions().timeZone)
+  }, [])
+  const zoneMismatch = browserZone !== null && browserZone !== timeZone
 
   // Last state we announced. null until the first poll, so opening the page
   // during a live window does not toast about something already underway.
@@ -507,6 +540,16 @@ export function MaintenancePanel({
                         onChange={(e) => setDeployAt(e.target.value)}
                         className="max-w-xs"
                       />
+                      {/* Only when the two genuinely differ — a permanent
+                          "times are in your browser's zone" note beside a field
+                          that already is would be noise on every load. */}
+                      {zoneMismatch && (
+                        <p className="text-xs text-warn">
+                          The time you type here is in {browserZone!.replace(/_/g, ' ')},
+                          your browser&rsquo;s zone. Everything else on this page
+                          is shown in {timeZone.replace(/_/g, ' ')}.
+                        </p>
+                      )}
                       <p className="text-xs text-warn">
                         Anyone still connected at that moment is disconnected
                         mid-match.

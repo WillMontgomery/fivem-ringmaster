@@ -82,8 +82,14 @@ function SidebarProvider({
         _setOpen(openState)
       }
 
-      // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      // This sets the cookie to keep the sidebar state. `SameSite` and `Secure`
+      // are additions to the generated file: without them the cookie defaults
+      // to no SameSite at all and travels over plain http, which is a strange
+      // thing to ship in an admin console even for a boolean about a rail.
+      // `AppShell` reads it back into `defaultOpen` — it was written and never
+      // read for as long as this component has been installed.
+      const secure = location.protocol === "https:" ? "; secure" : ""
+      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}; samesite=lax${secure}`
     },
     [setOpenProp, open]
   )

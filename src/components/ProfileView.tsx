@@ -21,6 +21,7 @@ import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { humanDuration } from '@/lib/duration'
 import type { Profile, ProfileIncident } from '@/lib/profile'
+import { formatCount } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { progress } from '@/lib/xp'
 
@@ -408,7 +409,12 @@ export function ProfileView({
               </div>
               <p className="mt-3 text-xs text-muted-foreground">
                 {p.stats.soloMatches} solo · {p.stats.squadMatches} squad ·{' '}
-                {p.stats.damageDealt.toLocaleString()} damage
+                {/* Through the pinned locale, not the ambient one. This file is
+                    a client component, so a bare `.toLocaleString()` renders
+                    `1,234` on the server and `1.234` in a de-DE browser — an
+                    unsuppressed text mismatch that costs the page its server
+                    render. */}
+                {formatCount(p.stats.damageDealt)} damage
                 {p.stats.lastMatchAt
                   ? ` · last match ${ago(p.stats.lastMatchAt, now)}`
                   : ''}
@@ -441,14 +447,14 @@ export function ProfileView({
                 */}
                 <Figure
                   icon={Swords}
-                  value={`${progress(p.progress.xp).into.toLocaleString()} / ${progress(
-                    p.progress.xp,
-                  ).span.toLocaleString()}`}
+                  value={`${formatCount(progress(p.progress.xp).into)} / ${formatCount(
+                    progress(p.progress.xp).span,
+                  )}`}
                   label="xp this level"
                 />
                 <Figure
                   icon={Clock}
-                  value={p.progress.balance.toLocaleString()}
+                  value={formatCount(p.progress.balance)}
                   label="volts"
                 />
               </div>

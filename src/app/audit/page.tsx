@@ -1,11 +1,14 @@
 import { CircleCheck, CircleSlash, OctagonX } from 'lucide-react'
 import Link from 'next/link'
+import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
 import { Card } from '@/components/ui/card'
 import * as audit from '@/lib/audit'
+import { readPrefs } from '@/lib/prefs'
 import { currentAdmin } from '@/lib/session'
+import { formatInstant, utcIso } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 /**
@@ -17,6 +20,19 @@ import { cn } from '@/lib/utils'
  * "it failed", and the one most worth seeing. A log that displayed only
  * resolved rows would hide exactly the actions that went wrong in the most
  * interesting way.
+ *
+ * ITS TIMESTAMPS WERE WRONG, and this is where the preferences feature came
+ * from. This is a SERVER component, so the `toLocaleString(undefined, …)` that
+ * used to render the right-hand column resolved `undefined` to the Node
+ * process's timezone — the container's, not the reader's. RSC output is
+ * serialised once and never re-executed in the browser, so unlike every client
+ * component in this app there was nothing to correct it after mount. On a UTC
+ * container read from New York, instant 1755310440000 printed as `Aug 16,
+ * 02:14` for an action taken at `Aug 15, 22:14` local: a different calendar
+ * day, on the forensic record, with no zone suffix to hint that it was not
+ * local. Every time here now goes through `formatInstant` with the zone the
+ * reader stated, labelled with that zone, and carries the UTC instant on
+ * `title` for anyone reconciling against a game-server log.
  */
 export const dynamic = 'force-dynamic'
 
@@ -94,6 +110,7 @@ export default async function AuditPage() {
   const admin = await currentAdmin()
   if (!admin) redirect('/login')
 
+  const prefs = readPrefs(await cookies())
   const rows = await audit.recent(100)
 
   return (
@@ -158,13 +175,11 @@ export default async function AuditPage() {
                       )}
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-xs tabular-nums text-muted-foreground">
-                        {new Date(r.ts).toLocaleString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
+                      <div
+                        className="text-xs tabular-nums text-muted-foreground"
+                        title={utcIso(r.ts)}
+                      >
+                        {formatInstant(r.ts, prefs, { withYear: false })}
                       </div>
                       <div className={cn('text-xs uppercase tracking-wider', o.cls)}>
                         {o.label}

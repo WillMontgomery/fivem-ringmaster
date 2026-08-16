@@ -1,10 +1,13 @@
+import { cookies } from 'next/headers'
 import { z } from 'zod'
 
 import { ActionError, authorize, errorResponse } from '@/lib/actions'
 import * as audit from '@/lib/audit'
 import * as maint from '@/lib/maintenance'
 import { ensureDriver, tick } from '@/lib/maintenanceDriver'
+import { readPrefs } from '@/lib/prefs'
 import { liveView } from '@/lib/state'
+import { formatInstant } from '@/lib/time'
 
 /**
  * Read and schedule the maintenance window.
@@ -94,7 +97,16 @@ export async function POST(req: Request): Promise<Response> {
      * and that window would run first — so a later choice here is not a longer
      * delay, it is a setting that silently does nothing. Refusing it with the
      * reason is better than accepting it and being wrong later.
+     *
+     * THE TIME IN THAT SENTENCE IS THE READER'S, NOT THE CONTAINER'S. This was
+     * a bare `toLocaleString()` — no options at all, so both the locale and the
+     * timezone came from the Node process. It told an admin which deploy times
+     * were legal, in the server's zone, with nothing saying so; the operator
+     * would read a time five hours off, pick something "earlier", and be
+     * refused again. Read from the request cookies here because a route handler
+     * has no `PrefsProvider` above it.
      */
+    const prefs = readPrefs(await cookies())
     const deadline = maint.autoDeadline(existing?.updateFirstSeenAt)
     if (
       input.deployMode === 'at-time' &&
@@ -102,7 +114,7 @@ export async function POST(req: Request): Promise<Response> {
       input.deployAt! > deadline
     ) {
       throw new ActionError(
-        `That is after ${new Date(deadline).toLocaleString()}, when this update ` +
+        `That is after ${formatInstant(deadline, prefs)}, when this update ` +
           `is scheduled automatically because it will have been waiting 72 hours. ` +
           `Pick an earlier time, or let the automation handle it.`,
       )

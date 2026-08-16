@@ -32,12 +32,17 @@ function DiscordMark({ className }: { className?: string }) {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; callbackUrl?: string }>
+  searchParams: Promise<{
+    error?: string
+    callbackUrl?: string
+    /** `idle` when the session ended for inactivity rather than by choice. */
+    reason?: string
+  }>
 }) {
   const session = await auth()
   if (session?.user) redirect('/')
 
-  const { error, callbackUrl } = await searchParams
+  const { error, callbackUrl, reason } = await searchParams
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden px-6">
@@ -65,7 +70,18 @@ export default async function LoginPage({
 
           {/* The toast carries the message now; the inline fallback stays for
               anyone who dismissed it or arrived with the param in a shared link. */}
-          <LoginToast error={error} />
+          <LoginToast error={error} reason={reason} />
+          {reason === 'idle' && !error ? (
+            /* The inline copy of the toast, for anyone who dismissed it or
+               landed here from a shared link. Informational rather than a
+               warning: nothing went wrong, the timeout did its job. */
+            <p
+              role="status"
+              className="mb-5 rounded-md border border-info/30 bg-info/5 px-4 py-3 text-sm text-info"
+            >
+              You were signed out after two hours of inactivity.
+            </p>
+          ) : null}
           {error ? (
             <p
               role="alert"

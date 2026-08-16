@@ -3,6 +3,8 @@
 import { Moon, Sun } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { applyTheme } from '@/components/PrefsControls'
+import { usePrefs } from '@/components/PrefsProvider'
 import {
   Tooltip,
   TooltipContent,
@@ -10,40 +12,50 @@ import {
 } from '@/components/ui/tooltip'
 
 /**
- * Light / dark, remembered.
+ * Light / dark, one click, in the header.
  *
- * LIGHT IS THE DEFAULT, and the choice persists per browser rather than per
- * account — it is a property of where you are reading, not of who you are. The
- * same admin wants light on a phone in daylight and dark at 2am, and a
- * server-side preference would fight that.
+ * THE CHOICE PERSISTS PER BROWSER, not per account — it is a property of where
+ * you are reading, not of who you are. The same admin wants light on a phone in
+ * daylight and dark at 2am. It lives in a cookie rather than localStorage so
+ * the SERVER can read it: that is what lets the layout emit the right class in
+ * the first byte instead of letting the page paint white and then correct
+ * itself. (This comment used to say a server-side preference "would fight
+ * that". A cookie is still per browser, so it does not.)
  *
  * The class goes on <html> rather than <body> so the toggle also reaches
  * portalled content — tooltips, dialogs and sheets render outside the body
  * tree, and a light dialog over a dark page is the exact bug this avoids.
+ *
+ * TWO STATES HERE, THREE ON THE SETTINGS PAGE. This is the fast path; a header
+ * control that cycles through three values makes you click twice to get back to
+ * where you were. `system` is chosen deliberately, in the place where you go to
+ * choose deliberately.
  */
-
-const KEY = 'ringmaster.theme'
-
 export function ThemeToggle() {
-  const [dark, setDark] = useState(false)
+  const prefs = usePrefs()
 
-  // Read the stored choice after mount. Doing it during render would produce
-  // different markup on the server than the client; the inline script in the
-  // layout is what stops the page flashing in the meantime.
+  /**
+   * NO POST-MOUNT DOM READ FOR AN EXPLICIT CHOICE. The server knows the answer
+   * and passed it down, so the icon is right in the first frame. It used to
+   * read `classList.contains('dark')` after mount, which left a beat where a
+   * dark page showed the Sun.
+   *
+   * `system` is the one case that still needs the DOM, because resolving it
+   * means asking `prefers-color-scheme`, which the server cannot see. The
+   * inline script in the layout has already applied the class by the time this
+   * runs, so the icon settles rather than flashing the wrong page colour.
+   */
+  const [dark, setDark] = useState(prefs.theme === 'dark')
+
   useEffect(() => {
+    if (prefs.theme !== 'system') return
     setDark(document.documentElement.classList.contains('dark'))
-  }, [])
+  }, [prefs.theme])
 
   const toggle = () => {
     const next = !dark
     setDark(next)
-    document.documentElement.classList.toggle('dark', next)
-    try {
-      localStorage.setItem(KEY, next ? 'dark' : 'light')
-    } catch {
-      // Private browsing, or storage disabled. The toggle still works for this
-      // page; it simply will not be remembered. Not worth an error for.
-    }
+    applyTheme(next ? 'dark' : 'light')
   }
 
   return (

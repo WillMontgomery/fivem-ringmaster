@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { cookies } from 'next/headers'
 import {
   Activity,
   LogOut,
@@ -7,13 +8,16 @@ import {
   FileSearch,
   Gauge,
   ScrollText,
+  Settings,
   Settings2,
   ShieldAlert,
   Users,
 } from 'lucide-react'
 
 import { FeedStatus } from '@/components/FeedStatus'
+import { IdleGuard } from '@/components/IdleGuard'
 import { PlayerSearchTrigger } from '@/components/PlayerSearch'
+import { PrefsDialog } from '@/components/PrefsDialog'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import { UpdateBadge } from '@/components/UpdateBadge'
 import { UpdateWatcher } from '@/components/UpdateWatcher'
@@ -42,7 +46,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DEMO_BADGES } from '@/lib/demo'
+import { activityDeadline, hasSessionCookie } from '@/lib/activity'
 import * as maint from '@/lib/maintenance'
+import { readPrefs } from '@/lib/prefs'
 import { currentAdmin } from '@/lib/session'
 import { cn } from '@/lib/utils'
 
@@ -56,6 +62,14 @@ import { cn } from '@/lib/utils'
  * tool at 2am on a laptop. The real component brings icon-mode collapse
  * (cookie-persisted, so it survives a reload), a rail you can drag, ⌘B, and a
  * proper off-canvas sheet on mobile.
+ *
+ * THE "COOKIE-PERSISTED" CLAIM ABOVE WAS FALSE UNTIL NOW, which is worth
+ * recording because it is the shape of bug this codebase keeps producing.
+ * `ui/sidebar.tsx` has always WRITTEN `sidebar_state` on every toggle, and
+ * nothing has ever read it: `SidebarProvider` was rendered with no
+ * `defaultOpen`, so it started open every time and the cookie was a
+ * write-only file. Since this component now reads cookies for the theme
+ * anyway, `defaultOpen` is wired below and the sentence is true.
  *
  * NAVIGATION MIRRORS THE MILESTONES, and the not-yet-built entries are
  * deliberate rather than lazy. An admin panel that hides everything it cannot
@@ -153,6 +167,10 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
       { href: '/process', label: 'Process', icon: Activity, soon: 'M6' },
     ],
   },
+  {
+    group: 'You',
+    items: [{ href: '/settings', label: 'Settings', icon: Settings }],
+  },
 ]
 
 export async function AppShell({
@@ -231,8 +249,45 @@ export async function AppShell({
       .then((w) => ({ maintenance: maint.badgeState(w) }))
       .catch(() => ({})))
 
+  const jar = await cookies()
+  const prefs = readPrefs(jar)
+
+  /**
+   * THE IDLE GUARD AND THE FIRST-RUN PROMPT ONLY MOUNT FOR A REAL SESSION, and
+   * "real" has to mean the session cookie rather than the `user` prop.
+   *
+   * The obvious gate — `resolvedUser !== null` — is wrong, and wrong in a way
+   * that only shows up when the app is actually run. The design harness under
+   * `/preview` passes `user={DEMO_USER}`: a populated fixture for somebody who
+   * is not signed in to anything. Gating on the prop therefore mounts the idle
+   * guard on the harness, its first keepalive 401s, and the wireframes redirect
+   * themselves to the login page — plus the first-run dialog opens over the top
+   * of them on every load.
+   *
+   * `hasSessionCookie` is the same unvalidated sniff the middleware uses and is
+   * not a boundary; nothing here is guarding data. It is answering "is there a
+   * session for this machinery to be about".
+   */
+  const signedIn = hasSessionCookie(jar)
+
+  /**
+   * Read here rather than in the layout because the layout has no session to
+   * bind against; `activityDeadline` returns null when nothing valid is on
+   * record, which the client reads as "seed me" and turns into one keepalive on
+   * mount. Passed down as a server value so the countdown never has to call
+   * `Date.now()` during render.
+   */
+  const deadline = signedIn ? activityDeadline(jar) : null
+
+  /**
+   * The sidebar's own cookie, finally read. Written by `ui/sidebar.tsx` on
+   * every toggle since it was installed; anything other than the literal
+   * `false` it writes means open, including the cookie being absent.
+   */
+  const sidebarOpen = jar.get('sidebar_state')?.value !== 'false'
+
   return (
-    <SidebarProvider>
+    <SidebarProvider defaultOpen={sidebarOpen}>
       <Sidebar collapsible="icon" className="sidebar-surface">
         <SidebarHeader>
           <div className="flex items-center gap-2.5 px-1 py-1.5">
@@ -466,6 +521,16 @@ export async function AppShell({
         {/* Announces an available update once per session, and again whenever
             one appears while the console is open. */}
         <UpdateWatcher />
+
+        {/* Watches for a pointer or a key and ends the session when neither
+            has happened for two hours. Renders nothing. */}
+        {signedIn && <IdleGuard deadline={deadline} />}
+
+        {/* Asked once, on the first login that has no timezone stored and no
+            record of the question being dismissed. */}
+        {signedIn && prefs.shouldPrompt && (
+          <PrefsDialog initialTheme={prefs.theme} />
+        )}
 
         <main className="animate-rise min-w-0 flex-1 px-5 py-6">{children}</main>
       </SidebarInset>

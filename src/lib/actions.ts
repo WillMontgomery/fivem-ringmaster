@@ -1,7 +1,10 @@
+import { cookies } from 'next/headers'
 import { z } from 'zod'
 
 import * as audit from './audit'
 import { ForbiddenError, requireScope, type Scope } from './grants'
+import { isIdle } from './activity'
+import { IDLE_ERROR_CODE } from './idle'
 import { currentAdmin, type CurrentAdmin } from './session'
 
 /**
@@ -23,6 +26,14 @@ export class ActionError extends Error {
   constructor(
     message: string,
     public readonly status: number = 400,
+    /**
+     * A machine-readable tag, for the handful of failures the client has to
+     * act on rather than merely display. Only `idle` uses it today: a poller
+     * seeing a bare 401 cannot tell "your session ended because you walked
+     * away" from "your grants were revoked", and those want different words
+     * and different destinations.
+     */
+    public readonly code?: string,
   ) {
     super(message)
     this.name = 'ActionError'
@@ -80,6 +91,24 @@ export interface ActionContext {
  * route handler maps one error type rather than branching.
  */
 export async function authorize(scope: Scope): Promise<ActionContext> {
+  /**
+   * IDLE BEFORE ANYTHING ELSE, and read directly rather than inferred from the
+   * null `currentAdmin()` already returns for it. Both refuse the request; only
+   * this one can say which refusal it was, and "Signed out for inactivity" sent
+   * to a poller is what stops the board from silently freezing with no
+   * explanation.
+   *
+   * `authorize()` is the single choke point for every mutation route in the
+   * app, which is why the check goes here rather than in each of them.
+   */
+  if (isIdle(await cookies())) {
+    throw new ActionError(
+      'Signed out for inactivity.',
+      401,
+      IDLE_ERROR_CODE,
+    )
+  }
+
   const admin = await currentAdmin()
   if (!admin) throw new ActionError('Not signed in.', 401)
 
@@ -115,7 +144,10 @@ export async function authorize(scope: Scope): Promise<ActionContext> {
  */
 export function errorResponse(e: unknown): Response {
   if (e instanceof ActionError) {
-    return Response.json({ ok: false, error: e.message }, { status: e.status })
+    return Response.json(
+      { ok: false, error: e.message, ...(e.code ? { code: e.code } : {}) },
+      { status: e.status },
+    )
   }
   if (e instanceof z.ZodError) {
     return Response.json(

@@ -29,6 +29,16 @@
  */
 
 :root {
+  /*
+   * Tells the browser which way its OWN chrome should paint: scrollbars, the
+   * datetime picker on the maintenance form, checkbox and focus defaults. There
+   * was no `color-scheme` anywhere in this file, so a dark page had light
+   * scrollbars and a white native date picker — more conspicuous now that the
+   * theme is server-rendered and correct from the first byte instead of
+   * arriving a frame late.
+   */
+  color-scheme: light;
+
   --radius: 0.625rem;
 
   --background: oklch(0.985 0.003 285);
@@ -117,6 +127,8 @@
 }
 
 .dark {
+  color-scheme: dark;
+
   --background: oklch(0.145 0.012 285);
   --foreground: oklch(0.96 0.004 285);
 

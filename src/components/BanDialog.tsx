@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
+import { useFormatInstant } from '@/components/PrefsProvider'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -50,17 +51,6 @@ const DURATIONS = [
   { value: '7', label: '7 days' },
 ] as const
 
-function expiryLabel(days: number | null): string {
-  if (days === null) return 'permanently'
-  const when = new Date(Date.now() + days * 86_400_000)
-  return `until ${when.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })}`
-}
-
 export function BanDialog({
   license,
   name,
@@ -84,6 +74,24 @@ export function BanDialog({
 
   const effectiveDays = permanent ? null : Number(days)
   const reasonOk = reason.trim().length >= MIN_REASON
+
+  /**
+   * "until Aug 19, 14:20 EDT" — in the reader's stated zone, and labelled.
+   *
+   * THE ZONE SUFFIX MATTERS MORE HERE THAN ANYWHERE ELSE in the console. This
+   * sentence is the confirm step for cutting somebody off for three days, and
+   * an unlabelled time in a zone the reader did not choose is exactly how a ban
+   * gets confirmed for the wrong moment.
+   *
+   * `Date.now()` during render is safe in this one case and nowhere else: Base
+   * UI does not mount a dialog's content until it opens, so this only ever runs
+   * in the browser after a click. There is no server render to disagree with.
+   */
+  const { format } = useFormatInstant()
+  const expiryLabel = (d: number | null) =>
+    d === null
+      ? 'permanently'
+      : `until ${format(Date.now() + d * 86_400_000, { withYear: false })}`
 
   const reset = () => {
     setReason('')

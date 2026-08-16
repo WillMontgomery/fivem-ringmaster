@@ -1,6 +1,9 @@
+import { cookies } from 'next/headers'
+
 import { auth } from '@/auth'
 import { ddb, tables } from '@/lib/dynamo'
 import { grantsForDiscordId, type Grant, type Scope } from '@/lib/grants'
+import { isIdle } from '@/lib/activity'
 
 /**
  * Who is signed in, in the terms the rest of the system speaks.
@@ -61,10 +64,28 @@ async function discordIdFor(userId: string): Promise<string | null> {
  * they get an empty scope list and a sidebar that says so. That state is the
  * first admin's first login, every time a new moderator joins, and the day
  * after someone's grants are revoked — it has to render, not throw.
+ *
+ * AN IDLE SESSION IS NULL HERE, not a separate state, and that is what makes
+ * the timeout cost nothing at the call sites. Every page already handles "not
+ * signed in" by bouncing to the login page, so an idle reader takes the path
+ * that already exists rather than needing a new branch in thirteen routes.
  */
 export async function currentAdmin(): Promise<CurrentAdmin | null> {
   const session = await auth()
   if (!session?.user?.id) return null
+
+  /**
+   * Idle is an AUTHENTICATION failure, so it is checked here with the session
+   * rather than alongside the scope checks — someone who walked away has not
+   * lost a permission, they have stopped being present.
+   *
+   * FREE. `auth()` has already caused the request cookies to be parsed; this is
+   * a string compare and one HMAC, with no DynamoDB round trip. The record is
+   * deleted by the keepalive route when the client notices, not here — a read
+   * path that deletes sessions would delete them from the middle of a page
+   * render.
+   */
+  if (isIdle(await cookies())) return null
 
   const name = session.user.name ?? 'Unknown'
   const avatarUrl = session.user.image ?? null

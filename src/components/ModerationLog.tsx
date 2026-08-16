@@ -7,6 +7,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { useFormatInstant } from '@/components/PrefsProvider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -45,15 +46,6 @@ export interface KickRow {
   targetLicense: string | null
   reason: string | null
   outcome: 'pending' | 'ok' | 'failed'
-}
-
-function when(ts: number): string {
-  return new Date(ts).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 /** How much of a ban is left, in words. */
@@ -145,6 +137,11 @@ export function ModerationLog({
 }) {
   const router = useRouter()
   const now = Date.now()
+
+  // The reader's stated zone. Year dropped — these are narrow table cells.
+  const { format } = useFormatInstant()
+  const when = (ts: number) => format(ts, { withYear: false })
+
   const [kickPage, setKickPage] = useState(0)
   const [banPage, setBanPage] = useState(0)
   const [lifting, setLifting] = useState<Ban | null>(null)

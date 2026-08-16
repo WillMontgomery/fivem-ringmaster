@@ -4,6 +4,7 @@ import { Ban as BanIcon, Loader2, ShieldOff } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import { useFormatInstant } from '@/components/PrefsProvider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -29,15 +30,6 @@ function isActive(b: Ban, now: number): boolean {
   return true
 }
 
-function when(ts: number): string {
-  return new Date(ts).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  })
-}
-
 export function ModerationBoard({
   initial,
   canBan,
@@ -48,6 +40,15 @@ export function ModerationBoard({
 }) {
   const [rows, setRows] = useState<Ban[]>(initial)
   const [now, setNow] = useState(() => Date.now())
+
+  /**
+   * The reader's zone, from the preference the server read — not from
+   * `Intl` and not from the ambient environment. The year is dropped because
+   * these sit in a narrow column beside a status badge.
+   */
+  const { format } = useFormatInstant()
+  const when = (ts: number) => format(ts, { withYear: false })
+
   const [license, setLicense] = useState('')
   const [reason, setReason] = useState('')
   const [days, setDays] = useState('')

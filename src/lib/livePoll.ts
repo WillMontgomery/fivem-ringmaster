@@ -43,7 +43,31 @@ async function tick(): Promise<void> {
 
   try {
     const res = await fetch('/api/state', { cache: 'no-store' })
-    if (!res.ok) return // 401 on an expired session; the next navigation bounces to login
+
+    /**
+     * A 401 USED TO BE SWALLOWED IN SILENCE, and the failure mode was that the
+     * board simply stopped updating — no message, no stale marker, nothing
+     * saying the session had ended. An admin could watch a frozen player list
+     * for an hour believing it.
+     *
+     * `code: 'idle'` is the one case worth acting on rather than reporting: the
+     * session is over and there is a page that explains why. Every other
+     * failure still fails quiet, because the feed chip ages honestly and that
+     * IS the error display for a missed poll.
+     *
+     * NOTE THAT SUCCEEDING HERE DOES NOT EXTEND THE SESSION. This runs every
+     * two seconds; if it counted as activity nothing would ever time out. See
+     * lib/idle.ts.
+     */
+    if (res.status === 401) {
+      const body = (await res.json().catch(() => null)) as { code?: string } | null
+      if (body?.code === 'idle' && typeof window !== 'undefined') {
+        window.location.replace('/login?reason=idle')
+      }
+      return
+    }
+    if (!res.ok) return
+
     data = (await res.json()) as LivePayload
     listeners.forEach((l) => l())
   } catch {

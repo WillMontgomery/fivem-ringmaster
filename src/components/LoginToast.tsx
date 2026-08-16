@@ -14,13 +14,37 @@ import { toast } from 'sonner'
  * versus "OAuthAccountNotLinked" is a debugging taxonomy for us, not
  * information for a visitor — and enumerating server internals on an
  * unauthenticated page is a gift to nobody we want reading it.
+ *
+ * THE IDLE MESSAGE IS A THIRD, and it belongs under the same rule rather than
+ * breaking it: it is not an error code leaking outward, it is the console
+ * telling somebody who was working thirty seconds ago why they are suddenly
+ * looking at a sign-in button. Without it an idle sign-out is indistinguishable
+ * from the session having broken.
  */
-export function LoginToast({ error }: { error?: string }) {
+export function LoginToast({
+  error,
+  reason,
+}: {
+  error?: string
+  reason?: string
+}) {
   // React 18 dev runs effects twice; a toast that fires twice looks broken.
   const fired = useRef(false)
 
   useEffect(() => {
-    if (!error || fired.current) return
+    if (fired.current) return
+
+    if (reason === 'idle') {
+      fired.current = true
+      toast.info('Signed out for inactivity', {
+        description:
+          'The console had been idle for two hours. Sign in again to pick up where you were.',
+        duration: 8000,
+      })
+      return
+    }
+
+    if (!error) return
     fired.current = true
 
     if (error === 'AccessDenied') {
@@ -35,7 +59,7 @@ export function LoginToast({ error }: { error?: string }) {
         duration: 8000,
       })
     }
-  }, [error])
+  }, [error, reason])
 
   return null
 }

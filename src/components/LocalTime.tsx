@@ -1,24 +1,32 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useFormatInstant } from '@/components/PrefsProvider'
+import { isRenderableInstant } from '@/lib/time'
 
 /**
- * A timestamp in the reader's own timezone.
+ * A timestamp in the reader's stated timezone.
  *
- * EVERY TIME IN THIS CONSOLE WAS UTC, rendered as `2026-08-16 02:14Z`. That is
- * the right thing to store and the wrong thing to show: an admin deciding
- * whether an incident is from "just now" or "the middle of last night" is doing
- * arithmetic in their head against an offset, every single time, on a page
- * whose whole job is answering that quickly.
+ * THIS USED TO BE A COMPONENT BECAUSE OF HYDRATION, and it is worth recording
+ * why it no longer needs to be. Its old comment said it plainly: "the server
+ * has no idea what timezone the reader is in." So it rendered UTC, and an
+ * effect swapped in the browser's zone after mount, and the mismatch in between
+ * had to be suppressed.
  *
- * THE HYDRATION PROBLEM IS WHY THIS IS A COMPONENT AND NOT A FUNCTION. The
- * server has no idea what timezone the reader is in, so formatting during
- * render produces one answer on the server and another in the browser — React
- * calls that a mismatch and, worse, may keep the server's. So the first paint
- * is deliberately UTC and an effect swaps in the local rendering after mount.
+ * THE CONSOLE ASKS NOW. The zone is a cookie the server reads, so the server
+ * and the browser format the same instant from the same input and produce the
+ * same string. The effect, the seeded state and the `suppressHydrationWarning`
+ * are all gone — keeping them while also rendering correctly on the server
+ * would preserve exactly the post-hydration flicker this feature exists to
+ * delete.
  *
- * The swap is invisible in practice and correct in principle: the value shown
- * before hydration is true, just not local.
+ * IT STAYS A COMPONENT because it is a client component reading context, and
+ * because eight call sites already spell it this way.
+ *
+ * THE ZONE IS ALWAYS NAMED. `formatInstant` appends it. Someone who picked a
+ * zone they are not sitting in — the whole reason for asking — would otherwise
+ * be reading times that are correct and impossible to check. The exact UTC
+ * instant stays on `title` for the moment somebody is comparing a console
+ * timestamp against a line in a game-server log.
  */
 export function LocalTime({
   ms,
@@ -30,35 +38,15 @@ export function LocalTime({
   withDate?: boolean
   className?: string
 }) {
-  // The server-rendered fallback. Same shape the console used everywhere
-  // before this existed, so nothing jumps by more than the offset.
-  const iso = new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + 'Z'
-  const [text, setText] = useState(iso)
+  const { format, iso } = useFormatInstant()
 
-  useEffect(() => {
-    if (!Number.isFinite(ms) || ms <= 0) return
-
-    setText(
-      new Date(ms).toLocaleString(undefined, {
-        year: withDate ? 'numeric' : undefined,
-        month: withDate ? 'short' : undefined,
-        day: withDate ? 'numeric' : undefined,
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      }),
-    )
-  }, [ms, withDate])
-
-  if (!Number.isFinite(ms) || ms <= 0) {
+  if (!isRenderableInstant(ms)) {
     return <span className={className}>—</span>
   }
 
   return (
-    // `suppressHydrationWarning` because the mismatch is intentional and
-    // one-directional: the effect above is the correction, not a bug.
-    <span className={className} suppressHydrationWarning title={iso}>
-      {text}
+    <span className={className} title={iso(ms)}>
+      {format(ms, { withDate })}
     </span>
   )
 }
