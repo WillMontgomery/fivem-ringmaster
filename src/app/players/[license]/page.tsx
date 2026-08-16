@@ -12,6 +12,7 @@ import { can } from '@/lib/grants'
 import * as players from '@/lib/players'
 import type { Profile } from '@/lib/profile'
 import { currentAdmin } from '@/lib/session'
+import { levelFor } from '@/lib/xp'
 import { liveView } from '@/lib/state'
 
 /**
@@ -168,9 +169,19 @@ export default async function PlayerProfilePage({
             lastMatchAt: game.lastMatchAt,
           }
         : null,
+    // THE LEVEL IS DERIVED, NOT READ. The row stores both `xp` and `level`, and
+    // only `xp` is trustworthy: it accumulates through an atomic ADD, while
+    // `level` is written at match end from a read-modify-write that a stale read
+    // or a curve change can leave behind. That is not hypothetical — this page
+    // showed level 2 for a player the game showed as level 3, because the game
+    // derives and this did not.
+    //
+    // lib/xp.ts is a second implementation of the Lua curve, pinned to it by
+    // scripts/check-xp-curve.mjs. Deriving in both places is what makes the two
+    // screens agree; the fixture is what keeps them agreeing.
     progress: game
       ? {
-          level: game.level,
+          level: levelFor(game.xp),
           xp: game.xp,
           balance: game.balance,
           owned: game.owned.length,

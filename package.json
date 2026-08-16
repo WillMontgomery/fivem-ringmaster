@@ -13,7 +13,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "check:secrets": "node scripts/check-secrets.mjs",
-    "verify": "npm run check:secrets && npm run check:banrule && npm run typecheck",
+    "verify": "npm run check:secrets && npm run check:banrule && npm run check:xpcurve && npm run typecheck",
+    "check:xpcurve": "node scripts/check-xp-curve.mjs",
     "check:banrule": "node scripts/check-ban-rule.mjs"
   },
   "dependencies": {
