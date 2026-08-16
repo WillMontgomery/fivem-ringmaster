@@ -34,8 +34,14 @@ import { cn } from '@/lib/utils'
 
 export interface AnticheatConfig {
   action: 'incident' | 'log' | 'notify' | 'kick'
+  /** Legacy, and ZEROED by any current server. Read `barHigh`/`barNormal`. */
   limit: number
+  /** Legacy. Survives only as wording in an incident summary. */
   windowMs: number
+  /** Refusals needed at the high tier — the server never issued the means. */
+  barHigh?: number
+  /** Refusals needed at the normal tier — a number the weapon does not have. */
+  barNormal?: number
   selfLimit: number
   selfWindow: number
 }
@@ -114,12 +120,35 @@ export function AnticheatBoard({ config }: { config: AnticheatConfig | null }) {
               <div className="text-xs uppercase tracking-wider text-muted-foreground">
                 Threshold
               </div>
-              <div className="mt-0.5 text-lg tabular-nums">
-                {config.limit} in {ms(config.windowMs)}
-              </div>
-              <div className="text-xs text-muted-foreground/60">
-                impossible hits before a case is opened
-              </div>
+              {/*
+                THE BAR IS PER MATCH AND GRADED, and this tile used to render
+                `limit` — which every current server sends as 0, so it read
+                "0 in 10s": zero impossible hits opens a case. Meaningless, and
+                alarming if you believed it.
+
+                Falls back to the legacy pair only when the graded fields are
+                absent, which means the game is on a build that still enforced
+                on its own. Saying so is more useful than hiding it.
+              */}
+              {config.barHigh != null ? (
+                <>
+                  <div className="mt-0.5 text-lg tabular-nums">
+                    {config.barHigh} high · {config.barNormal ?? '—'} normal
+                  </div>
+                  <div className="text-xs text-muted-foreground/60">
+                    impossible hits in one match before a case is opened
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mt-0.5 text-lg tabular-nums">
+                    {config.limit} in {ms(config.windowMs)}
+                  </div>
+                  <div className="text-xs text-warn/70">
+                    this server predates the graded bar
+                  </div>
+                </>
+              )}
             </div>
             <div className="rounded-lg border border-border bg-card/40 px-3 py-2.5">
               <div className="text-xs uppercase tracking-wider text-muted-foreground">

@@ -349,12 +349,19 @@ function Rows({
 interface GuideNumbers {
   limit: number
   windowMs: number
+  barHigh?: number
+  barNormal?: number
 }
 
 export function AnticheatGuide({ config }: { config: GuideNumbers | null }) {
-  const threshold = config
-    ? `${config.limit} of them inside ${ms(config.windowMs)}`
-    : 'enough of them inside the window'
+  // THE SAME STALE READ THE BOARD TILE HAD. `limit` is zeroed by every current
+  // server — the real thresholds moved to the graded bar — so this sentence
+  // told admins they needed "0 of them inside 10s".
+  const threshold = !config
+    ? 'enough of them in one match'
+    : config.barHigh != null
+      ? `${config.barHigh} of the worst kind, or ${config.barNormal ?? '?'} of the rest, in one match`
+      : `${config.limit} of them inside ${ms(config.windowMs)}`
 
   return (
     <Tabs defaultValue="detection">
