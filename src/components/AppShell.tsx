@@ -203,11 +203,18 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
        * maintenance page already does the deploy-and-restart it was drawn for,
        * gently, with a drain and an audit trail.
        */
+      /**
+       * NO LONGER `soon: 'M6'` (#21). The badge means "this page is a drawing
+       * of something not built yet", and this one now reads the game host and
+       * reports what it is actually configured with. EDITING config is still
+       * M6 and this page still does not offer it — but a badge saying the page
+       * is unbuilt, over a page full of real values read off a live box, would
+       * teach whoever sees it to distrust the values.
+       */
       {
         href: '/config',
         label: 'Live config',
         icon: Settings2,
-        soon: 'M6',
         when: (c) => c.offMain,
       },
     ],

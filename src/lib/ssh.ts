@@ -21,6 +21,7 @@ import { env } from './env'
 export type Verb =
   | 'status'
   | 'telemetry'
+  | 'configreport'
   | 'kick'
   | 'deploy'
   | 'branches'
@@ -319,6 +320,100 @@ export async function switchRef(
 ): Promise<{ ok: boolean; pinnedRef?: string; pinnedSha?: string; error?: string }> {
   const encoded = Buffer.from(byName, 'utf8').toString('base64')
   return runVerb('switchref', ref, sha, encoded)
+}
+
+/**
+ * One engine convar, as `configreport` describes it.
+ *
+ * THE SOURCE IS NOT DECORATION. "Why is this not what I set" is the question
+ * the Live config page exists to answer, and a bare value cannot answer it.
+ */
+export interface HostConvar {
+  name: string
+  /**
+   * `null` MEANS UNSET, AND IS NOT THE SAME AS `''`. An empty string is a
+   * convar somebody set to nothing; null is one nobody has mentioned, so the
+   * engine's own built-in default is in effect. The game host deliberately does
+   * not guess what that default is — it does not know FXServer's internals, and
+   * a confident wrong number is worse than a blank.
+   */
+  value: string | null
+  /** `server.cfg` when the name appears there, `default` when it does not. */
+  source: 'server.cfg' | 'default'
+  /** Line in server.cfg, so "where is that set" has an answer. 0 when unset. */
+  line: number
+}
+
+/** One gamemode tuning value, already formatted for display by the game host. */
+export interface HostConfigValue {
+  /** Display grouping — `Storm phases`, `Payout`, and so on. */
+  group: string
+  /** The `br_lib/config/*.lua` file it was read out of. */
+  file: string
+  key: string
+  value: string
+}
+
+export interface HostConfig {
+  ok: boolean
+  /** When the host built this report, epoch ms. */
+  at: number
+  /** Absolute path of the server.cfg that was read. */
+  serverCfg: string
+  /** Absolute path of the deployed `br_lib` the values were read from. */
+  libDir: string
+  /** FXServer's start time, epoch ms. 0 when it is not running. */
+  startedAt: number
+  /** Newest mtime across server.cfg and the config files, epoch ms. */
+  configMtime: number
+  /**
+   * The files have changed since FXServer read them, so the RUNNING server is
+   * on older values than this report shows.
+   *
+   * The one way this report could mislead somebody, said out loud. It cannot be
+   * fixed by reading harder: a live convar means `GetConvar`, which means
+   * running inside FXServer, and the only channel there is `tmux send-keys` —
+   * a write, which would make the verb one of the dangerous ones. Comparing
+   * mtimes against the process start needs no such thing.
+   */
+  staleSinceStart: boolean
+  convars: HostConvar[]
+  /**
+   * The gamemode half. Separately `ok` because it can fail on its own — the
+   * host may have no Lua interpreter, or may not have deployed a commit that
+   * carries `tools/config_report.lua` — while the convars are still perfectly
+   * readable. Half a report beats an error page.
+   */
+  game: {
+    ok: boolean
+    loadErrors: string[]
+    values: HostConfigValue[]
+  }
+}
+
+/**
+ * What this server is actually configured with.
+ *
+ * READ-ONLY ON BOTH SIDES. The far side opens files and runs one Lua script
+ * over them; it starts nothing, writes nothing, and takes no arguments, so
+ * there is nothing here for it to interpret.
+ *
+ * IT REPORTS AN ALLOWLIST, NEVER A DUMP, and that is the whole design rather
+ * than a detail. `server.cfg` holds `sv_licenseKey` and would hold
+ * `rcon_password` and `br_ringmaster_ingest_secret` on a fuller box; this
+ * renders in a browser and lands in an audit log. The names that come back are
+ * written out one by one in `do_configreport` in the game repo's
+ * `tools/dispatch.sh`, and its `verify.sh` refuses any that look
+ * credential-shaped. Nothing on this side filters, because nothing on this side
+ * can be the thing that decides — by the time a value is here it has already
+ * been published.
+ *
+ * NOT POLLED. Same reasoning as `branches`: config changes when somebody edits
+ * a file and redeploys, not on a fifteen-second cadence, and every call is an
+ * SSH round trip to the game box.
+ */
+export function readConfig(): Promise<HostConfig> {
+  return runVerb<HostConfig>('configreport')
 }
 
 export interface HostTelemetry {
