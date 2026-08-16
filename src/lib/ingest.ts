@@ -156,6 +156,23 @@ export const snapshotEnvelope = z.object({
         action: z.enum(['incident', 'log', 'notify', 'kick']),
         limit: z.number(),
         windowMs: z.number(),
+        /**
+         * THE GRADED BAR, which replaced `limit` — and which was being dropped
+         * here, silently.
+         *
+         * The game zeroes `limit` and `windowMs` on purpose (removing a field
+         * from the wire breaks older readers) and sends the real thresholds in
+         * these two. This schema did not know about them, so Zod stripped them
+         * and the Anticheat page rendered the zeroed legacy field as
+         * "0 in 10s" — which reads as "zero impossible hits opens a case".
+         *
+         * OPTIONAL, because a server on an older build sends neither. Rejecting
+         * its envelope would read as a nack and retry forever, taking the player
+         * list down with it. Their absence is itself meaningful: it means the
+         * game still enforces on its own, and the page says so.
+         */
+        barHigh: z.number().optional(),
+        barNormal: z.number().optional(),
         selfLimit: z.number(),
         selfWindow: z.number(),
       })
