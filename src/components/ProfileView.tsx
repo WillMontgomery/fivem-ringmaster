@@ -21,6 +21,7 @@ import { Separator } from '@/components/ui/separator'
 import { humanDuration } from '@/lib/duration'
 import type { Profile, ProfileIncident } from '@/lib/profile'
 import { cn } from '@/lib/utils'
+import { progress } from '@/lib/xp'
 
 /**
  * Everything known about one person.
@@ -430,10 +431,19 @@ export function ProfileView({
             <>
               <div className="grid grid-cols-3 gap-4">
                 <Figure icon={Trophy} value={p.progress.level} label="level" />
+                {/*
+                  PROGRESS, NOT A LIFETIME TOTAL. "2,498 XP" answers a question
+                  nobody asks; "148 / 2,050" answers the one they do — how close
+                  is this player to levelling. It also makes this figure directly
+                  comparable with the bar in the player's own lobby, which is how
+                  the stored-level bug was spotted in the first place.
+                */}
                 <Figure
                   icon={Swords}
-                  value={p.progress.xp.toLocaleString()}
-                  label="total xp"
+                  value={`${progress(p.progress.xp).into.toLocaleString()} / ${progress(
+                    p.progress.xp,
+                  ).span.toLocaleString()}`}
+                  label="xp this level"
                 />
                 <Figure
                   icon={Clock}
