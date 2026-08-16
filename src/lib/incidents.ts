@@ -340,6 +340,66 @@ export async function resolve(input: {
   }
 }
 
+/**
+ * Drop the cached open count.
+ *
+ * Called when the game rings the doorbell for a newly filed case. The count is
+ * cached for fifteen seconds to keep the nav badge off a scan, and a brand-new
+ * incident is exactly the moment that staleness is worth spending a read on.
+ */
+export function invalidateCount(): void {
+  countCache = null
+}
+
+/**
+ * Append a corroboration to an open case.
+ *
+ * NOT A NEW INCIDENT, AND NOT A COUNTER. The game reports again each time the
+ * refusal count doubles, and each report means something an admin would want to
+ * know — it doubled, and here is when. A number that climbed from 1 to 3 says
+ * the same thing while losing every timestamp.
+ *
+ * SILENT ON A MISSING CASE. A corroboration for an incident that does not exist
+ * means the doorbell arrived before the write landed, or the case was filed on
+ * a server whose write failed. Neither is worth an error: the corroboration is
+ * redundant by definition, which is why it travels on the lossy channel in the
+ * first place.
+ *
+ * IT DOES NOT REOPEN ANYTHING. A resolved case that is still being corroborated
+ * is a real situation — an admin decided, and the player carried on — and the
+ * no-reopen rule holds. The note lands on the timeline either way, which is
+ * where somebody deciding whether to look again will see it.
+ */
+export async function corroborate(input: {
+  incidentId: string
+  at: number
+  text: string
+}): Promise<boolean> {
+  const event: IncidentEvent = {
+    at: input.at,
+    kind: 'note',
+    byLicense: null,
+    byName: 'System',
+    text: input.text,
+  }
+
+  try {
+    await ddb.update({
+      TableName: tables.incidents,
+      Key: { incidentId: input.incidentId },
+      UpdateExpression: 'SET events = list_append(events, :ev)',
+      ConditionExpression: 'attribute_exists(incidentId)',
+      ExpressionAttributeValues: { ':ev': [event] },
+    })
+    return true
+  } catch (e) {
+    const name = (e as { name?: string }).name
+    if (name === 'ConditionalCheckFailedException') return false
+    console.error('[incidents] corroborate failed', e)
+    return false
+  }
+}
+
 /** Add a note without resolving. The timeline is the point. */
 export async function note(input: {
   incidentId: string

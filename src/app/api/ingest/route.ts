@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 
 import { env } from '@/lib/env'
 import { ingestEnvelope } from '@/lib/ingest'
+import * as incidents from '@/lib/incidents'
 import * as players from '@/lib/players'
 import { applyEvents, applySnapshot } from '@/lib/state'
 
@@ -106,6 +107,10 @@ export async function POST(req: Request): Promise<Response> {
     console.error('[ingest] registry write failed', e)
   })
 
+  void applyIncidentEvents(env_, now).catch((e) => {
+    console.error('[ingest] incident event apply failed', e)
+  })
+
   return Response.json(
     { ok: true, applied, received: env_.events.length },
     { status: 202 },
@@ -179,4 +184,66 @@ async function persistIdentity(
  */
 export function GET(): Response {
   return Response.json({ ok: true, service: 'ringmaster-ingest' })
+}
+
+/**
+ * Apply the incident events the game sends on the evidence channel.
+ *
+ * THESE HAD NO CONSUMER AT ALL. br_ringmaster has emitted `incident_filed` and
+ * `incident_corroborated` since the pipeline was built, and nothing on this
+ * side listened — so the game reported `filed 1, corroborated 3` while the
+ * console showed one case with a one-line timeline and no sign that anything
+ * had happened since. Both halves were correct and the wire between them was
+ * connected to nothing.
+ *
+ * WHY THE GAME WRITES THE CASE AND THIS ONLY APPENDS. The game's DynamoDB grant
+ * is append-only — PutItem conditional on the id being absent — so it can file a
+ * case and cannot reach inside one. Corroboration is an UpdateItem on an
+ * existing row, which is this console's to make. The game sends a fact; this
+ * records it.
+ *
+ * FAILURE IS TOLERABLE HERE IN A WAY IT IS NOT FOR THE CASE ITSELF. A
+ * corroboration says "still happening" about a case that is already durable, so
+ * losing one costs a number. That is why it rides the lossy event channel while
+ * the case does not.
+ */
+async function applyIncidentEvents(
+  env_: { events: Array<{ kind: string; data: unknown }> },
+  now: number,
+): Promise<void> {
+  for (const ev of env_.events) {
+    if (ev.kind === 'incident_filed') {
+      // THE DOORBELL. The row is already written by the game, so there is
+      // nothing to store — but the open count is cached for fifteen seconds to
+      // keep the nav badge off a scan, and a new case should not wait that out.
+      incidents.invalidateCount()
+      continue
+    }
+
+    if (ev.kind !== 'incident_corroborated') continue
+
+    const d = ev.data as {
+      incidentId?: string
+      seq?: number
+      count?: number
+      reason?: string
+      severity?: string
+    }
+    if (!d.incidentId) continue
+
+    // Written as a timeline note rather than a counter, because "it happened
+    // again, and again" is the shape an admin reads. A number that went from 1
+    // to 3 says the same thing and says nothing about when.
+    const parts = [
+      typeof d.count === 'number' ? `${d.count} refusals this match` : null,
+      d.reason ? `last: ${d.reason}` : null,
+      d.severity ? `worst: ${d.severity}` : null,
+    ].filter(Boolean)
+
+    await incidents.corroborate({
+      incidentId: d.incidentId,
+      at: now,
+      text: parts.length > 0 ? parts.join(' · ') : 'Still happening.',
+    })
+  }
 }
