@@ -105,6 +105,52 @@ export interface MaintenanceWindow {
    * seconds and never arrive.
    */
   updateFirstSeenAt?: number | null
+
+  /**
+   * The branch this window will put on the box, and the exact commit it was
+   * chosen at. Null on an ordinary window, which refreshes whatever ref the
+   * host is already on.
+   *
+   * BOTH, OR NEITHER, AND THE SHA IS THE LOAD-BEARING HALF. Hours pass between
+   * an admin picking a branch and the last match ending, and anyone with push
+   * access can force-push in the gap. The name alone would deploy whatever the
+   * tip happens to be by then; the sha makes it refuse instead. The game box
+   * re-checks it twice — `switchref` before it writes the pin, `deploy.sh`
+   * before it touches the working tree — so this value is a record of what was
+   * agreed, never the thing that enforces it.
+   *
+   * OPTIONAL BECAUSE ROWS PREDATE IT. Every read must treat absence as "no ref
+   * change", which is what an ordinary maintenance window has always been.
+   */
+  targetRef?: string | null
+  targetSha?: string | null
+}
+
+/**
+ * A branch name we are willing to send to the game host.
+ *
+ * SHAPE, NOT POLICY, and deliberately the same shape `valid_ref` enforces in
+ * both shell scripts on the box. Which branches are worth deploying is a
+ * judgement for the person clicking; what this refuses is the handful of
+ * strings that stop being a branch name once git reads them — a leading `-`
+ * (an option, and `--upload-pack=` on a fetch is code execution on that box),
+ * `..`, `//`, a trailing `/`.
+ *
+ * THIS IS NOT THE BOUNDARY. The box validates every one of these again, from
+ * scratch, on arrival and again when it reads the pin file. This copy exists so
+ * a typo is refused with a sentence an admin can act on instead of travelling
+ * to the game host to be refused there.
+ */
+export function isUsableRef(ref: string): boolean {
+  if (!ref || ref.length > 120) return false
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(ref)) return false
+  if (ref.includes('..') || ref.includes('//') || ref.endsWith('/')) return false
+  return true
+}
+
+/** A full commit id, which is the only form the box will accept as a pin. */
+export function isFullSha(sha: string): boolean {
+  return /^[0-9a-f]{40}$/.test(sha)
 }
 
 /**
@@ -241,6 +287,9 @@ export async function schedule(input: {
   drainStartsAt: number
   deployMode: DeployMode
   deployAt: number | null
+  /** Both or neither. See {@link MaintenanceWindow.targetRef}. */
+  targetRef?: string | null
+  targetSha?: string | null
 }): Promise<MaintenanceWindow> {
   const existing = await current()
 
@@ -282,6 +331,22 @@ export async function schedule(input: {
     // cancelled, which is the one sequence that must not defeat the automation.
     updateAvailable: carriedAvailable,
     updateFirstSeenAt: carriedFirstSeen,
+
+    /**
+     * NOT carried forward, and the asymmetry with the two lines above is the
+     * point. A ref change belongs to the window that asked for it: carrying it
+     * would mean the NEXT window — an ordinary update, or one somebody
+     * scheduled for a different reason entirely — silently inherited a branch
+     * switch nobody chose in it.
+     *
+     * That this row is a full `put` is also exactly why the off-main automation
+     * gate is NOT stored here. It is derived from the game host on every driver
+     * tick; a flag on this row would be wiped by any schedule/cancel cycle,
+     * after which the driver would auto-deploy main over a parked branch and
+     * attribute it to `system`.
+     */
+    targetRef: input.targetRef ?? null,
+    targetSha: input.targetSha ?? null,
   }
 
   await ddb.put({ TableName: tables.maintenance, Item: w })

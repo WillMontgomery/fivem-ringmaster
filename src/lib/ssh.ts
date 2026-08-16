@@ -18,7 +18,13 @@ import { env } from './env'
  * dashboard does before br_ringmaster is pointed at the ingest endpoint.
  */
 
-export type Verb = 'status' | 'telemetry' | 'kick' | 'deploy'
+export type Verb =
+  | 'status'
+  | 'telemetry'
+  | 'kick'
+  | 'deploy'
+  | 'branches'
+  | 'switchref'
 
 export function sshConfigured(): boolean {
   const e = env()
@@ -49,8 +55,22 @@ export function runVerb<T>(verb: Verb, ...verbArgs: string[]): Promise<T> {
    * a bug, and a bug on this path deserves to fail loudly rather than send
    * something subtly wrong to a live server.
    */
+  /**
+   * `.` WAS ADDED FOR BRANCH NAMES and is worth a line, because widening this
+   * set is the kind of change that gets made once and never re-examined.
+   *
+   * Branch names legitimately contain dots — `release/1.4.0` is the obvious
+   * one — and without it `switchref` would refuse a perfectly ordinary ref with
+   * a message about an unsafe argument, which reads as a bug in the console
+   * rather than a rule. What it admits alongside is `..`, and that is checked
+   * where it means something: `tools/dispatch.sh` validates the ref as a raw
+   * string before git sees it and rejects `..`, `//`, a leading `-` and a
+   * trailing `/` (`valid_ref`), and `tools/deploy.sh` repeats the whole check
+   * on the pin file's contents. Nothing on this side treats these arguments as
+   * a path.
+   */
   for (const a of verbArgs) {
-    if (!/^[A-Za-z0-9+/=:_-]+$/.test(a)) {
+    if (!/^[A-Za-z0-9+/=:._-]+$/.test(a)) {
       return Promise.reject(new Error(`unsafe ssh argument: ${a.slice(0, 40)}`))
     }
   }
@@ -94,12 +114,33 @@ export function runVerb<T>(verb: Verb, ...verbArgs: string[]): Promise<T> {
 
   return new Promise<T>((resolve, reject) => {
     execFile('ssh', args, { timeout: 6_000, maxBuffer: 64 * 1024 }, (err, stdout) => {
-      if (err) return reject(err)
-      try {
-        resolve(JSON.parse(stdout.trim()) as T)
-      } catch {
-        reject(new Error(`dispatch returned non-JSON: ${stdout.slice(0, 200)}`))
+      /**
+       * A DELIBERATE REFUSAL IS AN ANSWER, NOT A TRANSPORT FAILURE, and the two
+       * used to be indistinguishable here.
+       *
+       * The dispatcher exits non-zero when it refuses something on purpose —
+       * `kick` exits 3 on a malformed license, `switchref` exits 3 when the
+       * branch has moved since it was chosen — and it prints a JSON line saying
+       * so. Rejecting on `err` alone threw that line away and surfaced
+       * `Command failed: ssh …` instead, so the most useful message the far
+       * side can produce ("feature/x has moved since it was chosen, pick it
+       * again") reached the admin as a generic SSH error.
+       *
+       * So: if the far side managed to say something structured, that is the
+       * answer, whatever the exit code. Every caller already branches on `ok`.
+       * A non-zero exit with nothing parseable on stdout is a real failure and
+       * still rejects, carrying the original error.
+       */
+      const text = stdout.trim()
+      if (text) {
+        try {
+          return resolve(JSON.parse(text) as T)
+        } catch {
+          /* fall through — not JSON, so it cannot be a considered answer */
+        }
       }
+      if (err) return reject(err)
+      reject(new Error(`dispatch returned non-JSON: ${stdout.slice(0, 200)}`))
     })
   })
 }
@@ -135,9 +176,139 @@ export interface HostStatus {
   running: boolean
   pid: number
   uptimeSec: number
+  /** Abbreviated, for display. */
   commit: string
+  /**
+   * The full 40-hex commit. `commit` is abbreviated and cannot be compared to
+   * a pinned sha, so anything deciding "did the branch we asked for actually
+   * land" needs this one.
+   */
+  sha?: string
   behindMain: number
   hostUptimeSec: number
+
+  /**
+   * The branch the served clone is ACTUALLY on, read off the clone rather than
+   * off the pin — a switch that was staged and then cancelled leaves a pin
+   * naming a branch the box has never run.
+   *
+   * OPTIONAL, AND EVERY READER MUST HANDLE ITS ABSENCE AS "NOT MAIN". An older
+   * dispatcher does not send it, and a detached HEAD cannot answer it. Being
+   * wrong in that direction costs an off-main banner on a box that is fine;
+   * being wrong the other way costs an unannounced automatic deploy of main
+   * over a parked branch. Use {@link isOnMain}, never a bare comparison.
+   */
+  deployedRef?: string
+  /** What the next deploy will check out. May differ from `deployedRef`. */
+  pinnedRef?: string
+  /** Display name of whoever staged the pin. Cosmetic; never authorisation. */
+  pinnedBy?: string
+  /** When the pin was written, epoch ms. */
+  pinnedAt?: number
+}
+
+/**
+ * Is the game host running `main`?
+ *
+ * WRITTEN IN THE POSITIVE, and that is the whole reason this is a function
+ * rather than an inline `!==`. `status.deployedRef !== 'main'` reads as "off
+ * main" for `undefined` too, which is right, but the inverse spelling —
+ * `deployedRef === undefined || deployedRef === 'main'` — is the one somebody
+ * writes by accident when they want the automation gate, and it silently
+ * re-enables automatic deploys on every box whose dispatcher is too old to
+ * answer. One function, one direction, no way to get the polarity wrong.
+ */
+export function isOnMain(status: HostStatus | null | undefined): boolean {
+  return status?.deployedRef === 'main'
+}
+
+/**
+ * Has the host told us, in so many words, that it is running something else?
+ *
+ * NOT `!isOnMain`, AND THE DIFFERENCE IS A DEPLOYMENT ORDER. Three states
+ * exist, not two: `main`, some other ref, and *no answer* — a dispatcher that
+ * predates branch switching does not send the field at all, and a detached HEAD
+ * sends it empty. `isOnMain` folds "no answer" in with "some other ref",
+ * because an automatic deploy at a host we cannot interrogate is the failure
+ * worth preventing. This folds it in with `main` instead, because it decides
+ * what to SHOW, and a console that hides its update badge and blanks its
+ * maintenance page against an older game box would look broken while being
+ * fine.
+ *
+ * The one thing neither spelling may do is drive both decisions. Use `isOnMain`
+ * for anything that acts on the server; use this for anything a human reads.
+ */
+export function isParkedOffMain(status: HostStatus | null | undefined): boolean {
+  return typeof status?.deployedRef === 'string' && status.deployedRef !== 'main'
+}
+
+/** One remote branch, as the dispatcher's `branches` verb reports it. */
+export interface HostBranch {
+  name: string
+  /** 40-hex. Resolved on the box at listing time and pinned from here on. */
+  sha: string
+  /** Relative to the DEPLOYED sha, not to main. */
+  ahead: number
+  behind: number
+  /** Tip commit date, epoch ms. */
+  tipAt: number
+  tipAuthor: string
+  subject: string
+  /** Whether this ref satisfies the dispatch.sh invariant. */
+  eligible: boolean
+  /** Why not, as a sentence to render verbatim. Empty when eligible. */
+  blockedBy: string
+}
+
+export interface HostBranches {
+  ok: boolean
+  /**
+   * The box could not refresh its remote refs inside its time budget and
+   * answered from what was already on disk. Said out loud in the UI: a branch
+   * list quietly a day old is how somebody picks a sha that no longer exists.
+   */
+  stale: boolean
+  deployedSha: string
+  deployedRef: string
+  branches: HostBranch[]
+}
+
+/**
+ * Every remote branch the game host can see, newest commit first.
+ *
+ * NOTHING IS FILTERED OUT HERE OR THERE. Branches that cannot be deployed come
+ * back with `eligible: false` and a `blockedBy` sentence, and the UI shows them
+ * disabled with the reason. A branch that is simply absent from the list reads
+ * as a broken list — the operator knows it exists, cannot see it, and has no
+ * way to tell "we refuse this" from "the dropdown is broken".
+ */
+export function listBranches(): Promise<HostBranches> {
+  return runVerb<HostBranches>('branches')
+}
+
+/**
+ * Pin the ref the game host's NEXT deploy will check out. Does not deploy.
+ *
+ * THE SHA IS THE POINT, not the name. Hours pass between an admin choosing a
+ * branch and the last match ending, and anyone with push access can force-push
+ * in between. The far side compares this sha against `origin/<ref>` and refuses
+ * if they differ, so a moved branch is an error somebody reads rather than a
+ * silent deploy of a tip nobody looked at. `deploy.sh` then checks the same
+ * thing again before it touches the working tree.
+ *
+ * THE NAME IS BASE64 for the same reason a kick reason is: it is free text from
+ * a Discord profile, it travels in a space-separated command line, and one
+ * space in it would shift every argument after it. It is cosmetic on arrival —
+ * the box stores it for the console's banner and never reads it to decide
+ * anything.
+ */
+export async function switchRef(
+  ref: string,
+  sha: string,
+  byName: string,
+): Promise<{ ok: boolean; pinnedRef?: string; pinnedSha?: string; error?: string }> {
+  const encoded = Buffer.from(byName, 'utf8').toString('base64')
+  return runVerb('switchref', ref, sha, encoded)
 }
 
 export interface HostTelemetry {

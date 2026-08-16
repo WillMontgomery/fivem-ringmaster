@@ -38,9 +38,31 @@ export function UpdateBadge() {
         if (!res.ok || !alive) return
         const v = (await res.json()) as {
           configured?: boolean
-          status?: { behindMain?: number } | null
+          status?: { behindMain?: number; deployedRef?: string } | null
         }
-        setBehind(v.configured && v.status ? (v.status.behindMain ?? 0) : null)
+        /**
+         * SILENT WHILE THE BOX IS PARKED ON A BRANCH. `behindMain` is the
+         * distance from main, and off main that is a permanently large number
+         * describing a comparison nobody is acting on — so this chip would sit
+         * in the header forever saying "update available", and clicking it
+         * would offer a deploy that refreshes the parked branch rather than
+         * shipping main. The off-main banner is the thing that should be
+         * visible in that state, and it is, two rows down.
+         *
+         * THE TEST IS DELIBERATELY THE OPPOSITE POLARITY TO `isOnMain`, and the
+         * asymmetry is the point. `isOnMain` gates the AUTOMATION and reads a
+         * missing `deployedRef` as "not main", because a host too old to answer
+         * must not have deploys fired at it automatically. This is a chip: a
+         * host too old to answer is a host that has always shown this chip, and
+         * hiding it would be a silent regression on a box that is fine. Gate
+         * the automation pessimistically, gate the decoration on a fact.
+         */
+        const parked =
+          typeof v.status?.deployedRef === 'string' &&
+          v.status.deployedRef !== 'main'
+        setBehind(
+          v.configured && v.status && !parked ? (v.status.behindMain ?? 0) : null,
+        )
       } catch {
         /* leave the last value; a dropped poll is not news */
       }

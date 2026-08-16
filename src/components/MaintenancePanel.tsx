@@ -5,9 +5,12 @@ import {
   CalendarClock,
   ChevronDown,
   CircleCheck,
+  GitBranch,
   Info,
   Loader2,
+  RefreshCw,
   Rocket,
+  Undo2,
   X,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
@@ -15,6 +18,7 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { LocalTime } from '@/components/LocalTime'
 import { useFormatInstant } from '@/components/PrefsProvider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -31,6 +35,7 @@ import {
 } from '@/components/ui/select'
 import { postJson } from '@/lib/api'
 import { AUTO_AFTER_MS, type MaintenanceWindow } from '@/lib/maintenance'
+import type { HostBranch } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 
 /**
@@ -84,15 +89,27 @@ export function MaintenancePanel({
   initial,
   initialPlayers,
   canRun,
+  initialDeployedRef,
 }: {
   initial: MaintenanceWindow | null
   initialPlayers: number
   canRun: boolean
+  /**
+   * What the game host is running right now, or null if it has not said.
+   *
+   * NULL AND 'main' ARE NOT THE SAME THING here, for the same reason they are
+   * not the same thing in `lib/ssh`: null is a host that has not answered — an
+   * unconfigured channel, or a dispatcher older than this feature — and the
+   * page renders exactly as it always did for it. Only a stated ref that is not
+   * `main` puts this page into its parked shape.
+   */
+  initialDeployedRef: string | null
 }) {
   const router = useRouter()
   const [w, setW] = useState(initial)
   const [players, setPlayers] = useState(initialPlayers)
   const [now, setNow] = useState(() => Date.now())
+  const [deployedRef, setDeployedRef] = useState(initialDeployedRef)
 
   const [drainIn, setDrainIn] = useState('0')
   const [advanced, setAdvanced] = useState(false)
@@ -103,6 +120,21 @@ export function MaintenancePanel({
   const [busy, setBusy] = useState(false)
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmForce, setConfirmForce] = useState(false)
+
+  // ------------------------------------------------------------- branches ---
+  const [branchesOpen, setBranchesOpen] = useState(false)
+  const [branches, setBranches] = useState<HostBranch[] | null>(null)
+  const [branchesStale, setBranchesStale] = useState(false)
+  const [branchError, setBranchError] = useState<string | null>(null)
+  const [loadingBranches, setLoadingBranches] = useState(false)
+  const [picked, setPicked] = useState<HostBranch | null>(null)
+  const [confirmSwitch, setConfirmSwitch] = useState(false)
+
+  /**
+   * PARKED IS A STATED FACT, NOT THE ABSENCE OF ONE. See the prop comment: a
+   * host that has not answered renders as it always has.
+   */
+  const parked = typeof deployedRef === 'string' && deployedRef !== 'main'
 
   /**
    * Every time this panel DISPLAYS is in the reader's stated zone and says so.
@@ -205,6 +237,36 @@ export function MaintenancePanel({
       } catch {
         /* keep the last view; the clock still ticks */
       }
+
+      /**
+       * Which ref the box is on, refreshed in the same beat.
+       *
+       * A SEPARATE, CHEAP READ. /api/host answers from the telemetry poller's
+       * in-memory snapshot and makes no SSH call of its own, so this costs a
+       * local round trip rather than a trip to the game box — unlike
+       * /api/host/branches, which really does fetch and is therefore only
+       * loaded on demand.
+       *
+       * It matters here specifically because a deploy CHANGES this value: an
+       * admin who switches to a branch and watches the window through would
+       * otherwise be looking at a page still describing the old ref, on the one
+       * screen where that fact is the entire subject.
+       */
+      try {
+        const hres = await fetch('/api/host', { cache: 'no-store' })
+        if (hres.ok) {
+          const hv = (await hres.json()) as {
+            status?: { deployedRef?: string } | null
+          }
+          setDeployedRef(
+            typeof hv.status?.deployedRef === 'string'
+              ? hv.status.deployedRef
+              : null,
+          )
+        }
+      } catch {
+        /* leave the last known ref; a dropped poll is not a branch change */
+      }
     }
     void tick()
     const t = setInterval(tick, 5_000)
@@ -214,22 +276,143 @@ export function MaintenancePanel({
   const live =
     w && (w.state === 'scheduled' || w.state === 'draining' || w.state === 'deploying')
 
-  const schedule = async () => {
+  /**
+   * Read the branch list off the game host.
+   *
+   * ON DEMAND, NEVER POLLED. Every other host read in this console is on a
+   * timer; this one costs a real `git fetch --prune` against GitHub on the game
+   * box, and the answer changes when somebody pushes rather than every fifteen
+   * seconds. Opening the picker asks once; the refresh button asks again.
+   */
+  const loadBranches = async () => {
+    setLoadingBranches(true)
+    setBranchError(null)
+    try {
+      const res = await fetch('/api/host/branches', { cache: 'no-store' })
+      const text = await res.text()
+      let d: {
+        ok?: boolean
+        error?: string
+        stale?: boolean
+        deployedRef?: string
+        branches?: HostBranch[]
+      }
+      try {
+        d = JSON.parse(text) as typeof d
+      } catch {
+        throw new Error(
+          `Server returned ${res.status} ${res.statusText}. ` +
+            `Body began: ${text.slice(0, 80).replace(/\s+/g, ' ').trim() || '(empty)'}`,
+        )
+      }
+      if (!res.ok || d.ok === false) {
+        throw new Error(d.error ?? `Request failed (${res.status}).`)
+      }
+      setBranches(d.branches ?? [])
+      setBranchesStale(Boolean(d.stale))
+      if (typeof d.deployedRef === 'string') setDeployedRef(d.deployedRef)
+    } catch (e) {
+      setBranches(null)
+      setBranchError(e instanceof Error ? e.message : 'Could not read the branches.')
+    } finally {
+      setLoadingBranches(false)
+    }
+  }
+
+  /**
+   * Schedule a window, optionally putting a different branch on the box.
+   *
+   * THE SHA TRAVELS WITH THE NAME, ALWAYS. It was resolved on the game host
+   * when the list was drawn, and it is what makes the difference between "put
+   * feature/x on the box" and "put whatever feature/x happens to be by the time
+   * the last match ends". Anyone with push access can move a branch in that
+   * gap, and the box refuses rather than deploying a tip nobody looked at.
+   */
+  const scheduleWith = async (target: HostBranch | null) => {
     setBusy(true)
     try {
       await postJson('/api/maintenance', {
         drainInMinutes: Number(drainIn),
         deployMode: timed ? 'at-time' : 'when-empty',
         deployAt: timed ? new Date(deployAt).getTime() : null,
+        ...(target ? { targetRef: target.name, targetSha: target.sha } : {}),
       })
+      const what = target
+        ? `Switching to ${target.name} (${target.sha.slice(0, 8)}).`
+        : 'Maintenance scheduled.'
       toast.success(
         timed
-          ? `Maintenance scheduled. Deploy at ${clock(new Date(deployAt).getTime())}.`
-          : 'Maintenance scheduled. It will deploy once the server empties.',
+          ? `${what} Deploy at ${clock(new Date(deployAt).getTime())}.`
+          : `${what} It deploys once the server empties.`,
       )
+      // `picked` is deliberately NOT cleared here. The confirm dialog reads it
+      // for its own title, and clearing it inside the awaited handler renders
+      // one frame of "Put this branch on the live server?" before the dialog
+      // closes. The window is live after this, so the picker is not on screen
+      // to be stale.
+      setBranchesOpen(false)
       router.refresh()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Could not schedule.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const schedule = () => scheduleWith(null)
+
+  /**
+   * Back to main, in one click.
+   *
+   * IT USES THE ORDINARY CHANNEL, and that is safe for one specific reason
+   * rather than by luck: `tools/dispatch.sh` refuses to pin any ref whose own
+   * copy of `tools/dispatch.sh` differs from main's, and `tools/deploy.sh`
+   * refuses to check one out. So the dispatcher answering this revert is
+   * byte-identical to the reviewed one no matter what the box is parked on —
+   * there is no reachable state in which the thing being recovered from is also
+   * the thing performing the recovery.
+   *
+   * IT STILL RESOLVES main TO A SHA FIRST rather than sending the bare name.
+   * Same rule as every other switch, and it costs one round trip that the admin
+   * sees as a spinner. Sending a name alone would be the one unpinned deploy in
+   * the system, on the path that matters most.
+   *
+   * NO OPTIONS AND NO CONFIRMATION. Drain immediately, deploy when empty. The
+   * whole point of the target-based confirmation rule in the switch dialog is
+   * that returning to reviewed code has to be cheaper than the mistake that
+   * made it necessary.
+   */
+  const revert = async () => {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/host/branches', { cache: 'no-store' })
+      const d = (await res.json()) as {
+        ok?: boolean
+        error?: string
+        branches?: HostBranch[]
+      }
+      if (!res.ok || d.ok === false) {
+        throw new Error(d.error ?? `Could not read the branch list (${res.status}).`)
+      }
+      const main = d.branches?.find((b) => b.name === 'main')
+      if (!main) {
+        throw new Error('The game host did not report a main branch.')
+      }
+      if (!main.eligible) {
+        throw new Error(`main cannot be deployed right now: ${main.blockedBy}`)
+      }
+
+      await postJson('/api/maintenance', {
+        drainInMinutes: 0,
+        deployMode: 'when-empty',
+        deployAt: null,
+        targetRef: 'main',
+        targetSha: main.sha,
+      })
+      toast.success('Reverting to main. It deploys once the server empties.')
+      router.refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not revert.')
     } finally {
       setBusy(false)
     }
@@ -262,12 +445,70 @@ export function MaintenancePanel({
     }
   }
 
+  /**
+   * The parked notice, rendered above BOTH shapes of this page.
+   *
+   * ABOVE THE LIVE VIEW TOO, which is the case it would be easy to skip. The
+   * live view replaces the whole page while a window is draining, and an admin
+   * arriving then is watching a deploy land on a branch — the single moment
+   * where "which code is this" matters most. The revert button is disabled
+   * rather than hidden in that state, with the reason, because a button that
+   * vanishes teaches nothing about why.
+   */
+  const parkedCard = parked ? (
+    <Card className="gap-0 border-warn/40 bg-warn/5 px-5 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <GitBranch className="size-4 text-warn" />
+            <h2 className="text-sm font-medium text-warn">
+              This server is not running main
+            </h2>
+          </div>
+          <p className="mt-1 text-sm">
+            It is parked on{' '}
+            <code className="rounded bg-warn/15 px-1.5 py-0.5 font-mono text-xs">
+              {deployedRef}
+            </code>
+            . Every deploy from here refreshes that branch until somebody
+            switches back — nothing returns it to main on its own.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Automatic updates are paused while it is parked, so an update
+            waiting behind this branch waits indefinitely.
+          </p>
+        </div>
+
+        {canRun && (
+          <Button
+            variant="default"
+            disabled={busy || Boolean(live)}
+            title={
+              live
+                ? 'Cancel the window that is already scheduled first.'
+                : undefined
+            }
+            onClick={revert}
+          >
+            {busy ? <Loader2 className="animate-spin" /> : <Undo2 />}
+            Revert to main
+          </Button>
+        )}
+      </div>
+    </Card>
+  ) : null
+
   // ---------------------------------------------------------------- live ----
 
   if (live && w) {
     const draining = w.state === 'draining' || now >= w.drainStartsAt
     return (
       <>
+        {/* The spacing lives here rather than on the card below, which would
+            otherwise carry a top margin with nothing above it on a box that is
+            on main — the ordinary case. */}
+        {parkedCard && <div className="mb-4">{parkedCard}</div>}
+
         <Card className="surface-edge gap-0 px-5 py-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="min-w-0">
@@ -305,6 +546,28 @@ export function MaintenancePanel({
               <p className="mt-1 text-xs text-muted-foreground/60">
                 Scheduled by {w.createdByName} · {clock(w.createdAt)}
               </p>
+              {/*
+                WHAT THIS WINDOW WILL PUT ON THE BOX, named on the page that
+                watches it happen. A window that switches branch looks
+                identical to an ordinary update everywhere else — same drain,
+                same countdown, same buttons — and the difference is the entire
+                consequence. The sha is shown as well as the name because the
+                name stops identifying anything the moment somebody pushes.
+              */}
+              {w.targetRef && (
+                <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+                  <GitBranch className="size-3 text-warn" />
+                  <span className="text-muted-foreground">Will deploy</span>
+                  <code className="rounded bg-warn/15 px-1.5 py-0.5 font-mono text-warn">
+                    {w.targetRef}
+                  </code>
+                  {w.targetSha && (
+                    <code className="font-mono text-muted-foreground/70">
+                      {w.targetSha.slice(0, 8)}
+                    </code>
+                  )}
+                </p>
+              )}
             </div>
 
             {canRun && w.state !== 'deploying' && (
@@ -418,10 +681,39 @@ export function MaintenancePanel({
               ) : (
                 <p>The server is empty — nobody is affected.</p>
               )}
+              {/*
+                IT NAMES THE TARGET. This said "pull main" unconditionally,
+                which was true when main was the only thing this system could
+                deploy and is now a straightforward lie in the case that
+                matters: an admin forcing a window that switches to a branch
+                would read a confirmation describing a deploy of main and press
+                it. The dialog that exists to make somebody stop and check has
+                to be the one thing on the page that is exactly right.
+              */}
               <p className="text-muted-foreground">
-                This runs <code className="font-mono">royale-deploy</code>: pull
-                main, sync resources, restart FXServer.
+                This runs <code className="font-mono">royale-deploy</code>:{' '}
+                {w.targetRef ? (
+                  <>
+                    switch to{' '}
+                    <code className="font-mono text-warn">{w.targetRef}</code>
+                    {w.targetSha ? ` (${w.targetSha.slice(0, 8)})` : ''}, sync
+                    resources, restart FXServer.
+                  </>
+                ) : (
+                  <>
+                    refresh{' '}
+                    <code className="font-mono">{deployedRef ?? 'main'}</code>,
+                    sync resources, restart FXServer.
+                  </>
+                )}
               </p>
+              {w.targetRef && w.targetRef !== 'main' && (
+                <p className="rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-warn">
+                  <code className="font-mono">{w.targetRef}</code> has not been
+                  through review. The server stays on it until somebody switches
+                  back.
+                </p>
+              )}
             </>
           }
         />
@@ -438,7 +730,16 @@ export function MaintenancePanel({
 
   return (
     <div className="space-y-4">
-      {behind > 0 ? (
+      {parkedCard}
+
+      {/*
+        SUPPRESSED WHILE PARKED. `behind` is forced to zero by the driver off
+        main (it measures distance from main, which is not what a parked box is
+        tracking), so this branch would render "the server is running the latest
+        code" underneath a banner saying it is running an unreviewed branch —
+        two true-ish sentences that together say something false.
+      */}
+      {parked ? null : behind > 0 ? (
         <Card className="surface-edge gap-0 px-5 py-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -585,8 +886,303 @@ export function MaintenancePanel({
         </Card>
       )}
 
+      {canRun && (
+        <BranchPicker
+          open={branchesOpen}
+          onOpenChange={(v) => {
+            setBranchesOpen(v)
+            if (v && branches === null && !loadingBranches) void loadBranches()
+          }}
+          branches={branches}
+          stale={branchesStale}
+          error={branchError}
+          loading={loadingBranches}
+          deployedRef={deployedRef}
+          picked={picked}
+          onPick={setPicked}
+          onRefresh={loadBranches}
+          busy={busy}
+          onSchedule={() => {
+            if (!picked) return
+            /**
+             * CONFIRM ON THE TARGET, NOT ON THE SOURCE.
+             *
+             * The obvious rule — "confirm when leaving main" — lets
+             * feature/a → feature/b through without a word, and that is a
+             * switch between two unreviewed trees on a box that is already off
+             * reviewed code. It is at least as consequential as the first
+             * switch was, and it is the one an admin is most likely to make
+             * casually. Gate on where the server ENDS UP.
+             *
+             * Switching to main never asks, for the same reason: recovery has
+             * to be cheaper than the mistake.
+             */
+            if (picked.name === 'main') void scheduleWith(picked)
+            else setConfirmSwitch(true)
+          }}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmSwitch}
+        onOpenChange={setConfirmSwitch}
+        title={`Put ${picked?.name ?? 'this branch'} on the live server?`}
+        confirmLabel="Confirm switch"
+        busyLabel="Scheduling…"
+        onConfirm={async () => {
+          if (picked) await scheduleWith(picked)
+        }}
+        body={
+          <>
+            <p className="rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-warn">
+              <code className="font-mono">{picked?.name}</code> at{' '}
+              <code className="font-mono">{picked?.sha.slice(0, 8)}</code> has
+              not been through review. It will run on the live game server until
+              somebody switches back.
+            </p>
+            <p>
+              The server drains first — nobody loses a match — and the switch
+              lands once it empties. Automatic updates stop while it is parked.
+            </p>
+            <p className="text-muted-foreground">
+              If that commit moves before the deploy runs, the game host refuses
+              it rather than deploying something else. You would schedule again.
+            </p>
+          </>
+        }
+      />
+
       <MaintenanceExplainer />
     </div>
+  )
+}
+
+/**
+ * Pick a branch to put on the game host.
+ *
+ * A LIST, NOT A DROPDOWN, and that is decided by one requirement: branches that
+ * cannot be deployed are shown DISABLED WITH THE REASON rather than omitted. A
+ * reason is a sentence — "changes tools/dispatch.sh — deploy it through main
+ * and PR review" — and a sentence does not fit in a select option. Omitting
+ * them instead would be worse than either: the operator knows the branch
+ * exists, cannot see it, and has no way to tell a rule from a bug.
+ *
+ * COLLAPSED BY DEFAULT because it is the rare path. The common action on this
+ * page is one button that ships main, and putting a branch picker beside it at
+ * equal weight would make the two look equally routine. They are not.
+ */
+function BranchPicker({
+  open,
+  onOpenChange,
+  branches,
+  stale,
+  error,
+  loading,
+  deployedRef,
+  picked,
+  onPick,
+  onRefresh,
+  busy,
+  onSchedule,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  branches: HostBranch[] | null
+  stale: boolean
+  error: string | null
+  loading: boolean
+  deployedRef: string | null
+  picked: HostBranch | null
+  onPick: (b: HostBranch) => void
+  onRefresh: () => void
+  busy: boolean
+  onSchedule: () => void
+}) {
+  return (
+    <Card className="surface-edge gap-0 px-5 py-4">
+      <button
+        type="button"
+        onClick={() => onOpenChange(!open)}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        <GitBranch className="size-4 text-muted-foreground" />
+        <span className="text-sm font-medium">Deploy a different branch</span>
+        <ChevronDown
+          className={cn(
+            'ml-auto size-4 text-muted-foreground transition-transform',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+
+      {!open && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Run an unreviewed branch on the live server. It drains first, and the
+          server stays on that branch until somebody switches back.
+        </p>
+      )}
+
+      {open && (
+        <div className="mt-4 space-y-3 border-t border-border pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              Read from the game host, newest commit first. Ahead and behind are
+              measured against what is running now.
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={loading}
+              onClick={onRefresh}
+            >
+              {loading ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <RefreshCw />
+              )}
+              Refresh
+            </Button>
+          </div>
+
+          {/*
+            SAID OUT LOUD RATHER THAN HIDDEN. The game host answers from the
+            refs already on disk when its fetch does not finish inside the
+            six-second SSH budget. A list quietly a day old is how somebody
+            picks a commit that no longer exists — which the box would refuse,
+            correctly and confusingly.
+          */}
+          {stale && (
+            <p className="rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-xs text-warn">
+              The game host could not reach GitHub in time and answered from
+              what it already had. This list may be out of date — press Refresh.
+            </p>
+          )}
+
+          {error && (
+            <p className="rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-xs text-danger">
+              {error}
+            </p>
+          )}
+
+          {loading && branches === null && (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              <Loader2 className="mr-2 inline size-4 animate-spin" />
+              Asking the game host…
+            </p>
+          )}
+
+          {branches?.length === 0 && (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              The game host reported no branches at all, which should not
+              happen. Check that its clone still has a remote.
+            </p>
+          )}
+
+          {branches && branches.length > 0 && (
+            <ul className="space-y-1.5">
+              {branches.map((b) => {
+                const isCurrent = b.name === deployedRef
+                /**
+                 * THE BRANCH THAT IS RUNNING IS STILL SELECTABLE ONCE IT MOVES,
+                 * and that closes a real gap rather than being a nicety.
+                 *
+                 * Off main there is no "Schedule update" button — that button
+                 * is driven by the distance from main, which is suppressed
+                 * while parked — so if the current branch were disabled outright
+                 * there would be NO way to pick up new commits pushed to the
+                 * branch being tested. The whole point of parking on a branch is
+                 * iterating on it.
+                 *
+                 * Only a branch that is both running and identical to what is
+                 * deployed is disabled, because that deploy would restart every
+                 * match to change nothing.
+                 */
+                const noChange = isCurrent && b.ahead === 0 && b.behind === 0
+                const isPicked = picked?.name === b.name
+                return (
+                  <li key={b.name}>
+                    <button
+                      type="button"
+                      disabled={!b.eligible || noChange}
+                      aria-pressed={isPicked}
+                      onClick={() => onPick(b)}
+                      className={cn(
+                        'w-full rounded-lg border px-3 py-2 text-left transition-colors',
+                        isPicked
+                          ? 'border-primary/50 bg-primary/10'
+                          : 'border-border bg-card/40',
+                        b.eligible && !noChange
+                          ? 'hover:border-primary/40 hover:bg-primary/5'
+                          : 'cursor-not-allowed opacity-60',
+                      )}
+                    >
+                      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <span className="font-mono text-sm">{b.name}</span>
+                        <span className="font-mono text-xs text-muted-foreground/70">
+                          {b.sha.slice(0, 8)}
+                        </span>
+                        {isCurrent && (
+                          <Badge className="border-0 bg-live/10 text-xs uppercase tracking-wider text-live ring-1 ring-inset ring-live/30">
+                            running now
+                          </Badge>
+                        )}
+                        <span className="text-xs tabular-nums text-muted-foreground">
+                          +{b.ahead} / −{b.behind}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {b.subject}
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted-foreground/60">
+                        {b.tipAuthor} · {b.tipAt ? <LocalTime ms={b.tipAt} /> : '—'}
+                      </p>
+                      {/*
+                        THE REASON, VERBATIM, ON THE DISABLED ROW. This is the
+                        entire difference between a rule and a mystery: "changes
+                        tools/dispatch.sh" tells an operator both why this
+                        branch is refused and what to do about it, where a
+                        greyed-out row with no text reads as a bug.
+                      */}
+                      {!b.eligible && b.blockedBy && (
+                        <p className="mt-1 text-xs text-warn">
+                          Cannot be deployed — {b.blockedBy}
+                        </p>
+                      )}
+                      {noChange && b.eligible && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Already running, at this exact commit — there is
+                          nothing to deploy.
+                        </p>
+                      )}
+                      {isCurrent && !noChange && b.eligible && (
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Running, but it has moved since. Pick it to deploy the
+                          new tip.
+                        </p>
+                      )}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          {picked && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+              <p className="text-xs text-muted-foreground">
+                The server drains immediately and switches to{' '}
+                <code className="font-mono text-foreground">{picked.name}</code>{' '}
+                once the last match finishes.
+              </p>
+              <Button disabled={busy} onClick={onSchedule}>
+                {busy ? <Loader2 className="animate-spin" /> : <Rocket />}
+                Schedule switch
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
   )
 }
 
@@ -615,7 +1211,7 @@ function MaintenanceExplainer() {
     },
     {
       title: 'The update runs',
-      body: 'Once the last player leaves, royale-deploy pulls main, syncs the resources and restarts FXServer.',
+      body: 'Once the last player leaves, royale-deploy pulls the branch the server is on — normally main — syncs the resources and restarts FXServer.',
     },
     {
       title: 'Back to normal',
@@ -665,6 +1261,17 @@ function MaintenanceExplainer() {
           <span className="font-medium text-foreground">Deploy now</span> skips
           the waiting and disconnects whoever is still playing. It asks first,
           and records who chose it and how many people were on.
+        </p>
+        <p>
+          <span className="font-medium text-foreground">
+            A branch other than main can be deployed,
+          </span>{' '}
+          for testing on the real server. The game host refuses any branch that
+          changes its own control scripts, so a branch can change the game but
+          never the console&rsquo;s channel to the box — which is what makes
+          &ldquo;revert to main&rdquo; something you can always rely on.
+          Automatic updates pause the whole time the server is off main, and
+          nothing brings it back on its own.
         </p>
       </div>
     </Card>

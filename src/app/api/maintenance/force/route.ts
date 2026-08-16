@@ -1,7 +1,7 @@
 import { authorize, errorResponse } from '@/lib/actions'
 import * as audit from '@/lib/audit'
 import * as maint from '@/lib/maintenance'
-import { runVerb, sshConfigured } from '@/lib/ssh'
+import { runVerb, sshConfigured, switchRef } from '@/lib/ssh'
 import { liveView } from '@/lib/state'
 
 /**
@@ -63,10 +63,36 @@ export async function POST(): Promise<Response> {
       action: 'maintenance.deploy',
       actor,
       reason: w.note,
-      detail: { trigger: 'forced', playersOnline: players },
+      detail: {
+        trigger: 'forced',
+        playersOnline: players,
+        targetRef: w.targetRef ?? null,
+        targetSha: w.targetSha ?? null,
+      },
     })
 
     try {
+      /**
+       * THE SAME SWITCH-THEN-DEPLOY ORDER THE DRIVER USES, and it has to be
+       * repeated rather than shared because this route is the one path that
+       * skips the driver entirely. A force that ran a bare `deploy` would
+       * refresh whatever ref the box is already on while the window, the toast
+       * and the audit row all said a branch switch had happened — and the admin
+       * who pressed it would be looking at the wrong code with no reason to
+       * doubt it.
+       *
+       * A refused pin means no deploy. Nothing has been touched at that point,
+       * so the server is exactly as it was and the reason lands in the log.
+       */
+      if (w.targetRef && w.targetSha) {
+        const pin = await switchRef(w.targetRef, w.targetSha, actor.name)
+        if (!pin.ok) {
+          throw new Error(
+            pin.error ?? `the game host refused to switch to ${w.targetRef}`,
+          )
+        }
+      }
+
       const res = await runVerb<{ ok: boolean; error?: string }>('deploy')
       if (!res.ok) throw new Error(res.error ?? 'deploy refused')
       await audit.resolve(ts, 'ok')

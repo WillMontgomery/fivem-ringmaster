@@ -16,6 +16,7 @@ import {
 
 import { FeedStatus } from '@/components/FeedStatus'
 import { IdleGuard } from '@/components/IdleGuard'
+import { OffMainBanner } from '@/components/OffMainBanner'
 import { PlayerSearchTrigger } from '@/components/PlayerSearch'
 import { PrefsDialog } from '@/components/PrefsDialog'
 import { ThemeToggle } from '@/components/ThemeToggle'
@@ -50,6 +51,7 @@ import { activityDeadline, hasSessionCookie } from '@/lib/activity'
 import * as maint from '@/lib/maintenance'
 import { readPrefs } from '@/lib/prefs'
 import { currentAdmin } from '@/lib/session'
+import { ensurePolling, hostView } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 
 /**
@@ -251,6 +253,24 @@ export async function AppShell({
 
   const jar = await cookies()
   const prefs = readPrefs(jar)
+
+  /**
+   * The off-main banner has to be true on every page, which means the SSH poll
+   * has to be running on every page.
+   *
+   * IT WAS ONLY EVER STARTED BY THE HOST AND MAINTENANCE ROUTES, so on a
+   * freshly restarted console an admin who opened Live players first would see
+   * no banner at all — the box could be parked on a branch and nothing would
+   * say so until somebody happened to visit Host. A warning that appears only
+   * where you already knew to look is not a warning.
+   *
+   * The cost is one SSH round trip every fifteen seconds while somebody has the
+   * console open, which is what the Host page already costs; `ensurePolling` is
+   * idempotent and no-ops when the channel is unconfigured, so this is one
+   * poller for the process rather than one per page.
+   */
+  ensurePolling()
+  const host = hostView().status
 
   /**
    * THE IDLE GUARD AND THE FIRST-RUN PROMPT ONLY MOUNT FOR A REAL SESSION, and
@@ -517,6 +537,20 @@ export async function AppShell({
             <ThemeToggle />
           </div>
         </header>
+
+        {/*
+          Directly under the header and above everything else on the page,
+          because it changes what everything else on the page MEANS: an incident
+          may be a bug in an unmerged commit, and the code on main is not the
+          code running. `pinnedBy` is only shown when the pin and the running
+          ref agree — a pin staged for a switch that has not deployed yet names
+          the wrong person for what is currently on the box.
+        */}
+        <OffMainBanner
+          deployedRef={host?.deployedRef}
+          by={host?.pinnedRef === host?.deployedRef ? host?.pinnedBy : null}
+          at={host?.pinnedRef === host?.deployedRef ? host?.pinnedAt : null}
+        />
 
         {/* Announces an available update once per session, and again whenever
             one appears while the console is open. */}

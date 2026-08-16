@@ -7,6 +7,7 @@ import * as maint from '@/lib/maintenance'
 import { ensureDriver } from '@/lib/maintenanceDriver'
 import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
+import { hostView } from '@/lib/telemetry'
 
 /**
  * Scheduled maintenance.
@@ -29,6 +30,16 @@ export default async function MaintenancePage() {
     can(admin.license, 'process'),
   ])
   const view = liveView(now)
+
+  /**
+   * Read AFTER `ensureDriver()`, which starts the telemetry poller. On a
+   * console that has just booted this is still null on the first render and the
+   * panel's own five-second poll fills it in — which is why the panel treats
+   * null as "the host has not said" rather than as "main". A page that guessed
+   * `main` for one render would flash the ordinary update card over a parked
+   * server, which is the one lie this page must not tell.
+   */
+  const deployedRef = hostView().status?.deployedRef ?? null
 
   return (
     <AppShell
@@ -55,6 +66,7 @@ export default async function MaintenancePage() {
           initial={w}
           initialPlayers={view.counts.connected}
           canRun={canRun}
+          initialDeployedRef={deployedRef}
         />
       </div>
     </AppShell>

@@ -1,6 +1,6 @@
 import * as audit from './audit'
 import * as maint from './maintenance'
-import { runVerb, sshConfigured } from './ssh'
+import { isOnMain, isParkedOffMain, runVerb, sshConfigured, switchRef } from './ssh'
 import { ensurePolling, hostView } from './telemetry'
 import { liveView } from './state'
 
@@ -33,17 +33,48 @@ const globalForDriver = globalThis as unknown as {
 }
 
 /**
- * Ask the game host to run royale-deploy.
+ * Ask the game host to run royale-deploy, switching branch first if the window
+ * asked for one.
  *
  * NOT A REBOOT AND NOT A PROCESS KILL. The verb runs the same
- * `systemctl start royale-deploy` an operator would type: pull main, sync
- * resources, restart FXServer. The box stays up throughout.
+ * `systemctl start royale-deploy` an operator would type: sync resources,
+ * restart FXServer. The box stays up throughout.
+ *
+ * THE SWITCH HAPPENS HERE, AT DEPLOY TIME, NOT WHEN THE WINDOW WAS SCHEDULED,
+ * and that ordering is the whole safety of it. `switchref` writes a pin file
+ * that the NEXT deploy — any deploy, including a human typing
+ * `systemctl start royale-deploy` on the box — will act on. Pinning at
+ * scheduling time would mean a window somebody scheduled and then cancelled
+ * leaves that pin lying there, and the next unrelated deploy silently ships a
+ * branch nobody currently intends. Pinning immediately before the deploy that
+ * consumes it closes the gap to about a second.
+ *
+ * A FAILED SWITCH MUST NOT DEPLOY. If the branch moved, or turns out to change
+ * `tools/dispatch.sh`, the box refuses the pin — and running the deploy anyway
+ * would refresh whatever ref the box was already on while the audit row said a
+ * branch switch happened. Returning the refusal leaves the server exactly as it
+ * was and puts the reason in the log.
  */
-async function runDeploy(): Promise<{ ok: boolean; error?: string }> {
+async function runDeploy(
+  w: maint.MaintenanceWindow,
+): Promise<{ ok: boolean; error?: string }> {
   if (!sshConfigured()) {
     return { ok: false, error: 'the command channel is not configured' }
   }
   try {
+    if (w.targetRef && w.targetSha) {
+      const pin = await switchRef(
+        w.targetRef,
+        w.targetSha,
+        w.createdByName || 'an admin',
+      )
+      if (!pin.ok) {
+        return {
+          ok: false,
+          error: pin.error ?? `the game host refused to switch to ${w.targetRef}`,
+        }
+      }
+    }
     const res = await runVerb<{ ok: boolean; error?: string }>('deploy')
     return res.ok ? { ok: true } : { ok: false, error: res.error ?? 'deploy refused' }
   } catch (e) {
@@ -69,14 +100,54 @@ export async function tick(): Promise<void> {
     const now = Date.now()
 
     /**
+     * IS THE BOX ON MAIN? DERIVED FROM THE HOST, EVERY TICK, NEVER STORED.
+     *
+     * This gates the automation below, and where it lives is the entire
+     * decision. The obvious home is a flag on the maintenance `current` row —
+     * and `maint.schedule()` is a full `ddb.put` over that key, so any
+     * schedule/cancel cycle would wipe it. The failure that produces is
+     * specific and bad: the flag comes back as absent, absent reads as "on
+     * main", and fifteen seconds later the driver schedules and deploys `main`
+     * over a branch somebody is actively testing, attributed to `system`, with
+     * nothing anywhere saying why the code changed under them.
+     *
+     * Derived state cannot be wiped by a write to something else. `isOnMain`
+     * is written in the positive so a host that does not answer the question —
+     * an older dispatcher, a detached HEAD — reads as off main and turns the
+     * automation OFF rather than on.
+     */
+    const status = hostView().status
+    const onMain = isOnMain(status)
+
+    /**
      * Keep the update signal fresh on the row the game polls.
      *
      * READ FROM THE TELEMETRY POLLER rather than making an SSH call of our own:
      * it already asks the host for `status` every fifteen seconds, and a second
      * caller would double the traffic to learn a number that is already in
      * memory.
+     *
+     * ZERO WHILE PARKED, DELIBERATELY. `behindMain` is the distance from main,
+     * which is a number the box is not tracking while it runs a branch: it will
+     * be large, permanently, and it is not describing an update anybody is
+     * waiting for. Reporting it would badge "3 commits behind" in the console
+     * chrome and nudge admins in game to schedule a deploy that would refresh
+     * the parked branch rather than ship main — an offer whose description and
+     * behaviour disagree. The off-main banner is what should be visible
+     * instead, and it is.
+     *
+     * GATED ON `isParkedOffMain`, NOT ON `!onMain`, AND THAT AVOIDS A DEADLOCK.
+     * `onMain` is false for a host that has not answered the question — which
+     * is every game box until it has deployed the dispatcher that reports the
+     * field. Suppressing the update signal on that basis would zero
+     * `updateAvailable`, which blanks the maintenance page ("running the latest
+     * code") and makes `POST /api/maintenance` refuse ("nothing to deploy") —
+     * so the console would refuse to deploy the very commit that teaches the
+     * box to answer, and the only way out would be an SSH session and a
+     * hand-typed `systemctl start royale-deploy`. Suppress on a stated fact;
+     * leave an unanswering host behaving exactly as it did before.
      */
-    const behind = hostView().status?.behindMain ?? 0
+    const behind = isParkedOffMain(status) ? 0 : (status?.behindMain ?? 0)
     await maint.noteUpdateAvailable(behind).catch(() => {})
 
     /**
@@ -85,10 +156,17 @@ export async function tick(): Promise<void> {
      * schedules the window itself, attributed to `system` so the audit log
      * never implies a person chose this moment.
      *
+     * `onMain` IS THE GATE, AND IT IS STRICTER THAN THE LINE ABOVE. A host that
+     * does not answer "which ref" still reports its distance from main, so
+     * `behind` above can be positive while `onMain` is false. That combination
+     * is exactly the one where the console must not schedule anything by
+     * itself: it would be firing a deploy at a box whose state it cannot read.
+     * A human can still schedule it from the page, with their name on it.
+     *
      * Re-read after noteUpdateAvailable so `updateFirstSeenAt` is the value
      * just written rather than the one from before this tick.
      */
-    if (!maint.isLive(w) && behind > 0) {
+    if (!maint.isLive(w) && onMain && behind > 0) {
       const fresh = await maint.current()
       const deadline = maint.autoDeadline(fresh?.updateFirstSeenAt)
       if (deadline !== null && now >= deadline) {
@@ -168,10 +246,14 @@ export async function tick(): Promise<void> {
       detail: {
         trigger: emptied ? 'server empty' : 'scheduled time',
         playersOnline: players,
+        // Both, or the row cannot answer "what actually got deployed" later.
+        // The name alone is ambiguous once a branch has moved on.
+        targetRef: w.targetRef ?? null,
+        targetSha: w.targetSha ?? null,
       },
     })
 
-    const res = await runDeploy()
+    const res = await runDeploy(w)
     await audit.resolve(ts, res.ok ? 'ok' : 'failed', res.error ?? null)
     await maint.markComplete(res.error ?? null).catch(() => {})
   } catch (e) {

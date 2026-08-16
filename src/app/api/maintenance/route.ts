@@ -36,11 +36,26 @@ const scheduleSchema = z
     deployMode: z.enum(['when-empty', 'at-time']),
     /** Absolute epoch ms, only for at-time. */
     deployAt: z.number().int().positive().nullable().optional(),
+
+    /**
+     * Deploy a branch other than the one the box is on.
+     *
+     * BOTH OR NEITHER, ENFORCED BELOW. A ref with no sha is a request to deploy
+     * "whatever that branch is when we get round to it", which is the exact
+     * thing the sha exists to prevent — the window can sit for hours and anyone
+     * with push access can move the branch in the meantime.
+     */
+    targetRef: z.string().trim().max(120).optional(),
+    targetSha: z.string().trim().optional(),
   })
   .refine(
     (v) => v.deployMode !== 'at-time' || typeof v.deployAt === 'number',
     { message: 'Choose a time for the deploy.', path: ['deployAt'] },
   )
+  .refine((v) => Boolean(v.targetRef) === Boolean(v.targetSha), {
+    message: 'A branch has to be sent with the exact commit it was chosen at.',
+    path: ['targetSha'],
+  })
 
 export async function GET(): Promise<Response> {
   try {
@@ -70,15 +85,41 @@ export async function POST(req: Request): Promise<Response> {
     const drainStartsAt = now + input.drainInMinutes * 60_000
 
     /**
+     * A REF CHANGE IS VALIDATED HERE AND ENFORCED ON THE BOX.
+     *
+     * Neither of these checks is the boundary — `tools/dispatch.sh` validates
+     * the name as a raw string before git sees it, and `tools/deploy.sh` does
+     * the whole thing again on the pin file it reads. They exist so a typo or a
+     * stale page is refused with a sentence an admin can act on, rather than
+     * travelling to the game host to come back as an SSH error.
+     */
+    if (input.targetRef && !maint.isUsableRef(input.targetRef)) {
+      throw new ActionError(`"${input.targetRef}" is not a usable branch name.`)
+    }
+    if (input.targetSha && !maint.isFullSha(input.targetSha)) {
+      throw new ActionError(
+        'A branch has to be pinned to a full commit id. Reload the page and pick it again.',
+      )
+    }
+
+    /**
      * NOTHING TO DEPLOY, NOTHING TO SCHEDULE.
      *
      * A maintenance window with no update behind it costs a restart and every
      * match in progress, and delivers exactly the code that was already
      * running. There is no version of that which is what somebody meant.
+     *
+     * A REF CHANGE IS EXEMPT, AND HAS TO BE. `updateAvailable` measures the
+     * distance from main; switching branch changes WHICH CODE runs, not how
+     * current it is. Without this exemption the two cases that matter most both
+     * fail: reverting to main from a parked branch sitting at main's tip
+     * (behind is 0, so "there is nothing to deploy" — while the box is visibly
+     * running something else), and switching between two branches that are both
+     * level with main.
      */
     const existing = await maint.current()
     const behind = existing?.updateAvailable ?? 0
-    if (behind <= 0) {
+    if (behind <= 0 && !input.targetRef) {
       throw new ActionError(
         'The server is already running the latest code — there is nothing to deploy.',
         409,
@@ -137,6 +178,16 @@ export async function POST(req: Request): Promise<Response> {
           drainStartsAt,
           deployMode: input.deployMode,
           deployAt: input.deployAt ?? null,
+          /**
+           * THE BRANCH GOES IN THE AUDIT DETAIL, NOT IN `note`. `note` is shown
+           * to players turned away at the door, and "deploying feature/loot-v2"
+           * means nothing to somebody who wants to know when they can play. The
+           * audit log is where "which code did we put on the box, and who chose
+           * it" belongs, and it needs the sha as well as the name — a branch
+           * name alone stops identifying anything the moment the branch moves.
+           */
+          targetRef: input.targetRef ?? null,
+          targetSha: input.targetSha ?? null,
         },
       },
       () =>
@@ -147,6 +198,8 @@ export async function POST(req: Request): Promise<Response> {
           drainStartsAt,
           deployMode: input.deployMode,
           deployAt: input.deployAt ?? null,
+          targetRef: input.targetRef ?? null,
+          targetSha: input.targetSha ?? null,
         }),
     )
 
