@@ -7,7 +7,6 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Command,
   CommandDialog,
-  CommandEmpty,
   CommandGroup,
   CommandInput,
   CommandItem,
@@ -34,6 +33,28 @@ import {
 
 const MAX_RESULTS = 10
 
+/**
+ * Open the palette from anywhere, optionally with the box already filled in.
+ *
+ * A WINDOW EVENT RATHER THAN A CONTEXT, because the palette is mounted exactly
+ * once — in the header, by `PlayerSearchTrigger` — and that is load-bearing:
+ * AppShell's comment records what two live instances cost last time, which was
+ * both of them registering ⌘K and the invisible one swallowing what you typed.
+ * A context provider would work too and would mean threading a provider through
+ * the shell for one caller; an event keeps the single instance and asks nothing
+ * of the tree in between.
+ *
+ * The alternative that was there — a link to `/players?q=…` — pointed at a
+ * route that does not exist (#18).
+ */
+export const OPEN_SEARCH_EVENT = 'ringmaster:open-search'
+
+export function openPlayerSearch(query = ''): void {
+  window.dispatchEvent(
+    new CustomEvent(OPEN_SEARCH_EVENT, { detail: { query } }),
+  )
+}
+
 export interface SearchPlayer {
   license: string | null
   name: string
@@ -43,13 +64,25 @@ export interface SearchPlayer {
 export function PlayerSearch({
   open,
   onOpenChange,
+  seed = '',
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Prefills the box each time the palette opens. */
+  seed?: string
 }) {
   const router = useRouter()
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(seed)
   const [players, setPlayers] = useState<SearchPlayer[]>([])
+
+  /**
+   * Seed on open, not on every render. Deps are `[open, seed]` deliberately:
+   * once the palette is up, typing changes `query` and must not be undone by
+   * this effect, so `query` is not a dependency.
+   */
+  useEffect(() => {
+    if (open) setQuery(seed)
+  }, [open, seed])
 
   /**
    * Ask the server, on every keystroke.
@@ -59,6 +92,13 @@ export function PlayerSearch({
    * Looking a player up after they logged off — the ordinary reason to look
    * anyone up — returned nothing. The endpoint searches everyone the console
    * has seen this session, online or not.
+   *
+   * AND THEN IT READ ONLY THE OTHER HALF, which is #18. Moving off the snapshot
+   * moved entirely off it: the endpoint asked the durable registry and the
+   * session directory, neither of which knows who is connected — so the
+   * section headed "Online now" was the ten most recently *seen* players, most
+   * of whom had gone home. The endpoint now joins the live snapshot back in,
+   * which is the same in-memory state the live players page renders from.
    */
   useEffect(() => {
     if (!open) return
@@ -122,19 +162,45 @@ export function PlayerSearch({
         onValueChange={setQuery}
       />
       <CommandList>
-        <CommandEmpty>
-          {q ? (
-            <span>
-              Nobody online matches “{query}”.
-              <span className="mt-1 block text-xs text-muted-foreground/70">
-                Only players currently connected are searchable until the
-                player history stream ships.
-              </span>
-            </span>
-          ) : (
-            'Type a name or license.'
-          )}
-        </CommandEmpty>
+        {/*
+          NOT `CommandEmpty`, AND IT CANNOT BE. cmdk renders that component only
+          when `filtered.count === 0`, and with `shouldFilter={false}` it sets
+          `filtered.count` to the number of registered items rather than to the
+          number that matched. The "Go to" group below always registers three,
+          so the count is never zero and the empty state was unreachable — the
+          palette answered a search that found nobody with a bare list of three
+          navigation links and no words at all.
+
+          THE OLD COPY WAS ALSO A LIE, for whenever it did get shown. It said
+          only connected players were searchable "until the player history
+          stream ships", which had already shipped: the endpoint reads the
+          registry of everyone ever seen. Somebody reading that would stop
+          looking for a player the console could have found.
+
+          Two states, because they mean opposite things. Nothing typed and
+          nothing listed means the server is empty. Something typed and nothing
+          listed means we looked through everyone and did not find them.
+        */}
+        {matches.length === 0 && (
+          <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+            {q ? (
+              <>
+                Nobody called “{query}”.
+                <span className="mt-1 block text-xs text-muted-foreground/70">
+                  This searched everyone the console has ever seen, not just
+                  who is on now.
+                </span>
+              </>
+            ) : (
+              <>
+                Nobody is on the server right now.
+                <span className="mt-1 block text-xs text-muted-foreground/70">
+                  Type a name or license to search everyone ever seen.
+                </span>
+              </>
+            )}
+          </div>
+        )}
 
         {matches.length > 0 && (
           <CommandGroup heading={q ? 'Players' : 'Online now'}>
@@ -197,6 +263,8 @@ export function PlayerSearch({
  */
 export function PlayerSearchTrigger() {
   const [open, setOpen] = useState(false)
+  /** What the box starts with. Set by `openPlayerSearch`, cleared otherwise. */
+  const [seed, setSeed] = useState('')
 
   /**
    * THE HINT HAS TO MATCH THE KEYBOARD IN FRONT OF THE PERSON READING IT.
@@ -225,6 +293,9 @@ export function PlayerSearchTrigger() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'k' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
+        // Cleared, or ⌘K would refill the box with whatever a previous
+        // `openPlayerSearch` seeded it with.
+        setSeed('')
         setOpen((v) => !v)
       }
     }
@@ -232,11 +303,25 @@ export function PlayerSearchTrigger() {
     return () => document.removeEventListener('keydown', onKey)
   }, [])
 
+  /** Anywhere in the app asking for the palette. See `openPlayerSearch`. */
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent<{ query?: string }>).detail
+      setSeed(detail?.query ?? '')
+      setOpen(true)
+    }
+    window.addEventListener(OPEN_SEARCH_EVENT, onOpen)
+    return () => window.removeEventListener(OPEN_SEARCH_EVENT, onOpen)
+  }, [])
+
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          setSeed('')
+          setOpen(true)
+        }}
         className="group flex w-full items-center gap-2 rounded-lg border border-border bg-card/60 px-3 py-2 text-xs text-muted-foreground shadow-sm transition-colors hover:bg-card hover:text-foreground"
         aria-label="Search players"
       >
@@ -246,7 +331,7 @@ export function PlayerSearchTrigger() {
           {mac ? '⌘K' : 'Ctrl K'}
         </CommandShortcut>
       </button>
-      <PlayerSearch open={open} onOpenChange={setOpen} />
+      <PlayerSearch open={open} onOpenChange={setOpen} seed={seed} />
     </>
   )
 }

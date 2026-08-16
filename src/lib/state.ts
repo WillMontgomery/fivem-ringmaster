@@ -205,6 +205,39 @@ export function isOnline(license: string): boolean {
   return (state.snapshot?.snapshot.players ?? []).some((p) => p.license === license)
 }
 
+/** One connected player, reduced to what a search result needs. */
+export interface OnlinePlayer {
+  license: string
+  name: string
+}
+
+/**
+ * Everyone the latest snapshot says is connected.
+ *
+ * THE SEARCH HAD NO WAY TO ASK THIS, and that is the whole of #18's second
+ * half. `searchDirectory` reads the session directory and `players.search`
+ * reads the durable registry; both are records of people who have *been* here,
+ * and neither has any notion of who is here now. The palette headed a list of
+ * them "Online now" and was wrong whenever anybody had ever logged off.
+ *
+ * READS THE SAME OBJECT THE LIVE PLAYERS PAGE RENDERS FROM — `state.snapshot`,
+ * the last envelope the game pushed — so the two pages cannot disagree about
+ * who is on. If this list is empty, so is that page, and the cause is the feed,
+ * not the search.
+ *
+ * A player with no license yet (mid-handshake) is skipped: there is nothing to
+ * link a search result to, and inventing a key here is how the wrong profile
+ * gets opened.
+ */
+export function onlinePlayers(): OnlinePlayer[] {
+  const rows: OnlinePlayer[] = []
+  for (const p of state.snapshot?.snapshot.players ?? []) {
+    if (!p.license) continue
+    rows.push({ license: p.license, name: p.name || 'Unknown' })
+  }
+  return rows
+}
+
 export function applyEvents(env: EventsEnvelope, now: number): number {
   let applied = 0
 
