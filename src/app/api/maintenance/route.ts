@@ -6,7 +6,9 @@ import * as audit from '@/lib/audit'
 import * as maint from '@/lib/maintenance'
 import { ensureDriver, tick } from '@/lib/maintenanceDriver'
 import { readPrefs } from '@/lib/prefs'
+import { isParkedOffMain } from '@/lib/ssh'
 import { liveView } from '@/lib/state'
+import { hostView } from '@/lib/telemetry'
 import { formatInstant } from '@/lib/time'
 
 /**
@@ -102,6 +104,33 @@ export async function POST(req: Request): Promise<Response> {
       )
     }
 
+    const existing = await maint.current()
+    const behind = existing?.updateAvailable ?? 0
+
+    /**
+     * IS THE BOX PARKED ON A BRANCH RIGHT NOW?
+     *
+     * Read from the telemetry poller's in-memory snapshot, which is the same
+     * thing the driver reads and costs nothing — no SSH call of our own for a
+     * fact that is already sitting in memory, refreshed every fifteen seconds.
+     *
+     * `isParkedOffMain`, NEVER `!isOnMain`, and lib/ssh states the rule this
+     * follows: `isOnMain` folds "the host has not answered" in with "off main"
+     * because it gates the automation, which must fail towards doing nothing.
+     * This decides what a HUMAN IS ALLOWED TO ASK FOR, so it folds a silent
+     * host in with main and leaves a game box whose dispatcher predates branch
+     * switching behaving in every respect as it did before.
+     *
+     * The cold-start edge fails in the safe direction on purpose: a console
+     * that has not yet heard from the host reads `parked` as false and this
+     * route stays as strict as it was. It cannot strand anyone, because the
+     * button that sends an unpinned refresh is only rendered once the host has
+     * stated a ref — the page and this route read the same snapshot, so the
+     * offer and the acceptance cannot disagree.
+     */
+    const hostStatus = hostView().status
+    const parked = isParkedOffMain(hostStatus)
+
     /**
      * NOTHING TO DEPLOY, NOTHING TO SCHEDULE.
      *
@@ -116,10 +145,23 @@ export async function POST(req: Request): Promise<Response> {
      * (behind is 0, so "there is nothing to deploy" — while the box is visibly
      * running something else), and switching between two branches that are both
      * level with main.
+     *
+     * A PARKED BOX IS THE THIRD EXEMPTION, and leaving it out is half of
+     * WillMontgomery/fivem-br-gamemode#146. `updateAvailable` is pinned at zero
+     * for the whole time the server runs a branch — deliberately, because the
+     * distance from main is not an update anybody is waiting for — so this
+     * guard read "there is nothing to deploy" at an operator who had just
+     * pushed a commit to the branch the live server was running, and refused
+     * the one action that would have shipped it. The distance from main simply
+     * does not describe whether a parked branch has moved, and there is no
+     * cheap number here that does; the honest answer is to let the human who
+     * pushed the commit decide, which is what a manual deploy has always meant.
+     *
+     * The automatic path is NOT relaxed by any of this. It lives in the driver
+     * behind `onMain && behind > 0` and stays exactly where it is: the rule is
+     * that automatic updates require main, not that deploying requires main.
      */
-    const existing = await maint.current()
-    const behind = existing?.updateAvailable ?? 0
-    if (behind <= 0 && !input.targetRef) {
+    if (behind <= 0 && !input.targetRef && !parked) {
       throw new ActionError(
         'The server is already running the latest code — there is nothing to deploy.',
         409,
@@ -148,7 +190,23 @@ export async function POST(req: Request): Promise<Response> {
      * has no `PrefsProvider` above it.
      */
     const prefs = readPrefs(await cookies())
-    const deadline = maint.autoDeadline(existing?.updateFirstSeenAt)
+
+    /**
+     * NULL WHENEVER THE AUTOMATION CANNOT FIRE, not merely when the row has no
+     * timestamp on it.
+     *
+     * The driver schedules its own window only on `onMain && behind > 0`, so
+     * with no update pending there is no automatic window for a chosen deploy
+     * time to collide with — and refusing a time against a deadline that will
+     * never arrive would be refusing for a reason that does not exist. That is
+     * not hypothetical on a parked box: `updateAvailable` is held at zero while
+     * the server runs a branch, but a stale `updateFirstSeenAt` can still be
+     * sitting on the row until the next driver tick clears it, which would make
+     * a timed refresh of the parked branch fail with a sentence about an
+     * automatic update that is not coming.
+     */
+    const deadline =
+      behind > 0 ? maint.autoDeadline(existing?.updateFirstSeenAt) : null
     if (
       input.deployMode === 'at-time' &&
       deadline !== null &&
@@ -188,6 +246,24 @@ export async function POST(req: Request): Promise<Response> {
            */
           targetRef: input.targetRef ?? null,
           targetSha: input.targetSha ?? null,
+          /**
+           * WHICH REF A PLAIN REFRESH WAS AIMED AT, for the windows that carry
+           * no `targetRef` at all.
+           *
+           * Null on main, where it would only ever repeat itself. Off main it
+           * is the whole answer to "what did that restart ship", because a
+           * refresh of a parked branch is now a thing an admin can schedule and
+           * `targetRef` is deliberately null for it — that field means "switch
+           * the box to this", and writing the current ref into it would turn a
+           * refresh into a pinned switch on the driver's side.
+           *
+           * SEPARATELY, IT IS NOT A SHA AND MUST NOT BE READ AS ONE. A refresh
+           * takes the branch's tip whenever the deploy fires, which may be a
+           * commit that did not exist when this row was written. It records the
+           * ref that was intended, not the code that landed.
+           */
+          refreshingRef:
+            !input.targetRef && parked ? (hostStatus?.deployedRef ?? null) : null,
         },
       },
       () =>

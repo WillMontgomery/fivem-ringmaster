@@ -90,6 +90,7 @@ export function MaintenancePanel({
   initialPlayers,
   canRun,
   initialDeployedRef,
+  frozen = false,
 }: {
   initial: MaintenanceWindow | null
   initialPlayers: number
@@ -104,6 +105,22 @@ export function MaintenancePanel({
    * `main` puts this page into its parked shape.
    */
   initialDeployedRef: string | null
+  /**
+   * Hold the props as given and never poll. FOR THE DESIGN HARNESS ONLY.
+   *
+   * This panel is the one preview target that refuses to sit still: it re-reads
+   * `/api/maintenance` and `/api/host` every five seconds and overwrites its
+   * own state from them, so /preview/maintenance would render a fixture and
+   * then replace it with whatever the developer's real console happens to be
+   * doing — which for the states worth reviewing (parked on a branch, a window
+   * mid-drain) is reliably "nothing", i.e. the fixture is gone a heartbeat
+   * after it appears.
+   *
+   * Defaults to false, so every production caller is untouched and no route can
+   * freeze this by omission. The one caller that passes true is the dev-only
+   * harness, which 404s in production.
+   */
+  frozen?: boolean
 }) {
   const router = useRouter()
   const [w, setW] = useState(initial)
@@ -178,6 +195,11 @@ export function MaintenancePanel({
    * that has already been shown.
    */
   useEffect(() => {
+    // The harness renders a fixed state and nothing else may move it. Note the
+    // clock stops too, which is correct here: `until()` and the countdowns are
+    // part of what is being reviewed, and they have to hold still to be read.
+    if (frozen) return
+
     const tick = async () => {
       setNow(Date.now())
       try {
@@ -337,9 +359,18 @@ export function MaintenancePanel({
         deployAt: timed ? new Date(deployAt).getTime() : null,
         ...(target ? { targetRef: target.name, targetSha: target.sha } : {}),
       })
+      /**
+       * THE ORDINARY PATH NAMES THE REF TOO WHEN THERE IS ONE TO NAME. On main
+       * "Maintenance scheduled." is the whole story; parked on a branch it is
+       * the exact ambiguity #146 was about, because the same button means
+       * "refresh dev" there and the operator has no other confirmation of
+       * which ref they just aimed a restart at.
+       */
       const what = target
         ? `Switching to ${target.name} (${target.sha.slice(0, 8)}).`
-        : 'Maintenance scheduled.'
+        : parked
+          ? `Refreshing ${deployedRef}.`
+          : 'Maintenance scheduled.'
       toast.success(
         timed
           ? `${what} Deploy at ${clock(new Date(deployAt).getTime())}.`
@@ -568,6 +599,27 @@ export function MaintenancePanel({
                   )}
                 </p>
               )}
+              {/*
+                AND THE SAME LINE FOR A PLAIN REFRESH OF A PARKED BRANCH, which
+                is the window with no `targetRef` at all. The banner above says
+                which branch the box is parked on; this says what this window is
+                going to do about it, and the two together are the whole answer
+                to "what am I watching". It deliberately does NOT show a sha —
+                there is none, and inventing one would misdescribe the action.
+                A refresh takes the tip at deploy time; only a switch is pinned.
+              */}
+              {!w.targetRef && parked && (
+                <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
+                  <GitBranch className="size-3 text-warn" />
+                  <span className="text-muted-foreground">Will refresh</span>
+                  <code className="rounded bg-warn/15 px-1.5 py-0.5 font-mono text-warn">
+                    {deployedRef}
+                  </code>
+                  <span className="text-muted-foreground">
+                    at its tip when the deploy runs
+                  </span>
+                </p>
+              )}
             </div>
 
             {canRun && w.state !== 'deploying' && (
@@ -724,48 +776,143 @@ export function MaintenancePanel({
   // ------------------------------------------------------------ schedule ----
 
   const behind = w?.updateAvailable ?? 0
-  const deadline = w?.updateFirstSeenAt
-    ? w.updateFirstSeenAt + AUTO_AFTER_MS
-    : null
+
+  /**
+   * The automatic deadline, and null whenever the automation cannot fire.
+   *
+   * `behind` is pinned at zero by the driver while the box is parked, and the
+   * driver's own gate is `onMain && behind > 0` — so off main there is no
+   * automatic window coming, whatever timestamp happens to be left on the row.
+   * Deriving the deadline from `updateFirstSeenAt` alone would put "this runs
+   * automatically on Tuesday" and a hard cap on the deploy-time picker in front
+   * of an operator on a parked box, for a window that will never run.
+   */
+  const deadline =
+    !parked && behind > 0 && w?.updateFirstSeenAt
+      ? w.updateFirstSeenAt + AUTO_AFTER_MS
+      : null
+
+  /**
+   * IS THERE A DEPLOY A HUMAN COULD ASK FOR? Not "is the box behind main".
+   *
+   * THIS IS THE FIX FOR WillMontgomery/fivem-br-gamemode#146 and it is worth
+   * stating what was wrong, because the shape of the old code looked
+   * deliberate. The card below was reached through `parked ? null : behind > 0`
+   * — two separate gates, both measured against main, and each one alone was
+   * enough to remove the ONLY ordinary schedule button in the console. Parked
+   * on `dev`, the first gate deleted the card outright; even without it the
+   * second would have, because `behind` is the distance from MAIN and the
+   * driver holds it at zero the whole time the server runs a branch. The
+   * operator was left with the branch picker as the sole way to schedule
+   * anything, which means re-choosing a branch to do a plain refresh of the
+   * branch already on the box.
+   *
+   * The suppression was not arbitrary — the old comment here was right that
+   * rendering "the server is running the latest code" under a banner saying the
+   * server is on an unreviewed branch says something false. The mistake was
+   * treating a card with a button in it and a card saying there is nothing to
+   * do as one thing that could be dropped together. What a parked box needs is
+   * neither: it is a third state, with its own words and the same button.
+   *
+   * THE RULE, AND IT IS NOT SYMMETRIC. Automatic updates require main; a
+   * human-initiated deploy does not. The 72-hour automation exists to stop the
+   * server drifting from reviewed code while nobody is looking, and it must
+   * never fire at a box somebody is testing on — that gate is `onMain` in the
+   * driver and this change does not go near it. A person pressing a button is
+   * not the thing that rule was written about. They can see the banner, they
+   * chose the branch, and refusing them the action does not keep the server on
+   * main; it only makes them use the branch picker to get there.
+   *
+   * NOTHING HERE PINS A SHA. A refresh is `scheduleWith(null)` — no
+   * `targetRef`, no `targetSha` — which leaves `tools/deploy.sh` to resolve the
+   * ref itself (pin file, then `symbolic-ref HEAD`) and take that branch's
+   * current tip. That is the deliberate box-side behaviour a bare `deploy` has
+   * always had. Attaching the sha the branch had when it was switched to would
+   * quietly turn "ship what I just pushed" into "redeploy the commit from
+   * Tuesday", which is the opposite of the request, and the box would refuse it
+   * the moment the branch moved. Pinning belongs to the branch picker, where a
+   * human has read the commit they are choosing.
+   */
+  const canSchedule = parked || behind > 0
 
   return (
     <div className="space-y-4">
       {parkedCard}
 
-      {/*
-        SUPPRESSED WHILE PARKED. `behind` is forced to zero by the driver off
-        main (it measures distance from main, which is not what a parked box is
-        tracking), so this branch would render "the server is running the latest
-        code" underneath a banner saying it is running an unreviewed branch —
-        two true-ish sentences that together say something false.
-      */}
-      {parked ? null : behind > 0 ? (
+      {canSchedule ? (
         <Card className="surface-edge gap-0 px-5 py-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-medium">Update available</h2>
-                <Badge className="gap-1 border-0 bg-info/10 text-xs uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
-                  <ArrowUpCircle className="size-3" />
-                  {behind} commit{behind === 1 ? '' : 's'} behind
-                </Badge>
-              </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Schedule it and the server drains, then deploys once everyone
-                has left. Nobody loses a match.
-              </p>
-              {deadline && (
-                <p className="mt-1 text-xs text-muted-foreground/70">
-                  If nobody schedules it, this runs automatically on{' '}
-                  <span className="text-foreground">{clock(deadline)}</span>.
-                </p>
+              {parked ? (
+                <>
+                  {/*
+                    IT NAMES THE REF IN THE HEADING, not just in the banner
+                    above. This is the control that restarts a live game server,
+                    and the entire content of #146 is an operator not being able
+                    to tell what an unlabelled "schedule an update" would do to a
+                    box that is not on main. There is no reading of this card
+                    that leaves which branch in doubt.
+                  */}
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-medium">Refresh this branch</h2>
+                    <Badge className="gap-1 border-0 bg-warn/10 text-xs uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
+                      <GitBranch className="size-3" />
+                      {deployedRef}
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Pulls the newest commit on{' '}
+                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                      {deployedRef}
+                    </code>{' '}
+                    and restarts. The same drain as any other window — the
+                    server empties first and nobody loses a match.
+                  </p>
+                  {/*
+                    THE DISTINCTION FROM THE PICKER, SAID PLAINLY, because the
+                    two controls now sit on the same page and do different
+                    things with the same words. This one follows the branch;
+                    that one freezes a commit.
+                  */}
+                  <p className="mt-1 text-xs text-muted-foreground/70">
+                    It stays on{' '}
+                    <code className="font-mono">{deployedRef}</code> — this does
+                    not put main back, and it takes whatever the branch points
+                    at when the deploy runs rather than a fixed commit. To
+                    choose an exact commit, use{' '}
+                    <span className="text-foreground">
+                      Deploy a different branch
+                    </span>{' '}
+                    below.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-medium">Update available</h2>
+                    <Badge className="gap-1 border-0 bg-info/10 text-xs uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
+                      <ArrowUpCircle className="size-3" />
+                      {behind} commit{behind === 1 ? '' : 's'} behind
+                    </Badge>
+                  </div>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Schedule it and the server drains, then deploys once
+                    everyone has left. Nobody loses a match.
+                  </p>
+                  {deadline && (
+                    <p className="mt-1 text-xs text-muted-foreground/70">
+                      If nobody schedules it, this runs automatically on{' '}
+                      <span className="text-foreground">{clock(deadline)}</span>.
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
             {canRun && (
               <Button disabled={busy} onClick={schedule}>
                 {busy ? <Loader2 className="animate-spin" /> : <CalendarClock />}
-                Schedule update
+                {parked ? 'Schedule refresh' : 'Schedule update'}
               </Button>
             )}
           </div>
@@ -1084,14 +1231,19 @@ function BranchPicker({
                 const isCurrent = b.name === deployedRef
                 /**
                  * THE BRANCH THAT IS RUNNING IS STILL SELECTABLE ONCE IT MOVES,
-                 * and that closes a real gap rather than being a nicety.
+                 * and it is now a genuine choice rather than the only way out.
                  *
-                 * Off main there is no "Schedule update" button — that button
-                 * is driven by the distance from main, which is suppressed
-                 * while parked — so if the current branch were disabled outright
-                 * there would be NO way to pick up new commits pushed to the
-                 * branch being tested. The whole point of parking on a branch is
-                 * iterating on it.
+                 * This used to be the sole route to new commits on the branch
+                 * being tested, because off main the ordinary schedule button
+                 * did not render at all — the bug in
+                 * WillMontgomery/fivem-br-gamemode#146. That button is back, so
+                 * picking the running branch here is no longer a workaround. It
+                 * remains offered because the two paths differ in the one way
+                 * that matters: THIS ONE PINS THE SHA ON THE ROW YOU JUST READ,
+                 * and the box refuses if the branch has moved by deploy time.
+                 * "Schedule refresh" follows the branch and takes whatever its
+                 * tip is when the deploy fires. Pin when it matters which
+                 * commit; refresh when it matters that it is the newest.
                  *
                  * Only a branch that is both running and identical to what is
                  * deployed is disabled, because that deploy would restart every
@@ -1269,9 +1421,18 @@ function MaintenanceExplainer() {
           for testing on the real server. The game host refuses any branch that
           changes its own control scripts, so a branch can change the game but
           never the console&rsquo;s channel to the box — which is what makes
-          &ldquo;revert to main&rdquo; something you can always rely on.
-          Automatic updates pause the whole time the server is off main, and
-          nothing brings it back on its own.
+          &ldquo;revert to main&rdquo; something you can always rely on. Nothing
+          brings the server back to main on its own.
+        </p>
+        <p>
+          <span className="font-medium text-foreground">
+            While the server is on a branch, only the AUTOMATIC update pauses.
+          </span>{' '}
+          You can still schedule one yourself, and it refreshes the branch the
+          server is on rather than putting main back — the same drain, the same
+          waiting for the server to empty. The 72-hour automation is what stays
+          off, because nothing should deploy main over a branch somebody is
+          testing on while they are not looking.
         </p>
       </div>
     </Card>

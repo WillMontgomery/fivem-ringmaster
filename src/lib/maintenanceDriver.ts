@@ -250,6 +250,23 @@ export async function tick(): Promise<void> {
         // The name alone is ambiguous once a branch has moved on.
         targetRef: w.targetRef ?? null,
         targetSha: w.targetSha ?? null,
+        /**
+         * AND FOR A WINDOW THAT SWITCHES NOTHING, the ref the box is actually
+         * on at the moment the deploy fires — which is precisely what
+         * `deploy.sh` is about to refresh, since it resolves the branch from
+         * the pin file and `symbolic-ref HEAD` rather than assuming main.
+         *
+         * Without this, a scheduled refresh of a parked branch audits as a
+         * deploy with no target at all, and the log cannot answer which branch
+         * restarted. Null when the window carries a `targetRef`, because the
+         * two lines above already say it, and null on main because there it
+         * would only repeat the default.
+         */
+        refreshingRef: w.targetRef
+          ? null
+          : isParkedOffMain(status)
+            ? (status?.deployedRef ?? null)
+            : null,
       },
     })
 
