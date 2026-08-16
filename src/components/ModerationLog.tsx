@@ -206,18 +206,28 @@ export function ModerationLog({
                       <div className="text-xs tabular-nums text-muted-foreground">
                         {when(k.ts)}
                       </div>
-                      {/* `pending` is shown rather than hidden: it means we
-                          asked the game server and never heard back, which is
-                          a different fact from "it failed" and the only clue
-                          that a command went missing. */}
-                      {k.outcome !== 'ok' && (
-                        <div
-                          className={cn(
-                            'text-xs uppercase tracking-wider',
-                            k.outcome === 'failed' ? 'text-danger' : 'text-warn',
-                          )}
-                        >
-                          {k.outcome === 'failed' ? 'failed' : 'unacknowledged'}
+                      {/*
+                        FAILED, OR NOTHING (#19).
+
+                        The record still has three states and they still mean
+                        different things — `pending` is a kick we dispatched and
+                        never heard back about, which is genuinely not the same
+                        as one that failed. But "unacknowledged" made every
+                        reader stop and work out what it meant, and the answer
+                        was almost always "it worked, the outcome event has not
+                        landed yet". Three labels for a question with two useful
+                        answers is noise on the one row that has to be read
+                        quickly.
+
+                        So the DISPLAY collapses and the DATA does not: the
+                        distinction is still in DynamoDB for anybody
+                        reconstructing an incident, and the audit page and the
+                        API still carry it. Only failure gets a word here,
+                        because only failure changes what you do next.
+                      */}
+                      {k.outcome === 'failed' && (
+                        <div className="text-xs uppercase tracking-wider text-danger">
+                          failed
                         </div>
                       )}
                     </div>

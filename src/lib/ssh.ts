@@ -158,7 +158,10 @@ export function runVerb<T>(verb: Verb, ...verbArgs: string[]): Promise<T> {
  * ACCEPTED IS NOT DONE. A resolved promise means the keystrokes reached the
  * console, nothing more. Whether a player was actually removed arrives
  * separately as an outcome event carrying `commandId` — which is why the audit
- * row starts as `pending` and why "unacknowledged" is a state the log shows.
+ * row starts as `pending` and stays that way if nothing ever comes back. That
+ * distinction is still recorded; it is no longer LABELLED (#19), because
+ * "unacknowledged" on a row that had almost certainly succeeded cost every
+ * reader a pause. Only `failed` is shown now.
  *
  * A LICENSE, NEVER A SERVER ID. Ids recycle within the minute; one read off a
  * console rendered thirty seconds ago would remove whoever inherited the slot.
@@ -218,7 +221,12 @@ export interface HostStatus {
  * re-enables automatic deploys on every box whose dispatcher is too old to
  * answer. One function, one direction, no way to get the polarity wrong.
  */
-export function isOnMain(status: HostStatus | null | undefined): boolean {
+export function isOnMain(
+  // Takes only the field it reads, so a caller holding a bare ref — the design
+  // harness, or a component handed one as a prop — asks the same function the
+  // real callers do rather than writing the comparison out again.
+  status: Pick<HostStatus, 'deployedRef'> | null | undefined,
+): boolean {
   return status?.deployedRef === 'main'
 }
 
@@ -238,7 +246,9 @@ export function isOnMain(status: HostStatus | null | undefined): boolean {
  * The one thing neither spelling may do is drive both decisions. Use `isOnMain`
  * for anything that acts on the server; use this for anything a human reads.
  */
-export function isParkedOffMain(status: HostStatus | null | undefined): boolean {
+export function isParkedOffMain(
+  status: Pick<HostStatus, 'deployedRef'> | null | undefined,
+): boolean {
   return typeof status?.deployedRef === 'string' && status.deployedRef !== 'main'
 }
 

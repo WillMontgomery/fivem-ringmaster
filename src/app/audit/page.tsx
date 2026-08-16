@@ -1,15 +1,12 @@
-import { CircleCheck, CircleSlash, OctagonX } from 'lucide-react'
-import Link from 'next/link'
+import { CircleSlash } from 'lucide-react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
-import { Card } from '@/components/ui/card'
+import { AuditList } from '@/components/AuditList'
 import * as audit from '@/lib/audit'
 import { readPrefs } from '@/lib/prefs'
 import { currentAdmin } from '@/lib/session'
-import { formatInstant, utcIso } from '@/lib/time'
-import { cn } from '@/lib/utils'
 
 /**
  * The audit log.
@@ -19,92 +16,10 @@ import { cn } from '@/lib/utils'
  * something and never learned whether it happened — a different fact from
  * "it failed", and the one most worth seeing. A log that displayed only
  * resolved rows would hide exactly the actions that went wrong in the most
- * interesting way.
- *
- * ITS TIMESTAMPS WERE WRONG, and this is where the preferences feature came
- * from. This is a SERVER component, so the `toLocaleString(undefined, …)` that
- * used to render the right-hand column resolved `undefined` to the Node
- * process's timezone — the container's, not the reader's. RSC output is
- * serialised once and never re-executed in the browser, so unlike every client
- * component in this app there was nothing to correct it after mount. On a UTC
- * container read from New York, instant 1755310440000 printed as `Aug 16,
- * 02:14` for an action taken at `Aug 15, 22:14` local: a different calendar
- * day, on the forensic record, with no zone suffix to hint that it was not
- * local. Every time here now goes through `formatInstant` with the zone the
- * reader stated, labelled with that zone, and carries the UTC instant on
- * `title` for anyone reconciling against a game-server log.
+ * interesting way. The row is still here; it simply no longer wears a label
+ * (#19) — see AuditList, which holds the rendering and its reasoning.
  */
 export const dynamic = 'force-dynamic'
-
-/**
- * TWO STATES, NOT THREE.
- *
- * A row starts as `pending` and is stamped when the outcome lands, so the third
- * label only ever showed during the moment in between — and made every reader
- * stop to work out what "unacknowledged" meant. It reads as ok; a real failure
- * still says so loudly, which is the distinction that matters.
- */
-const OUTCOME = {
-  ok: { icon: CircleCheck, cls: 'text-live', label: 'ok' },
-  failed: { icon: OctagonX, cls: 'text-danger', label: 'failed' },
-  pending: { icon: CircleCheck, cls: 'text-live', label: 'ok' },
-} as const
-
-const ACTION_LABEL: Record<string, string> = {
-  'ban.issue': 'issued a ban',
-  'ban.lift': 'lifted a ban',
-  'player.kick': 'kicked a player',
-  'maintenance.schedule': 'scheduled a server update',
-  'maintenance.cancel': 'cancelled the server update',
-  'maintenance.drain': 'started draining the server',
-  'maintenance.deploy': 'deployed the server update',
-}
-
-/** A name that links to its profile, when we have a license to link to. */
-function PersonLink({
-  name,
-  license,
-  className,
-}: {
-  name: string | null
-  license: string | null
-  className?: string
-}) {
-  const label = name ?? 'Unknown'
-  if (!license) return <span className={className}>{label}</span>
-  return (
-    <Link
-      href={`/players/${encodeURIComponent(license)}`}
-      className={cn(
-        'underline-offset-4 transition-colors hover:text-primary hover:underline',
-        className,
-      )}
-    >
-      {label}
-    </Link>
-  )
-}
-
-/**
- * Actions whose stored reason just repeats the label.
- *
- * A maintenance row's reason is the generated note — "a server update" —
- * sitting directly under a line that already says the admin scheduled a server
- * update. Saying it twice makes the log harder to skim, not more informative.
- */
-/**
- * Actions whose stored reason just repeats the label.
- *
- * A maintenance row's reason is the generated note — "a server update" —
- * sitting directly under a line that already says the admin scheduled a server
- * update. Saying it twice makes the log harder to skim, not more informative.
- */
-const REDUNDANT_REASON = new Set([
-  'maintenance.schedule',
-  'maintenance.cancel',
-  'maintenance.drain',
-  'maintenance.deploy',
-])
 
 export default async function AuditPage() {
   const admin = await currentAdmin()
@@ -122,75 +37,12 @@ export default async function AuditPage() {
         <div className="mb-5">
           <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
           <p className="text-sm text-muted-foreground">
-            Every action any admin took, including the ones that failed and the
-            ones we never heard back about.
+            Every action any admin took. Anything marked{' '}
+            <span className="text-danger">failed</span> did not happen.
           </p>
         </div>
 
-        <Card className="surface-edge gap-0 overflow-hidden py-0">
-          {rows.length === 0 ? (
-            <p className="px-4 py-14 text-center text-sm text-muted-foreground">
-              Nothing has been done yet.
-            </p>
-          ) : (
-            <ul className="divide-y divide-border/60">
-              {rows.map((r) => {
-                const o = OUTCOME[r.outcome] ?? OUTCOME.pending
-                const Icon = o.icon
-                return (
-                  <li
-                    key={`${r.ts}-${r.commandId}`}
-                    className="flex items-start gap-3 px-4 py-3"
-                  >
-                    <Icon className={cn('mt-0.5 size-4 shrink-0', o.cls)} />
-                    <div className="min-w-0 flex-1">
-                      {/* Both names link to their profile. Admins are players
-                          too, and "who is this that keeps doing X" is answered
-                          fastest by clicking them rather than searching. */}
-                      <div className="text-sm">
-                        <PersonLink
-                          name={r.actorName}
-                          license={r.actorLicense}
-                          className="font-medium"
-                        />{' '}
-                        {ACTION_LABEL[r.action] ?? r.action}
-                        {r.targetName || r.targetLicense ? (
-                          <>
-                            {' — '}
-                            <PersonLink
-                              name={r.targetName ?? r.targetLicense ?? null}
-                              license={r.targetLicense ?? null}
-                              className="text-muted-foreground"
-                            />
-                          </>
-                        ) : null}
-                      </div>
-                      {r.reason && !REDUNDANT_REASON.has(r.action) && (
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          “{r.reason}”
-                        </p>
-                      )}
-                      {r.error && (
-                        <p className="mt-0.5 text-xs text-danger">{r.error}</p>
-                      )}
-                    </div>
-                    <div className="shrink-0 text-right">
-                      <div
-                        className="text-xs tabular-nums text-muted-foreground"
-                        title={utcIso(r.ts)}
-                      >
-                        {formatInstant(r.ts, prefs, { withYear: false })}
-                      </div>
-                      <div className={cn('text-xs uppercase tracking-wider', o.cls)}>
-                        {o.label}
-                      </div>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </Card>
+        <AuditList rows={rows} prefs={prefs} />
 
         <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground/60">
           <CircleSlash className="size-3" />
