@@ -1,7 +1,6 @@
 import Link from 'next/link'
 import { cookies } from 'next/headers'
 import {
-  Activity,
   LogOut,
   CalendarClock,
   CircleDot,
@@ -51,6 +50,7 @@ import { activityDeadline, hasSessionCookie } from '@/lib/activity'
 import * as maint from '@/lib/maintenance'
 import { readPrefs } from '@/lib/prefs'
 import { currentAdmin } from '@/lib/session'
+import { isParkedOffMain } from '@/lib/ssh'
 import { ensurePolling, hostView } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 
@@ -88,6 +88,22 @@ export interface NavBadges {
   maintenance?: 'scheduled' | 'draining' | null
 }
 
+/** What the nav is allowed to know about the world when deciding what to show. */
+interface NavContext {
+  /**
+   * The game host has said, in so many words, that it is running something
+   * other than `main`.
+   *
+   * DERIVED, NEVER STORED. This is `isParkedOffMain(hostView().status)` — the
+   * same reading the off-main banner below is drawn from, recomputed from the
+   * host on every render off the poller that is already running. The branch
+   * switch work deliberately never persists a flag for this, because any
+   * schedule or cancel cycle wipes it; see `docs/branch-switch.md` in the game
+   * repo. There must not be a second source of truth for it here.
+   */
+  offMain: boolean
+}
+
 interface NavItem {
   href: string
   label: string
@@ -95,6 +111,8 @@ interface NavItem {
   /** Absent when the page is real. Present = what it is waiting on. */
   soon?: string
   badge?: (b: NavBadges) => React.ReactNode
+  /** Absent = always shown. Present and false = not in the nav at all. */
+  when?: (ctx: NavContext) => boolean
 }
 
 /**
@@ -165,8 +183,33 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
         badge: (b) =>
           b.maintenance ? <MaintenanceBadge state={b.maintenance} /> : null,
       },
-      { href: '/config', label: 'Live config', icon: Settings2, soon: 'M6' },
-      { href: '/process', label: 'Process', icon: Activity, soon: 'M6' },
+      /**
+       * LIVE CONFIG APPEARS ONLY ON A BOX PARKED OFF MAIN (#20).
+       *
+       * It is a development surface: changing tuning values under a live match
+       * is a thing to do while testing a branch, not on the server everyone is
+       * playing on. Hiding it on main means the dangerous button is not sitting
+       * in the nav on the ordinary day.
+       *
+       * `isParkedOffMain`, NOT `!isOnMain`, and the difference matters. A host
+       * whose dispatcher is too old to report its ref answers neither, and
+       * `isOnMain` folds that silence in with "off main" — correct for turning
+       * the AUTOMATION off, wrong here, where it would show a dev-only page on
+       * every box we simply have not reached. See the note on both functions in
+       * `lib/ssh.ts`: gate the automation pessimistically, gate what a human
+       * sees on a fact.
+       *
+       * `/process` USED TO SIT BELOW THIS AND IS GONE (#20). Superseded — the
+       * maintenance page already does the deploy-and-restart it was drawn for,
+       * gently, with a drain and an audit trail.
+       */
+      {
+        href: '/config',
+        label: 'Live config',
+        icon: Settings2,
+        soon: 'M6',
+        when: (c) => c.offMain,
+      },
     ],
   },
   {
@@ -181,6 +224,7 @@ export async function AppShell({
   user,
   badges,
   feed,
+  hostRef,
 }: {
   children: React.ReactNode
   active?: string
@@ -211,6 +255,21 @@ export async function AppShell({
     /** Poll for fresh state. The real app sets it; the harness does not. */
     live?: boolean
   }
+  /**
+   * FOR THE DESIGN HARNESS ONLY: pretend the host reported this ref.
+   *
+   * NOT A SECOND SOURCE OF TRUTH. Nothing in the app passes it — every real
+   * page leaves it undefined and the shell reads the telemetry poller, which
+   * stays the only place this is derived. It exists because the two states it
+   * decides (the off-main banner, and whether Live config is in the nav at all)
+   * otherwise require a game box physically parked on a branch to look at, and
+   * `/preview/maintenance` was built for exactly that reason after a shape with
+   * no schedule button shipped green.
+   *
+   * `undefined` means "ask the host"; `null` means "the host has not said",
+   * which is a third state and behaves like main.
+   */
+  hostRef?: string | null
 }) {
   const resolvedUser =
     user === undefined
@@ -273,6 +332,16 @@ export async function AppShell({
   const host = hostView().status
 
   /**
+   * The one derivation, read once and used twice: it decides both the banner
+   * below and whether Live config is in the nav at all. Recomputed from the
+   * host every render rather than stored anywhere — see `NavContext.offMain`.
+   */
+  const deployedRef = hostRef !== undefined ? hostRef : (host?.deployedRef ?? null)
+  const navContext: NavContext = {
+    offMain: isParkedOffMain({ deployedRef: deployedRef ?? undefined }),
+  }
+
+  /**
    * THE IDLE GUARD AND THE FIRST-RUN PROMPT ONLY MOUNT FOR A REAL SESSION, and
    * "real" has to mean the session cookie rather than the `user` prop.
    *
@@ -327,12 +396,20 @@ export async function AppShell({
         <SidebarSeparator />
 
         <SidebarContent>
-          {NAV.map((section) => (
+          {NAV.map((section) => {
+            const items = section.items.filter(
+              (item) => item.when?.(navContext) ?? true,
+            )
+            // A group whose every item is conditional would otherwise render as
+            // a heading over nothing.
+            if (items.length === 0) return null
+
+            return (
             <SidebarGroup key={section.group}>
               <SidebarGroupLabel>{section.group}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {section.items.map((item) => {
+                  {items.map((item) => {
                     const Icon = item.icon
                     const badge = item.badge?.(b)
                     return (
@@ -362,7 +439,8 @@ export async function AppShell({
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
-          ))}
+            )
+          })}
         </SidebarContent>
 
         <SidebarFooter>
@@ -547,7 +625,7 @@ export async function AppShell({
           the wrong person for what is currently on the box.
         */}
         <OffMainBanner
-          deployedRef={host?.deployedRef}
+          deployedRef={deployedRef}
           by={host?.pinnedRef === host?.deployedRef ? host?.pinnedBy : null}
           at={host?.pinnedRef === host?.deployedRef ? host?.pinnedAt : null}
         />
