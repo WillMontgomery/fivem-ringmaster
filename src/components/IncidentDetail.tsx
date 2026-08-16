@@ -227,7 +227,12 @@ export function IncidentDetail({
           <p className="mt-1 text-sm text-muted-foreground">{incident.resolution}</p>
           <p className="mt-1 text-xs text-muted-foreground/70">
             {incident.resolvedByName}
-            {incident.resolvedAt ? ` · $<LocalTime ms={incident.resolvedAt} />` : ''}
+            {incident.resolvedAt ? (
+              <>
+                {' · '}
+                <LocalTime ms={incident.resolvedAt} />
+              </>
+            ) : null}
           </p>
         </Card>
       )}
