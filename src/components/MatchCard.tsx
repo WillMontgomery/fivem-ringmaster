@@ -11,6 +11,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import type { MatchRow, PlayerRow as Player } from '@/lib/ingest'
+import { isInMatch } from '@/lib/playerState'
 import { cn } from '@/lib/utils'
 
 /**
@@ -172,7 +173,19 @@ export function MatchCard({
         </TableHeader>
 
         {groups.map(([squadId, members]) => {
-          const alive = members.filter((m) => m.state === 'ALIVE').length
+          /**
+           * THE SAME RULE THE MATCH HEADER ABOVE IS COUNTED WITH.
+           *
+           * This was `m.state === 'ALIVE'`, against a wire that says `alive` —
+           * so on a live server every squad counted zero and every squad
+           * header read "wiped", including the one that went on to win. The
+           * case was half of it; the other half was the rule. `match.alive` in
+           * the envelope comes from `BR.Server.aliveCount`, which counts
+           * `isInMatch` — downed, warmup and the descent states included — so
+           * comparing against `alive` alone would still have printed "1 of 4"
+           * under a header saying 3.
+           */
+          const alive = members.filter((m) => isInMatch(m.state)).length
           const colour = squadColour(squadId)
           const wiped = alive === 0
 

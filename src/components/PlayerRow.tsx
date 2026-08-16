@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/tooltip'
 import { connectedFor, humanDuration } from '@/lib/duration'
 import type { PlayerRow as Player } from '@/lib/ingest'
+import { stateKey } from '@/lib/playerState'
 import { cn } from '@/lib/utils'
 
 /**
@@ -22,20 +23,29 @@ import { cn } from '@/lib/utils'
  * only then the identifiers you need to act on them.
  */
 
+/**
+ * KEYED LOWERCASE, because that is what the game sends — `BR.PlayerState` is a
+ * table of lowercase strings and the snapshot carries them verbatim. The
+ * uppercase keys this used to have never matched a real row, so every player on
+ * a live server fell to the grey fallback below: the chip printed their state
+ * (which looked right, because the CSS uppercases it) with none of the colour
+ * that makes a table of forty rows scannable. Alive and dead looked identical.
+ */
 const STATE: Record<string, { label: string; className: string }> = {
-  ALIVE: { label: 'Alive', className: 'text-live ring-live/25 bg-live/10' },
-  DBNO: { label: 'Downed', className: 'text-warn ring-warn/25 bg-warn/10' },
-  DEAD: { label: 'Dead', className: 'text-danger ring-danger/25 bg-danger/10' },
-  SPECTATING: { label: 'Spectating', className: 'text-info ring-info/25 bg-info/10' },
-  LOBBY: { label: 'Lobby', className: 'text-muted-foreground ring-border bg-muted/40' },
-  WARMUP: { label: 'Warmup', className: 'text-phase-warmup ring-phase-warmup/25 bg-phase-warmup/10' },
-  BUS: { label: 'Bus', className: 'text-phase-bus ring-phase-bus/25 bg-phase-bus/10' },
-  FREEFALL: { label: 'Freefall', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
-  GLIDE: { label: 'Glide', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
+  alive: { label: 'Alive', className: 'text-live ring-live/25 bg-live/10' },
+  dbno: { label: 'Downed', className: 'text-warn ring-warn/25 bg-warn/10' },
+  dead: { label: 'Dead', className: 'text-danger ring-danger/25 bg-danger/10' },
+  spectating: { label: 'Spectating', className: 'text-info ring-info/25 bg-info/10' },
+  left: { label: 'Left', className: 'text-muted-foreground ring-border bg-muted/40' },
+  lobby: { label: 'Lobby', className: 'text-muted-foreground ring-border bg-muted/40' },
+  warmup: { label: 'Warmup', className: 'text-phase-warmup ring-phase-warmup/25 bg-phase-warmup/10' },
+  bus: { label: 'Bus', className: 'text-phase-bus ring-phase-bus/25 bg-phase-bus/10' },
+  freefall: { label: 'Freefall', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
+  glide: { label: 'Glide', className: 'text-phase-drop ring-phase-drop/25 bg-phase-drop/10' },
 }
 
 function StateChip({ state }: { state: string }) {
-  const s = STATE[state] ?? {
+  const s = STATE[stateKey(state)] ?? {
     label: state,
     className: 'text-muted-foreground ring-border bg-muted/40',
   }
@@ -147,7 +157,8 @@ export function PlayerRowView({
   server?: { wallMs: number; gameMs: number }
   now?: number
 }) {
-  const dim = p.state === 'DEAD' || p.state === 'LOBBY'
+  const state = stateKey(p.state)
+  const dim = state === 'dead' || state === 'lobby'
 
   const connected =
     server && now !== undefined
@@ -205,7 +216,7 @@ export function PlayerRowView({
       </TableCell>
 
       <TableCell>
-        {p.state === 'LOBBY' ? (
+        {state === 'lobby' ? (
           <span className="text-xs text-muted-foreground/50">—</span>
         ) : (
           <Vitals hp={p.hp} armour={p.armour} />

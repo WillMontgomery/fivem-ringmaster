@@ -1,9 +1,9 @@
 'use client'
 
 import { ArrowDown, ArrowUp, ChevronsUpDown, Search, X } from 'lucide-react'
-import Link from 'next/link'
 import { useMemo, useState } from 'react'
 
+import { openPlayerSearch } from '@/components/PlayerSearch'
 import { PlayerRowView } from '@/components/PlayerRow'
 import { Input } from '@/components/ui/input'
 import {
@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import type { PlayerRow as Player } from '@/lib/ingest'
+import { bucketOf, stateKey, type StateBucket } from '@/lib/playerState'
 import { cn } from '@/lib/utils'
 
 /**
@@ -55,13 +56,69 @@ const COLUMNS: Column[] = [
   { key: 'damage', label: 'Damage', align: 'right', descFirst: true },
 ]
 
-/** State filter chips. `null` = everyone. */
-const FILTERS: Array<{ key: string; label: string; match: (p: Player) => boolean }> = [
-  { key: 'all', label: 'All', match: () => true },
-  { key: 'alive', label: 'Alive', match: (p) => p.state === 'ALIVE' },
-  { key: 'downed', label: 'Downed', match: (p) => p.state === 'DBNO' },
-  { key: 'dead', label: 'Dead', match: (p) => p.state === 'DEAD' },
-  { key: 'lobby', label: 'Lobby', match: (p) => p.state === 'LOBBY' },
+/**
+ * State filter chips.
+ *
+ * NONE OF THESE EVER MATCHED A ROW (#17). They compared against `'ALIVE'`,
+ * `'DBNO'`, `'DEAD'` and `'LOBBY'`; `BR.PlayerState` is lowercase and the
+ * snapshot carries it verbatim, so every chip except All filtered to nothing —
+ * and because the empty result fell through to "No players match", selecting
+ * one looked like a table that had simply not changed.
+ *
+ * Two things had to be true for a fix to hold. The comparison has to be against
+ * the value the game actually sends (see `lib/playerState.ts`, which folds
+ * case so the uppercase FIXTURE keeps working too), and every state has to land
+ * under exactly one chip — the old set offered four buckets for ten states, so
+ * a player in the bus, in freefall, under a chute, in warmup, spectating or
+ * mid-disconnect matched nothing at all. `bucketOf` is where that mapping
+ * lives, with the reasoning.
+ *
+ * ALL MEANS ALL: every row in the snapshot, no exceptions, so its count always
+ * equals the population of the table it sits above.
+ */
+const FILTERS: Array<{
+  key: 'all' | StateBucket
+  label: string
+  /** Shown on hover, because "In the air" needs to say which states it holds. */
+  title: string
+  match: (p: Player) => boolean
+}> = [
+  {
+    key: 'all',
+    label: 'All',
+    title: 'Everyone connected, whatever they are doing',
+    match: () => true,
+  },
+  {
+    key: 'alive',
+    label: 'Alive',
+    title: 'On their feet in a match — alive, or waiting in warmup',
+    match: (p) => bucketOf(p.state) === 'alive',
+  },
+  {
+    key: 'air',
+    label: 'In the air',
+    title: 'Still dropping — on the bus, in freefall, or under a chute',
+    match: (p) => bucketOf(p.state) === 'air',
+  },
+  {
+    key: 'downed',
+    label: 'Downed',
+    title: 'Downed but not out — the game calls this state dbno',
+    match: (p) => bucketOf(p.state) === 'downed',
+  },
+  {
+    key: 'dead',
+    label: 'Dead',
+    title: 'Out of the match — dead, spectating, or disconnected mid-match',
+    match: (p) => bucketOf(p.state) === 'dead',
+  },
+  {
+    key: 'lobby',
+    label: 'Lobby',
+    title: 'Connected but not in a match',
+    match: (p) => bucketOf(p.state) === 'lobby',
+  },
 ]
 
 function SortIcon({ dir }: { dir: 'asc' | 'desc' | null }) {
@@ -87,7 +144,7 @@ export function PlayerTable({
   caption?: React.ReactNode
 }) {
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]['key']>('all')
   const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({
     key: 'name',
     dir: 'asc',
@@ -113,7 +170,9 @@ export function PlayerTable({
         case 'name':
           return a.name.localeCompare(b.name) * dir
         case 'state':
-          return a.state.localeCompare(b.state) * dir
+          // Folded, so a snapshot that mixed spellings could not split one
+          // state into two runs in the sorted column.
+          return stateKey(a.state).localeCompare(stateKey(b.state)) * dir
         case 'hp':
           return (a.hp - b.hp) * dir
         case 'kills':
@@ -171,6 +230,7 @@ export function PlayerTable({
               <button
                 key={f.key}
                 type="button"
+                title={f.title}
                 onClick={() => setFilter(f.key)}
                 className={cn(
                   'rounded-md px-2 py-1 text-xs transition-colors',
@@ -248,12 +308,25 @@ export function PlayerTable({
               Nothing here called{' '}
               <span className="font-mono text-muted-foreground">{query}</span>.
               Searching a license from another session?{' '}
-              <Link
-                href={`/players?q=${encodeURIComponent(query)}`}
+              {/*
+                OPENS THE SEARCH. It was a link to `/players?q=…` — a route that
+                has never existed (there is only `/players/[license]`), so the
+                one control offering to widen a failed search answered it with a
+                404 (#18).
+
+                It hands the typed query to the palette that is already mounted
+                in the header rather than mounting a second one: AppShell's
+                comment on PlayerSearchTrigger records what two live instances
+                cost last time — both registered ⌘K, and the invisible one ate
+                the keystrokes.
+              */}
+              <button
+                type="button"
+                onClick={() => openPlayerSearch(query)}
                 className="text-primary underline-offset-2 hover:underline"
               >
                 Search everyone ever seen
-              </Link>
+              </button>
               .
             </p>
           )}
