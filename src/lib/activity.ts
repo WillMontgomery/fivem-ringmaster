@@ -175,10 +175,31 @@ export function isIdle(jar: CookieJar): boolean {
   const at = readActivity(jar)
 
   if (at === null) {
-    // Distinguish "never seeded" from "present but unverifiable". A cookie that
-    // is there and fails its MAC is a tampered or replayed value, and treating
-    // that as a fresh window would make forgery strictly better than deletion.
-    return jar.get(ACTIVITY_COOKIE) !== undefined
+    /**
+     * UNVERIFIABLE IS TREATED EXACTLY LIKE ABSENT, and the earlier reasoning
+     * for doing otherwise was wrong in a way that took the console down.
+     *
+     * This used to return `jar.get(ACTIVITY_COOKIE) !== undefined` — a cookie
+     * that is present but fails its MAC was read as "tampered", so idle. The
+     * argument was that anything else "would make forgery strictly better than
+     * deletion". It does not: deleting the cookie ALREADY yields not-idle via
+     * this same branch, so the two were equally good for an attacker and only
+     * honest users could be hurt by the difference.
+     *
+     * And they were, deterministically. The MAC binds to the session cookie
+     * (see `sessionFingerprint`), so **signing out and back in leaves an
+     * activity cookie that can never verify again**. That made `currentAdmin()`
+     * null on every page while `auth()` stayed valid, and `/login` bounced back
+     * to `/` — an infinite redirect for anyone who re-authenticated
+     * (owner, 2026-08-16: "after auth I was directed to /login which is not
+     * redirecting properly").
+     *
+     * The timeout's honest guarantee is unchanged and is stated above: a
+     * console nobody touches stops working after two hours. It was never a
+     * defence against someone with devtools, who can call the keepalive route
+     * in a loop regardless.
+     */
+    return false
   }
 
   /**

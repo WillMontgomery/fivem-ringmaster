@@ -1,8 +1,9 @@
 import { Space_Grotesk } from 'next/font/google'
 import { redirect } from 'next/navigation'
 
-import { auth, signIn } from '@/auth'
+import { signIn } from '@/auth'
 import { LoginToast } from '@/components/LoginToast'
+import { currentAdmin } from '@/lib/session'
 
 /**
  * The sign-in page.
@@ -39,8 +40,22 @@ export default async function LoginPage({
     reason?: string
   }>
 }) {
-  const session = await auth()
-  if (session?.user) redirect('/')
+  /**
+   * THE SAME DEFINITION OF "SIGNED IN" AS EVERY OTHER PAGE, and that is the
+   * structural half of the redirect loop this page was one end of.
+   *
+   * This read `auth()` directly while all thirteen other routes read
+   * `currentAdmin()`, which is `auth()` PLUS a scope lookup and a non-idle
+   * check. The moment those two disagreed, `/` bounced here because
+   * currentAdmin was null and this bounced back because the session was valid
+   * — a loop with no exit, which is what the browser reports as "the page
+   * isn't redirecting properly".
+   *
+   * Any future condition added to currentAdmin() is now automatically
+   * reflected here, so the two cannot drift apart again. Whatever else breaks,
+   * the login page must remain reachable: it is the only way back in.
+   */
+  if (await currentAdmin()) redirect('/')
 
   const { error, callbackUrl, reason } = await searchParams
 
