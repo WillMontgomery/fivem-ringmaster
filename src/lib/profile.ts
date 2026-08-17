@@ -39,8 +39,29 @@ export interface ProfileIncident {
    * incident rather than an old one changing its mind.
    */
   state: 'pending_review' | 'resolved'
+  /**
+   * What the reporter picked in game — the raw id, e.g. `abusive_chat`.
+   *
+   * CARRIED RAW AND HUMANISED AT THE EDGE. `lib/incidents` owns the labels and
+   * is server-only (it reaches DynamoDB), so the view is handed the map as a
+   * prop rather than importing it. Same arrangement the incident queue already
+   * uses, for the same reason.
+   */
+  category: string
   /** For reports: who filed it. Absent for system-filed incidents. */
   reportedBy?: string
+  /** The filer's license, so their name can link to their own profile. */
+  reportedByLicense?: string | null
+  /**
+   * Who the incident is ABOUT.
+   *
+   * Redundant on a profile's own "filed against them" list — it is the person
+   * whose page this is — and the whole point of the "filed by them" list, where
+   * the interesting other party is the person they reported rather than
+   * themselves.
+   */
+  subjectName?: string
+  subjectLicense?: string | null
 }
 
 /**
@@ -123,9 +144,17 @@ export interface Profile {
     level: number
     xp: number
     balance: number
-    /** How many cosmetics they have bought. The list itself is not shown. */
+    /**
+     * How many cosmetics they have bought, and deliberately only the count.
+     *
+     * `equipped` USED TO RIDE ALONG HERE and is gone rather than merely unshown
+     * (#22 item 10, owner: "We don't need to know what cosmetics they own, just
+     * 'x cosmetics owned' is enough"). It rendered as `chute: chute_ember` —
+     * raw market ids, on a page whose job is deciding whether to ban somebody.
+     * A field nothing reads is how this repo grows orphans, so the field goes
+     * with the markup.
+     */
     owned: number
-    equipped: Record<string, string>
   } | null
 
   /**

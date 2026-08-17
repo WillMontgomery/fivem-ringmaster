@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
-import { PlayerActions } from '@/components/PlayerActions'
 import { ProfileView } from '@/components/ProfileView'
 import * as audit from '@/lib/audit'
 import { avatarFor } from '@/lib/discord'
@@ -197,8 +196,10 @@ export default async function PlayerProfilePage({
           level: levelFor(game.xp),
           xp: game.xp,
           balance: game.balance,
+          // The COUNT only (#22 item 10). `game.equipped` is deliberately not
+          // carried through — the page showed raw market ids for what they were
+          // wearing, which the owner asked to drop.
           owned: game.owned.length,
-          equipped: game.equipped,
         }
       : null,
 
@@ -247,6 +248,11 @@ export default async function PlayerProfilePage({
     // REAL NOW. Both directions matter: what has been filed against them, and
     // what they have filed against others -- somebody who reports everybody is
     // itself a signal, and it is only visible if you can see what they sent.
+    // THE CATEGORY AND BOTH PARTIES TRAVEL WITH THE ROW (#22 item 5). The
+    // profile's incident row is now "Reported for <category> by <filer>", where
+    // the category and the filer are separate links — so it needs the category
+    // id, the filer's license, and (for the "filed by them" tab, where the
+    // filer is the person whose page this is) the subject's.
     incidents: against.map((i) => ({
       id: i.incidentId,
       kind: i.kind === 'anticheat' ? ('anticheat' as const)
@@ -255,7 +261,11 @@ export default async function PlayerProfilePage({
       at: i.openedAt,
       summary: i.summary,
       state: i.state,
+      category: i.category,
       reportedBy: i.reporterName ?? undefined,
+      reportedByLicense: i.reporterLicense,
+      subjectName: i.subjectName,
+      subjectLicense: i.subjectLicense,
     })),
     reportsFiled: filed.map((i) => ({
       id: i.incidentId,
@@ -263,7 +273,11 @@ export default async function PlayerProfilePage({
       at: i.openedAt,
       summary: i.summary,
       state: i.state,
+      category: i.category,
       reportedBy: i.reporterName ?? undefined,
+      reportedByLicense: i.reporterLicense,
+      subjectName: i.subjectName,
+      subjectLicense: i.subjectLicense,
     })),
     // REAL SINCE #153, and passed through untouched — including the null,
     // which means the query failed and is NOT the same as an empty list. The
@@ -284,19 +298,30 @@ export default async function PlayerProfilePage({
       }}
     >
       {/*
-        ACTIONS ABOVE THE RECORD. A moderator opening a profile has usually
-        already decided something is wrong; putting the controls under match
-        history optimises for the rare visit over the common one.
+        ACTIONS IN THE TOP BAR (#22 item 1). Kick and ban used to be a Card of
+        their own stacked above the profile; they now sit inside the identity
+        bar, beside the name and the online chip. Same reasoning as before — a
+        moderator opening a profile has usually already decided something is
+        wrong — but without spending a whole panel and a paragraph of help text
+        saying so.
+
+        THE THREE FACTS GO OVER, NOT THE ELEMENT. ProfileView builds the buttons
+        itself; see the note on its `moderation` prop for why a server-built
+        element handed to a client component is the wrong shape here.
+
+        THE CATEGORY LABELS ARE PASSED IN rather than imported by the view.
+        `lib/incidents` reaches DynamoDB, so importing it from a client
+        component would drag the AWS SDK into the browser bundle. The incident
+        queue hands its labels down the same way.
       */}
       <div className="mx-auto max-w-5xl space-y-4">
-        <PlayerActions
-          license={license}
-          name={name}
-          ban={ban}
-          online={live !== null}
-          canBan={canBan}
+        <ProfileView
+          p={profile}
+          now={now}
+          banned={bannedNow}
+          categoryLabel={incidents.CATEGORY_LABEL}
+          moderation={{ ban, online: live !== null, canBan }}
         />
-        <ProfileView p={profile} now={now} banned={bannedNow} />
       </div>
     </AppShell>
   )

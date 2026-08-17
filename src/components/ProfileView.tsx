@@ -7,18 +7,24 @@ import {
   Crosshair,
   FileWarning,
   Flag,
+  Flame,
   Skull,
   Swords,
   Trophy,
+  User,
+  Users,
 } from 'lucide-react'
 import { useState } from 'react'
 import Link from 'next/link'
 
+import { PlayerActions } from '@/components/PlayerActions'
 import { ProvenanceTag } from '@/components/Provenance'
 import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+// Aliased: `Ban` in this file is already the lucide icon.
+import type { Ban as BanRecord } from '@/lib/bans'
 import { humanDuration } from '@/lib/duration'
 import type { Profile, ProfileIncident, ProfileMatch } from '@/lib/profile'
 import { formatCount } from '@/lib/time'
@@ -74,13 +80,16 @@ function Figure({
   icon: Icon,
   value,
   label,
+  className,
 }: {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   value: string | number
   label: string
+  /** Grid placement, for figures whose value needs more than one column. */
+  className?: string
 }) {
   return (
-    <div className="min-w-0">
+    <div className={cn('min-w-0', className)}>
       <div className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-muted-foreground">
         <Icon className="size-3" />
         {label}
@@ -100,7 +109,55 @@ const INCIDENT_STATE_LABEL: Record<ProfileIncident['state'], string> = {
   resolved: 'resolved',
 }
 
-function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
+/**
+ * One incident, as a title in three pieces (#22 item 5).
+ *
+ * THE WHOLE TITLE USED TO BE ONE LINK, to the incident, with the filer's name
+ * buried in a subtitle. The owner asked for three pieces of which two are
+ * links, because they are two different journeys from the same row:
+ *
+ *   "Reported for Abusive chat"   → the incident
+ *   "by"                          → nothing, it is grammar
+ *   "Xeon"                        → the filer's own profile
+ *
+ * THE CATEGORY IS HUMANISED, not the raw `abusive_chat` the owner wrote in the
+ * issue. Every id on this page is already mapped to English before it is shown
+ * — `ban.issue` reads "Banned", `solo` reads "Solo", `pending_review` reads
+ * "pending review" — and the incident queue and detail pages both render this
+ * exact field through the same CATEGORY_LABEL map (#143). A raw id here would
+ * be the only one left. The map arrives as a prop because `lib/incidents` talks
+ * to DynamoDB and must not be imported into a client bundle.
+ *
+ * THE COUNTERPARTY DEPENDS ON THE TAB, and only the connecting word changes.
+ * On "filed against them" the other party is whoever reported them ("by
+ * Xeon"). On "filed by them" the profile's owner IS the filer, so naming them
+ * again says nothing — the other party is the person they reported ("against
+ * Vance"). Same three pieces, same two links, one word different.
+ *
+ * SYSTEM-FILED INCIDENTS KEEP THEIR SUMMARY. An anticheat escalation has no
+ * reporter and its category is `system`; "Reported for System by —" would be
+ * three pieces of nonsense, so those rows stay one link on the summary, which
+ * is what they have always been.
+ */
+function IncidentRow({
+  i,
+  now,
+  direction,
+  categoryLabel,
+}: {
+  i: ProfileIncident
+  now: number
+  /** Which tab this row is in — decides who the "other party" is. */
+  direction: 'against' | 'by'
+  categoryLabel: Record<string, string>
+}) {
+  const filedByAPlayer = i.kind === 'report' && i.category !== 'system'
+
+  const other =
+    direction === 'against'
+      ? { word: 'by', name: i.reportedBy, license: i.reportedByLicense }
+      : { word: 'against', name: i.subjectName, license: i.subjectLicense }
+
   return (
     <li className="flex items-start gap-3 border-t border-border/60 py-2.5 first:border-t-0 first:pt-0">
       <div
@@ -119,14 +176,33 @@ function IncidentRow({ i, now }: { i: ProfileIncident; now: number }) {
       </div>
 
       <div className="min-w-0 flex-1">
-        {/* The summary is the link. Somebody reading a profile who wants the
-            detail should not have to go back through the queue to find it. */}
-        <Link
-          href={`/incidents/${i.id}`}
-          className="text-sm underline underline-offset-2 transition-colors hover:text-foreground"
-        >
-          {i.summary}
-        </Link>
+        <div className="text-sm">
+          <Link
+            href={`/incidents/${i.id}`}
+            className="underline underline-offset-2 transition-colors hover:text-foreground"
+          >
+            {filedByAPlayer
+              ? `Reported for ${categoryLabel[i.category] ?? i.category}`
+              : i.summary}
+          </Link>
+          {filedByAPlayer && other.name ? (
+            <>
+              {/* Plain text between two links, on purpose: it is the only piece
+                  of this title that does not go anywhere. */}
+              <span className="text-muted-foreground"> {other.word} </span>
+              {other.license ? (
+                <Link
+                  href={`/players/${encodeURIComponent(other.license)}`}
+                  className="underline underline-offset-2 transition-colors hover:text-foreground"
+                >
+                  {other.name}
+                </Link>
+              ) : (
+                <span>{other.name}</span>
+              )}
+            </>
+          ) : null}
+        </div>
         <div className="mt-0.5 text-xs text-muted-foreground">
           <LocalTime ms={i.at} /> · {ago(i.at, now)}
         </div>
@@ -275,11 +351,41 @@ const ACTION_LABEL: Record<string, string> = {
   'maintenance.schedule': 'Scheduled a server update',
   'maintenance.cancel': 'Cancelled a server update',
   'host.deploy': 'Ran a server update',
+  // #22 item 7. WHAT THIS ROW ACTUALLY IS, which is not obvious from the name:
+  // an admin closed an incident about this player, and the text beside it is
+  // the note they typed while closing it — "watched a match, looked fine", "no
+  // action". It is NOT a ban reason and NOT a record that anything was done to
+  // them. "Incident closed" says that; "Resolved" would read as though the
+  // PLAYER had been dealt with, which is the wrong claim to put on a moderation
+  // history. See item 6 below for why it no longer reaches the list at all.
+  'incident.resolve': 'Incident closed',
 }
 
 function actionLabel(action: string): string {
   return ACTION_LABEL[action] ?? action
 }
+
+/**
+ * Audit actions that are decisions rather than things done to the player.
+ *
+ * #22 item 6, owner: "A resolution with no action is not an entry in a list of
+ * actions." `incident.resolve` lands in this list because closing an incident
+ * records the incident's SUBJECT as the audit target — so every closure of
+ * every report about somebody turned up under "Kicks and bans", next to actual
+ * kicks and actual bans.
+ *
+ * THE FILTER IS UNCONDITIONAL, and that is a finding rather than a shortcut.
+ * There is no machine-readable "action taken" on a resolution: `lib/incidents`
+ * stores the admin's decision as free text (the box literally suggests "Banned
+ * for 7 days / watched a match, looked fine / no action"). So nothing here can
+ * tell an action-taken closure from a no-action one — and it does not need to,
+ * because a closure that DID come with a ban or a kick already wrote its own
+ * `ban.issue` or `player.kick` row, which is still listed. Dropping these rows
+ * therefore loses no action from the history; it only stops decisions being
+ * filed as actions. What was decided stays on the incident itself, which is one
+ * click away in the panel above.
+ */
+const NOT_AN_ACTION = new Set(['incident.resolve'])
 
 /**
  * A list that does not grow without bound.
@@ -341,19 +447,147 @@ function Paged<T>({
   )
 }
 
+/**
+ * Incidents, both directions, in one paginated table with two tabs (#22 item 4).
+ *
+ * TWO PANELS BECAME ONE. "Incidents involving this player" and "Reports they
+ * filed against others" were separate sections with an unpaginated list each,
+ * so a player with forty reports against them pushed everything below off the
+ * screen — and the two lists were never on screen together anyway, despite
+ * being the same kind of row asking the same question from two directions.
+ *
+ * THE COUNTS ARE IN THE TAB TITLES, exactly as the owner wrote them:
+ * "Filed against them (3)" and "Filed by them (0)". Including the zero, which
+ * is deliberate on their part and right — a tab reading "(0)" tells a moderator
+ * this player has never reported anybody, which is itself a thing worth
+ * knowing. A tab with the count hidden would just look unvisited.
+ *
+ * TEN ROWS A PAGE, via the same `Paged` the other lists use. `key={tab}`
+ * remounts it on a tab change, which resets to page one — staying on page three
+ * of a list you just swapped out is the kind of thing that reads as a broken
+ * filter.
+ */
+function IncidentsPanel({
+  against,
+  filed,
+  now,
+  categoryLabel,
+}: {
+  against: ProfileIncident[]
+  filed: ProfileIncident[]
+  now: number
+  categoryLabel: Record<string, string>
+}) {
+  const [tab, setTab] = useState<'against' | 'by'>('against')
+
+  const rows = tab === 'against' ? against : filed
+  const pending = rows.filter((i) => i.state === 'pending_review').length
+
+  return (
+    <Section
+      title="Incidents"
+      provenance={<ProvenanceTag kind="moderation" />}
+      action={
+        // Counts the tab you are looking at, not a fixed one — a "2 PENDING"
+        // badge above a list that has none in it is just wrong.
+        pending > 0 ? (
+          <Badge className="border-0 bg-warn/10 text-xs font-semibold uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
+            {pending} pending
+          </Badge>
+        ) : null
+      }
+    >
+      <div className="mb-3 flex flex-wrap gap-1">
+        {(
+          [
+            ['against', `Filed against them (${against.length})`],
+            ['by', `Filed by them (${filed.length})`],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={cn(
+              'rounded-lg px-3 py-1.5 text-sm transition-colors',
+              tab === id
+                ? 'bg-card text-foreground ring-1 ring-inset ring-border'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {rows.length ? (
+        <Paged key={tab} items={rows}>
+          {(slice) => (
+            <ul>
+              {slice.map((i) => (
+                <IncidentRow
+                  key={i.id}
+                  i={i}
+                  now={now}
+                  direction={tab}
+                  categoryLabel={categoryLabel}
+                />
+              ))}
+            </ul>
+          )}
+        </Paged>
+      ) : (
+        <Empty>
+          {tab === 'against'
+            ? 'Nobody has ever filed an incident about this player.'
+            : 'This player has never reported anybody.'}
+        </Empty>
+      )}
+    </Section>
+  )
+}
+
 export function ProfileView({
   p,
   now,
   banned = false,
+  moderation,
+  categoryLabel = {},
 }: {
   p: Profile
   now: number
   /** Currently banned — shown beside the name, where identity is confirmed. */
   banned?: boolean
+  /**
+   * What the moderation buttons in the top bar need to know (#22 item 1).
+   *
+   * PLAIN DATA, NOT AN ELEMENT, and that is not a style preference. The obvious
+   * shape was a `ReactNode` slot the page fills with <PlayerActions/> — but the
+   * page is a SERVER component and this is a client one, and an element built on
+   * the server and handed across as a non-`children` prop trips React's dev key
+   * check: it arrives unvalidated, and rendering it raises "Each child in a list
+   * should have a unique key prop" on a page that has no such list. Passing the
+   * three facts and constructing the element here keeps it client-to-client, and
+   * keeps the console quiet enough that a real warning is still worth reading.
+   *
+   * Omitted entirely by callers that must not offer the buttons at all.
+   */
+  moderation?: {
+    ban: BanRecord | null
+    /** On the server right now — decides whether a kick is even possible. */
+    online: boolean
+    canBan: boolean
+  }
+  /** Report categories in English. From `lib/incidents`, which is server-only. */
+  categoryLabel?: Record<string, string>
 }) {
   const kd = p.stats && p.stats.deaths > 0
     ? (p.stats.kills / p.stats.deaths).toFixed(2)
     : '—'
+
+  // #22 item 6 — see NOT_AN_ACTION. Kicks and bans lists what was DONE to this
+  // player; a decision about a report is not one of those things.
+  const moderationActions = p.actions.filter((a) => !NOT_AN_ACTION.has(a.action))
 
   return (
     <div className="space-y-4">
@@ -401,9 +635,12 @@ export function ProfileView({
                 </Badge>
               )}
               {p.live ? (
+                // #22 item 3. The chip is `uppercase`, so this renders as
+                // ONLINE NOW — which is what the owner asked for, and which
+                // sits better beside a row of buttons than a sentence did.
                 <Badge className="gap-1 border-0 bg-live/10 text-xs font-semibold uppercase tracking-wider text-live ring-1 ring-inset ring-live/25">
                   <span className="size-1.5 rounded-full bg-live" />
-                  On the server now
+                  Online now
                 </Badge>
               ) : (
                 <Badge
@@ -425,23 +662,39 @@ export function ProfileView({
                 identifier will go. */}
           </div>
 
-          <div className="flex gap-6 text-right">
-            <div>
-              <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                First seen
-              </div>
-              <div className="mt-1 text-sm"><LocalTime ms={p.firstSeen} /></div>
-            </div>
-            {/* LAST SEEN IS MEANINGLESS WHILE THEY ARE HERE. "2 minutes ago"
-                next to "On the server now" is either confusing or wrong, and
-                the badge already answers the question better. */}
-            {!p.live && (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="flex gap-6 text-right">
               <div>
                 <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Last seen
+                  First seen
                 </div>
-                <div className="mt-1 text-sm">{ago(p.lastSeen, now)}</div>
+                <div className="mt-1 text-sm"><LocalTime ms={p.firstSeen} /></div>
               </div>
+              {/* LAST SEEN IS MEANINGLESS WHILE THEY ARE HERE. "2 minutes ago"
+                  next to "Online now" is either confusing or wrong, and the
+                  badge already answers the question better. */}
+              {!p.live && (
+                <div>
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                    Last seen
+                  </div>
+                  <div className="mt-1 text-sm">{ago(p.lastSeen, now)}</div>
+                </div>
+              )}
+            </div>
+
+            {/* #22 item 1 — the moderation bar, now built into this bar. It is
+                the last thing in the row because the row reads left to right as
+                "who is this, are they here, when did we last see them, what do
+                you want to do about it". */}
+            {moderation && (
+              <PlayerActions
+                license={p.license}
+                name={p.name}
+                ban={moderation.ban}
+                online={moderation.online}
+                canBan={moderation.canBan}
+              />
             )}
           </div>
         </div>
@@ -485,35 +738,66 @@ export function ProfileView({
           provenance={<ProvenanceTag kind="stats" />}
         >
           {p.stats ? (
-            <>
-              <div className="grid grid-cols-3 gap-4">
-                <Figure icon={Swords} value={p.stats.matches} label="matches" />
-                <Figure icon={Trophy} value={p.stats.wins} label="wins" />
-                <Figure icon={Trophy} value={p.stats.top10s} label="top 10" />
-                <Figure icon={Crosshair} value={p.stats.kills} label="kills" />
-                <Figure icon={Skull} value={p.stats.deaths} label="deaths" />
-                <Figure icon={Crosshair} value={kd} label="k/d" />
-                <Figure
-                  icon={Clock}
-                  value={humanDuration(p.stats.playtimeMs)}
-                  label="in match"
-                />
-                <Figure icon={Skull} value={p.stats.downs} label="downs" />
-                <Figure icon={Trophy} value={p.stats.revives} label="revives" />
-              </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                {p.stats.soloMatches} solo · {p.stats.squadMatches} squad ·{' '}
-                {/* Through the pinned locale, not the ambient one. This file is
-                    a client component, so a bare `.toLocaleString()` renders
-                    `1,234` on the server and `1.234` in a de-DE browser — an
-                    unsuppressed text mismatch that costs the page its server
-                    render. */}
-                {formatCount(p.stats.damageDealt)} damage
-                {p.stats.lastMatchAt
-                  ? ` · last match ${ago(p.stats.lastMatchAt, now)}`
-                  : ''}
-              </p>
-            </>
+            /*
+              #22 items 8 and 9.
+              SOLOS, SQUADS AND LIFETIME DAMAGE ARE FIGURES NOW, not the tail of
+              a sentence underneath the grid. They were the only three career
+              numbers rendered as small grey prose, which made them look like a
+              footnote to the table rather than three of its rows — and "how
+              much damage has this person done, ever" is one of the first things
+              asked about a suspected cheater.
+
+              LAST MATCH IS GONE (item 9). "Offline / last seen 20 minutes ago"
+              is already in the top bar, and match history below carries the
+              timestamp of every individual match. A third, vaguer version of
+              the same fact in the middle was the one nobody needed.
+
+              Every count goes through formatCount rather than a bare
+              `.toLocaleString()`: this is a client component, so the ambient
+              locale renders `184,220` on the server and `184.220` in a de-DE
+              browser — an unsuppressed text mismatch that costs the page its
+              server render.
+
+              THE COLUMN COUNT FOLLOWS THE CARD, NOT THE WINDOW, which is why it
+              changes twice. A lifetime damage total is 95px of monospace at this
+              size and the counts that used to live here were all three or four
+              digits, so promoting it into the grid re-created item 11's bug in a
+              second place: three columns gave it an 86px cell and truncated it
+              to "184,2…". This card is full width below `lg` and HALF width at
+              and above it — the outer grid splits — so the narrow points are the
+              phone and the 1024-1279 band, and both drop to two columns. Every
+              width was measured against the widest values, not eyeballed.
+            */
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
+              <Figure icon={Swords} value={p.stats.matches} label="matches" />
+              <Figure icon={Trophy} value={p.stats.wins} label="wins" />
+              <Figure icon={Trophy} value={p.stats.top10s} label="top 10" />
+              <Figure icon={Crosshair} value={p.stats.kills} label="kills" />
+              <Figure icon={Skull} value={p.stats.deaths} label="deaths" />
+              <Figure icon={Crosshair} value={kd} label="k/d" />
+              <Figure
+                icon={Clock}
+                value={humanDuration(p.stats.playtimeMs)}
+                label="in match"
+              />
+              <Figure icon={Skull} value={p.stats.downs} label="downs" />
+              <Figure icon={Trophy} value={p.stats.revives} label="revives" />
+              <Figure
+                icon={User}
+                value={formatCount(p.stats.soloMatches)}
+                label="solos"
+              />
+              <Figure
+                icon={Users}
+                value={formatCount(p.stats.squadMatches)}
+                label="squads"
+              />
+              <Figure
+                icon={Flame}
+                value={formatCount(p.stats.damageDealt)}
+                label="total damage"
+              />
+            </div>
           ) : (
             <Empty />
           )}
@@ -530,8 +814,30 @@ export function ProfileView({
         <Section title="Progression" provenance={<ProvenanceTag kind="stats" />}>
           {p.progress ? (
             <>
-              <div className="grid grid-cols-3 gap-4">
+              {/*
+                #22 ITEM 11 — THE CONTAINER, NOT THE TEXT.
+                "xp this level" was the third cell of a three-column grid inside
+                a half-width card, which is about 145px. Its value is ALWAYS
+                "<into> / <span>" and the spans run from 800 up to 15,450, so
+                the string is routinely 13-15 monospace characters at text-xl —
+                roughly 180px. It truncated to "2,707 / 2,8…" for most players at
+                most levels, not as an edge case, and half a progress figure is
+                worse than none: a moderator reading it cannot tell whether the
+                player is about to level.
+
+                So the figure now spans the full width of this grid and the other
+                two share the row above it. That gives it 330-470px against the
+                ~180px it needs, which holds at every breakpoint and for the
+                widest span on the curve — checked in /preview/profile, which is
+                the only place this is visible without a live game table.
+              */}
+              <div className="grid grid-cols-2 gap-4">
                 <Figure icon={Trophy} value={p.progress.level} label="level" />
+                <Figure
+                  icon={Clock}
+                  value={formatCount(p.progress.balance)}
+                  label="volts"
+                />
                 {/*
                   PROGRESS, NOT A LIFETIME TOTAL. "2,498 XP" answers a question
                   nobody asks; "148 / 2,050" answers the one they do — how close
@@ -541,32 +847,26 @@ export function ProfileView({
                 */}
                 <Figure
                   icon={Swords}
+                  className="col-span-2"
                   value={`${formatCount(progress(p.progress.xp).into)} / ${formatCount(
                     progress(p.progress.xp).span,
                   )}`}
                   label="xp this level"
                 />
-                <Figure
-                  icon={Clock}
-                  value={formatCount(p.progress.balance)}
-                  label="volts"
-                />
               </div>
-              <p className="mt-3 text-xs text-muted-foreground">
+              {/*
+                #22 item 10 — a count, not a list. Owner: "We don't need to know
+                what cosmetics they own, just 'x cosmetics owned' is enough."
+                What was here also listed what they were WEARING, as raw market
+                ids ("chute: chute_ember"), which is a wardrobe note on a page
+                used to decide whether to ban somebody.
+              */}
+              <p className="mt-3 text-sm text-muted-foreground">
                 {p.progress.owned === 0
-                  ? 'No cosmetics purchased.'
-                  : `${p.progress.owned} cosmetic${p.progress.owned === 1 ? '' : 's'} owned.`}
-                {Object.keys(p.progress.equipped).length > 0 && (
-                  <>
-                    {' '}
-                    Wearing{' '}
-                    {Object.entries(p.progress.equipped)
-                      .sort(([a], [b]) => a.localeCompare(b))
-                      .map(([kind, id]) => `${kind}: ${id}`)
-                      .join(' · ')}
-                    .
-                  </>
-                )}
+                  ? 'No cosmetics owned.'
+                  : `${formatCount(p.progress.owned)} cosmetic${
+                      p.progress.owned === 1 ? '' : 's'
+                    } owned.`}
               </p>
             </>
           ) : (
@@ -618,27 +918,12 @@ export function ProfileView({
         </Section>
       </div>
 
-      <Section
-        title="Incidents involving this player"
-        provenance={<ProvenanceTag kind="moderation" />}
-        action={
-          p.incidents.filter((i) => i.state === 'pending_review').length > 0 ? (
-            <Badge className="border-0 bg-warn/10 text-xs font-semibold uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
-              {p.incidents.filter((i) => i.state === 'pending_review').length} pending
-            </Badge>
-          ) : null
-        }
-      >
-        {p.incidents.length ? (
-          <ul>
-            {p.incidents.map((i) => (
-              <IncidentRow key={i.id} i={i} now={now} />
-            ))}
-          </ul>
-        ) : (
-          <Empty />
-        )}
-      </Section>
+      <IncidentsPanel
+        against={p.incidents}
+        filed={p.reportsFiled}
+        now={now}
+        categoryLabel={categoryLabel}
+      />
 
       {/*
         KICKS AND BANS, FROM THE AUDIT LOG.
@@ -650,23 +935,27 @@ export function ProfileView({
         THE ACTING ADMIN LINKS TO THEIR OWN PROFILE. Moderation is a thing
         people do to other people, and "who decided this" should be one click
         rather than a name to go and look up.
+
+        IT LISTS ACTIONS ONLY (#22 item 6). See NOT_AN_ACTION — incident
+        closures target the player too, but closing a report is a decision about
+        the report, not something done to them.
       */}
       <Section
         title="Kicks and bans"
         provenance={<ProvenanceTag kind="moderation" />}
         action={
-          p.actions.length > 0 ? (
+          moderationActions.length > 0 ? (
             <Badge
               variant="outline"
               className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
             >
-              {p.actions.length}
+              {moderationActions.length}
             </Badge>
           ) : null
         }
       >
-        {p.actions.length ? (
-          <Paged items={p.actions}>
+        {moderationActions.length ? (
+          <Paged items={moderationActions}>
             {(slice) => (
               <ul>
                 {slice.map((a, i) => (
@@ -720,21 +1009,6 @@ export function ProfileView({
               </ul>
             )}
           </Paged>
-        ) : (
-          <Empty />
-        )}
-      </Section>
-
-      <Section
-        title="Reports they filed against others"
-        provenance={<ProvenanceTag kind="moderation" />}
-      >
-        {p.reportsFiled.length ? (
-          <ul>
-            {p.reportsFiled.map((i) => (
-              <IncidentRow key={i.id} i={i} now={now} />
-            ))}
-          </ul>
         ) : (
           <Empty />
         )}

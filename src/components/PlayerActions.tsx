@@ -9,7 +9,6 @@ import { BanDialog } from '@/components/BanDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { KickDialog } from '@/components/KickDialog'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
 import {
   Tooltip,
   TooltipContent,
@@ -21,10 +20,22 @@ import type { Ban } from '@/lib/bans'
 /**
  * Kick and ban, for the player whose page this is.
  *
- * IT SITS AT THE TOP because it is what the page is FOR. A moderator opening a
- * profile has almost always already decided something is wrong; making them
- * scroll past match history to act on it optimises for the rare visit over the
- * common one.
+ * BUTTONS, NOT A BAR (#22 items 1 and 2). This used to be its own Card sitting
+ * above the profile, with a heading and a line of help text under it. It is now
+ * a bare row of buttons that the profile's top bar renders beside the player's
+ * name — the owner's words: "The moderation bar should have buttons built-into
+ * the profile top bar", and "The help text in the moderation bar is not
+ * helpful, it can be removed altogether".
+ *
+ * IT RENDERS NO CONTAINER OF ITS OWN, deliberately. Whoever places it owns the
+ * layout; this component owns only what the buttons do. That is also what lets
+ * the /preview harness drop it into the same top bar without a session.
+ *
+ * THE HELP TEXT IS GONE BUT ITS INFORMATION IS NOT. Everything the paragraph
+ * said — they are connected, they are already banned, you lack the scope — is
+ * now carried by the button that the fact applies to: enabled or disabled, with
+ * the reason on hover. A disabled control with no explanation is a bug report
+ * waiting to be filed, which is why nothing here is merely greyed out.
  *
  * THE LICENSE IS ALREADY IN HAND, which is the whole reason these live here
  * rather than only on a form that asks you to paste one. Copying an identifier
@@ -52,18 +63,6 @@ export function PlayerActions({
   const active =
     ban && !ban.liftedAt && (ban.expiresAt === null || ban.expiresAt > Date.now())
 
-  if (!canBan) {
-    return (
-      <Card className="surface-edge gap-0 px-5 py-4">
-        <h2 className="text-sm font-medium">Moderation</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
-          You can see this player&rsquo;s record but not act on it — kicking and
-          banning need the <code className="font-mono">ban</code> scope.
-        </p>
-      </Card>
-    )
-  }
-
   const lift = async () => {
     try {
       await postJson('/api/bans/lift', { license })
@@ -76,62 +75,78 @@ export function PlayerActions({
 
   return (
     <>
-      <Card className="surface-edge gap-0 px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-medium">Moderation</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {active
-                ? `Banned by ${ban!.byName} — “${ban!.reason}”`
-                : online
-                  ? 'On the server now. A ban removes them immediately.'
-                  : 'Not connected. A ban applies the next time they join.'}
-            </p>
-          </div>
+      <div className="flex items-center gap-2">
+        {/*
+          Kick is disabled when they are not here, because there is nothing to
+          kick — and it says so on hover rather than being mysteriously greyed
+          out. Without the `ban` scope both buttons disable the same way and
+          say why, which is where the removed "you can see this record but not
+          act on it" paragraph went.
+        */}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <span
+                className={online && canBan ? undefined : 'cursor-not-allowed'}
+              />
+            }
+          >
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!online || !canBan}
+              onClick={() => setKickOpen(true)}
+            >
+              <LogOut />
+              Kick
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {!canBan
+              ? 'Kicking needs the ban scope, which this account does not have.'
+              : online
+                ? 'Remove them from the server now. Does not ban.'
+                : `${name} is not connected — there is nobody to kick.`}
+          </TooltipContent>
+        </Tooltip>
 
-          <div className="flex items-center gap-2">
-            {/*
-              Kick is disabled when they are not here, because there is nothing
-              to kick — and it says so on hover rather than being mysteriously
-              greyed out. A disabled control with no explanation is a bug report
-              waiting to be filed.
-            */}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className={online ? undefined : 'cursor-not-allowed'} />
-                }
-              >
-                <Button
-                  variant="outline"
-                  disabled={!online}
-                  onClick={() => setKickOpen(true)}
-                >
-                  <LogOut />
-                  Kick
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top">
-                {online
-                  ? 'Remove them from the server now. Does not ban.'
-                  : `${name} is not connected — there is nobody to kick.`}
-              </TooltipContent>
-            </Tooltip>
-
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className={canBan ? undefined : 'cursor-not-allowed'} />}
+          >
             {active ? (
-              <Button variant="outline" onClick={() => setLiftOpen(true)}>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!canBan}
+                onClick={() => setLiftOpen(true)}
+              >
                 <ShieldOff />
                 Lift ban
               </Button>
             ) : (
-              <Button variant="destructive" onClick={() => setBanOpen(true)}>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={!canBan}
+                onClick={() => setBanOpen(true)}
+              >
                 <BanIcon />
                 Ban
               </Button>
             )}
-          </div>
-        </div>
-      </Card>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {!canBan
+              ? 'Banning needs the ban scope, which this account does not have.'
+              : active
+                ? `Let ${name} join again. The ban record is kept.`
+                : online
+                  ? 'Ban them. They are on the server, so it removes them immediately.'
+                  : 'Ban them. It applies the next time they try to join.'}
+          </TooltipContent>
+        </Tooltip>
+      </div>
 
       <BanDialog
         license={license}
