@@ -32,7 +32,7 @@ import { thresholdFor } from '@/lib/xp'
  * FOUR INDEPENDENT AXES, because they are independent in life:
  *
  *   ?state=      match history — played / legacy / never / unreadable
- *   ?incidents=  0, 1, 10 and 23 rows, for the tabs and the page boundary
+ *   ?incidents=  0, 1, 5, 6 and 43 rows, for the tabs and the page boundary
  *   ?xp=         the reported truncation value, and the curve's worst case
  *   ?mod=        the top bar's moderation buttons, in each of their shapes
  *
@@ -73,6 +73,12 @@ const LICENSE = 'license:preview000000000000000000000000000'
  *   the WIN            placement 1, `won` true — the gold badge
  *   the STORM FINISH   placement 1, `won` false — #133's case, which must NOT
  *                      render as a win however much it looks like one
+ *
+ * SIX OF THEM, WHICH IS ONE MORE THAN A PAGE. At ten a page this list never
+ * paginated in the harness, so the pagination control on the match panel was
+ * unreviewable here — it only appeared on a real profile with a real history.
+ * Five a page plus a sixth row makes it appear, with a one-row second page,
+ * which is also the shape that catches an off-by-one in the range label.
  */
 const MATCHES: ProfileMatch[] = [
   {
@@ -135,6 +141,38 @@ const MATCHES: ProfileMatch[] = [
     survivedMs: 92_000,
     xpEarned: 40,
     voltsEarned: 10,
+    won: false,
+  },
+  {
+    matchId: 399,
+    endedAt: BASE - 27 * HOUR,
+    mode: 'squad',
+    placement: 6,
+    total: 46,
+    kills: 4,
+    downs: 3,
+    revives: 3,
+    damage: 1_117,
+    survivedMs: 14 * 60_000 + 30_000,
+    xpEarned: 520,
+    voltsEarned: 78,
+    won: false,
+  },
+  // The sixth row: on its own on page two, where the range label has to read
+  // "6–6 of 6" rather than "6–5 of 6".
+  {
+    matchId: 395,
+    endedAt: BASE - 34 * HOUR,
+    mode: 'solo',
+    placement: 22,
+    total: 39,
+    kills: 1,
+    downs: 1,
+    revives: 0,
+    damage: 260,
+    survivedMs: 6 * 60_000 + 40_000,
+    xpEarned: 155,
+    voltsEarned: 22,
     won: false,
   },
 ]
@@ -297,20 +335,34 @@ function reportsFiledBy(n: number): ProfileIncident[] {
 }
 
 /*
- * INCIDENT COUNTS: the two tabs at 0, 1, 10 and 11+ rows.
+ * INCIDENT COUNTS: the two tabs at 0, 1, 5, 6 and 43 rows.
  *
- * TEN AND ELEVEN ARE THE INTERESTING PAIR. Ten is exactly one full page, where
- * the pagination control must NOT appear; eleven is the first row that makes a
- * second page exist. `many` uses 23 so there is a third page and a short last
- * one. The two tabs deliberately never hold the same number, so a tab switch
- * that forgot to reset the page is visible rather than lucky.
+ * FIVE AND SIX ARE THE INTERESTING PAIR, and they used to be ten and eleven.
+ * The boundary these axes exist to pin is the page size, so when the profile
+ * lists went from ten a page to five the old `ten` case stopped being "exactly
+ * one full page, no control" and quietly became two pages — the one thing the
+ * fixture was there to catch. Five is now the full page where the pagination
+ * control must NOT appear; six is the first row that makes a second page.
+ *
+ * `many` GREW FROM 23 TO 43, because the control it has to exercise grew. The
+ * old pager was two words and could not look different at four pages than at
+ * forty. The new one draws a numbered button per page and elides the middle
+ * with an ellipsis past seven — so 23 rows (five pages) never reaches the
+ * elided state, and the moderation log, which reads two hundred audit rows at
+ * ten a page, reaches it every time. Forty-three is nine pages: an ellipsis on
+ * the right from page one, one on each side in the middle, one on the left at
+ * the end, and a short last page of three.
+ *
+ * The two tabs still deliberately never hold the same number of pages — nine
+ * against three — so a tab switch that forgot to reset the page shows up as an
+ * impossible page rather than as a lucky-looking one.
  */
 const INCIDENT_CASES = {
   none: { against: 0, filed: 0 },
   one: { against: 1, filed: 0 },
-  ten: { against: 10, filed: 1 },
-  eleven: { against: 11, filed: 10 },
-  many: { against: 23, filed: 11 },
+  five: { against: 5, filed: 1 },
+  six: { against: 6, filed: 5 },
+  many: { against: 43, filed: 11 },
 } as const
 
 type IncidentKey = keyof typeof INCIDENT_CASES
@@ -381,6 +433,11 @@ function fixture(
      * fixed — the row is filtered out, and the label exists so the id can never
      * render bare. It is kept in this fixture precisely so a regression shows
      * up as an extra row rather than as nothing.
+     *
+     * SEVEN ROWS, SIX OF WHICH RENDER — one more than a page, for the same
+     * reason match history now has six. It also puts the filtered row on the
+     * page boundary: at five a page, "6 of 6" here and "7" anywhere would be
+     * the filter having stopped working.
      */
     actions: [
       {
@@ -414,6 +471,32 @@ function fixture(
         actorName: 'Preview Admin',
         actorLicense: 'license:previewadmin00000000000000000000000',
         reason: 'Aimbot, confirmed on capture',
+      },
+      {
+        at: BASE - 260 * HOUR,
+        action: 'player.kick',
+        outcome: 'ok',
+        actorName: 'Preview Admin',
+        actorLicense: 'license:previewadmin00000000000000000000000',
+        reason: 'Spawn camping the lobby',
+      },
+      {
+        at: BASE - 300 * HOUR,
+        action: 'ban.lift',
+        outcome: 'ok',
+        actorName: 'Preview Admin',
+        actorLicense: 'license:previewadmin00000000000000000000000',
+        reason: 'Appealed — capture was inconclusive',
+      },
+      // An actor we have no license for: the name is plain text, not a link to
+      // nowhere. Sixth rendered row, so it lands alone on page two.
+      {
+        at: BASE - 380 * HOUR,
+        action: 'player.kick',
+        outcome: 'ok',
+        actorName: 'An admin who has since been removed',
+        actorLicense: null,
+        reason: null,
       },
     ],
     matches,

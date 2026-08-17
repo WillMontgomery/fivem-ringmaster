@@ -5,8 +5,10 @@ import Link from 'next/link'
 import { useState } from 'react'
 
 import { LocalTime } from '@/components/LocalTime'
+import { Pager } from '@/components/Pager'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { Incident, IncidentCategory, IncidentKind } from '@/lib/incidents'
 import { cn } from '@/lib/utils'
 
@@ -114,6 +116,62 @@ const EMPTY: Record<Tab, string> = {
   all: 'No incidents have been filed.',
 }
 
+/**
+ * One tab's list, and the pagination under it.
+ *
+ * THE PAGE LIVES IN HERE NOW, one per tab, and that is what preserves the
+ * reset. It used to be a single `page` in the parent that a `go(t)` handler
+ * zeroed on every tab change, because staying on page 3 of a list you just
+ * swapped out reads as a broken filter. Base UI tabs default to
+ * `keepMounted={false}`, so switching tabs unmounts this panel and takes its
+ * page with it — the same reset, now falling out of the structure instead of
+ * being remembered by hand. If `keepMounted` is ever set on these panels, the
+ * explicit reset has to come back with it.
+ */
+function QueuePanel({
+  rows,
+  empty,
+  now,
+  categoryLabel,
+}: {
+  rows: Incident[]
+  empty: string
+  now: number
+  categoryLabel: Record<IncidentCategory, string>
+}) {
+  const [page, setPage] = useState(0)
+
+  const pages = Math.ceil(rows.length / PER_PAGE)
+  // Guard against a list that shrank under the page we are on — resolving an
+  // incident moves a row out of `pending` while this is mounted.
+  const current = Math.min(page, Math.max(0, pages - 1))
+  const slice = rows.slice(current * PER_PAGE, current * PER_PAGE + PER_PAGE)
+
+  return (
+    <Card className="surface-edge gap-0 overflow-hidden py-0">
+      {rows.length === 0 ? (
+        <p className="px-4 py-6 text-sm text-muted-foreground/70">{empty}</p>
+      ) : (
+        <>
+          <div>
+            {slice.map((i) => (
+              <Row key={i.incidentId} i={i} now={now} categoryLabel={categoryLabel} />
+            ))}
+          </div>
+
+          <Pager
+            page={current}
+            perPage={PER_PAGE}
+            total={rows.length}
+            onPage={setPage}
+            className="border-t border-border px-4 py-3"
+          />
+        </>
+      )}
+    </Card>
+  )
+}
+
 export function IncidentQueue({
   pending,
   history,
@@ -125,23 +183,7 @@ export function IncidentQueue({
   now: number
   categoryLabel: Record<IncidentCategory, string>
 }) {
-  const [tab, setTab] = useState<Tab>('pending')
-  const [page, setPage] = useState(0)
-
   const resolved = history.filter((i) => i.state === 'resolved')
-  const rows = tab === 'pending' ? pending : tab === 'resolved' ? resolved : history
-
-  const pages = Math.ceil(rows.length / PER_PAGE)
-  // A tab switch can land on a page that does not exist in the new list.
-  const current = Math.min(page, Math.max(0, pages - 1))
-  const slice = rows.slice(current * PER_PAGE, current * PER_PAGE + PER_PAGE)
-
-  const go = (t: Tab) => {
-    setTab(t)
-    // Back to the top on a tab change. Staying on page 3 of a different list is
-    // disorienting in exactly the way that makes people think a filter broke.
-    setPage(0)
-  }
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -152,72 +194,56 @@ export function IncidentQueue({
         </p>
       </div>
 
-      <div className="flex gap-1">
-        {(
-          [
-            ['pending', `Pending review${pending.length ? ` (${pending.length})` : ''}`],
-            ['resolved', 'Resolved'],
-            ['all', 'Everything'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => go(id)}
-            className={cn(
-              'rounded-lg px-3 py-1.5 text-sm transition-colors',
-              tab === id
-                ? 'bg-card text-foreground ring-1 ring-inset ring-border'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {/*
+        REAL TABS, and uncontrolled — unlike the profile page's incidents panel,
+        nothing outside these panels reads which one is open, so there is no
+        state left to hold.
 
-      <Card className="surface-edge animate-rise gap-0 overflow-hidden py-0">
-        {rows.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-muted-foreground/70">{EMPTY[tab]}</p>
-        ) : (
-          <>
-            <div>
-              {slice.map((i) => (
-                <Row key={i.incidentId} i={i} now={now} categoryLabel={categoryLabel} />
-              ))}
-            </div>
+        THE COUNT RULE IS UNCHANGED and is deliberately not the profile page's.
+        "Pending review (7)" earns its number because a queue depth is the one
+        figure this screen exists to show; it disappears at zero because
+        "Pending review (0)" is a worse way of saying the panel below already
+        says "Nothing waiting for review." The other two tabs never carry one —
+        the size of "Everything" is not a thing anybody is waiting on.
 
-            {/* Hidden entirely on a single page — pagination controls under a
-                six-row list are furniture. */}
-            {pages > 1 && (
-              <div className="flex items-center justify-between border-t border-border px-4 py-3">
-                <span className="text-xs text-muted-foreground">
-                  {current * PER_PAGE + 1}–
-                  {Math.min((current + 1) * PER_PAGE, rows.length)} of {rows.length}
-                </span>
-                <div className="flex gap-1">
-                  <button
-                    type="button"
-                    disabled={current === 0}
-                    onClick={() => setPage(current - 1)}
-                    className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    type="button"
-                    disabled={current >= pages - 1}
-                    onClick={() => setPage(current + 1)}
-                    className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </Card>
+        `animate-rise` moved off the card and onto the root so it plays once on
+        arrival. Left on the card it would replay in full on every tab click,
+        now that the card unmounts.
+      */}
+      <Tabs defaultValue="pending" className="animate-rise gap-4">
+        <TabsList>
+          <TabsTrigger value="pending">
+            Pending review{pending.length ? ` (${pending.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="resolved">Resolved</TabsTrigger>
+          <TabsTrigger value="all">Everything</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="pending">
+          <QueuePanel
+            rows={pending}
+            empty={EMPTY.pending}
+            now={now}
+            categoryLabel={categoryLabel}
+          />
+        </TabsContent>
+        <TabsContent value="resolved">
+          <QueuePanel
+            rows={resolved}
+            empty={EMPTY.resolved}
+            now={now}
+            categoryLabel={categoryLabel}
+          />
+        </TabsContent>
+        <TabsContent value="all">
+          <QueuePanel
+            rows={history}
+            empty={EMPTY.all}
+            now={now}
+            categoryLabel={categoryLabel}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

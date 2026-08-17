@@ -1,12 +1,13 @@
 'use client'
 
-import { ChevronLeft, ChevronRight, Clock, ShieldOff } from 'lucide-react'
+import { Clock, ShieldOff } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { Pager } from '@/components/Pager'
 import { useFormatInstant } from '@/components/PrefsProvider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -87,45 +88,6 @@ function PersonLink({
   )
 }
 
-function Pager({
-  page,
-  pages,
-  onPage,
-  total,
-}: {
-  page: number
-  pages: number
-  onPage: (p: number) => void
-  total: number
-}) {
-  if (total === 0) return null
-  return (
-    <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
-      <span className="text-xs tabular-nums text-muted-foreground">
-        {total} total · page {page + 1} of {pages}
-      </span>
-      <div className="flex gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={page === 0}
-          onClick={() => onPage(page - 1)}
-        >
-          <ChevronLeft />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={page >= pages - 1}
-          onClick={() => onPage(page + 1)}
-        >
-          <ChevronRight />
-        </Button>
-      </div>
-    </div>
-  )
-}
-
 export function ModerationLog({
   kicks,
   bans,
@@ -146,10 +108,25 @@ export function ModerationLog({
   const [banPage, setBanPage] = useState(0)
   const [lifting, setLifting] = useState<Ban | null>(null)
 
-  const kickPages = Math.max(1, Math.ceil(kicks.length / PER_PAGE))
-  const banPages = Math.max(1, Math.ceil(bans.length / PER_PAGE))
-  const kickSlice = kicks.slice(kickPage * PER_PAGE, kickPage * PER_PAGE + PER_PAGE)
-  const banSlice = bans.slice(banPage * PER_PAGE, banPage * PER_PAGE + PER_PAGE)
+  /*
+   * THE CLAMP THE OTHER TWO LISTS ALWAYS HAD.
+   *
+   * Lifting a ban calls router.refresh(), which re-renders this with a shorter
+   * `bans` array. On page 2 of an eleven-row list that leaves ten rows and a
+   * page that no longer exists, so the slice came back empty and the panel
+   * rendered "Nobody is currently banned." — a false statement about ten people
+   * who are — under a pager reading "page 2 of 1". Both lists now pin the page
+   * to one that exists, the way `Paged` and the incident queue always did.
+   */
+  const kickPages = Math.ceil(kicks.length / PER_PAGE)
+  const banPages = Math.ceil(bans.length / PER_PAGE)
+  const kickCurrent = Math.min(kickPage, Math.max(0, kickPages - 1))
+  const banCurrent = Math.min(banPage, Math.max(0, banPages - 1))
+  const kickSlice = kicks.slice(
+    kickCurrent * PER_PAGE,
+    kickCurrent * PER_PAGE + PER_PAGE,
+  )
+  const banSlice = bans.slice(banCurrent * PER_PAGE, banCurrent * PER_PAGE + PER_PAGE)
 
   const lift = async (b: Ban) => {
     try {
@@ -236,10 +213,11 @@ export function ModerationLog({
               </ul>
             )}
             <Pager
-              page={kickPage}
-              pages={kickPages}
-              onPage={setKickPage}
+              page={kickCurrent}
+              perPage={PER_PAGE}
               total={kicks.length}
+              onPage={setKickPage}
+              className="border-t border-border px-4 py-3"
             />
           </Card>
         </TabsContent>
@@ -301,10 +279,11 @@ export function ModerationLog({
               </ul>
             )}
             <Pager
-              page={banPage}
-              pages={banPages}
-              onPage={setBanPage}
+              page={banCurrent}
+              perPage={PER_PAGE}
               total={bans.length}
+              onPage={setBanPage}
+              className="border-t border-border px-4 py-3"
             />
           </Card>
         </TabsContent>

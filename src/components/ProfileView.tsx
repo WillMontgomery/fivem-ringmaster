@@ -17,12 +17,14 @@ import {
 import { useState } from 'react'
 import Link from 'next/link'
 
+import { Pager } from '@/components/Pager'
 import { PlayerActions } from '@/components/PlayerActions'
 import { ProvenanceTag } from '@/components/Provenance'
 import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 // Aliased: `Ban` in this file is already the lucide icon.
 import type { Ban as BanRecord } from '@/lib/bans'
 import { humanDuration } from '@/lib/duration'
@@ -388,10 +390,27 @@ function actionLabel(action: string): string {
 const NOT_AN_ACTION = new Set(['incident.resolve'])
 
 /**
+ * FIVE ROWS A PAGE, ON EVERY PANEL OF THIS PAGE — the owner's number.
+ *
+ * This is a page you read top to bottom while deciding something about a
+ * person: identity, then live state, then what has been done to them, then what
+ * they play. Ten rows in each of three panels made the moderation history alone
+ * taller than a laptop screen, so "what do they actually do on this server" was
+ * below the fold on every profile that had any history at all. Five keeps all
+ * four panels in one view and makes the reading order survive.
+ *
+ * It is passed explicitly at all three call sites as well as being the default.
+ * `Paged` is local to this file today, but a default is a quiet thing to change
+ * and the next person to reuse this component should have to state a size
+ * rather than inherit the profile page's.
+ */
+const PROFILE_PER_PAGE = 5
+
+/**
  * A list that does not grow without bound.
  *
  * Every moderation section on this page is append-only, so on a long-lived
- * player each one grows forever and the page becomes a scroll. Ten at a time,
+ * player each one grows forever and the page becomes a scroll. Five at a time,
  * with the control hidden entirely when there is only one page — pagination on
  * a three-row list is noise.
  *
@@ -400,7 +419,7 @@ const NOT_AN_ACTION = new Set(['incident.resolve'])
  */
 function Paged<T>({
   items,
-  perPage = 10,
+  perPage = PROFILE_PER_PAGE,
   children,
 }: {
   items: T[]
@@ -417,32 +436,13 @@ function Paged<T>({
   return (
     <>
       {children(slice)}
-      {pages > 1 && (
-        <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
-          <span className="text-xs text-muted-foreground">
-            {current * perPage + 1}–{Math.min((current + 1) * perPage, items.length)} of{' '}
-            {items.length}
-          </span>
-          <div className="flex gap-1">
-            <button
-              type="button"
-              disabled={current === 0}
-              onClick={() => setPage(current - 1)}
-              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground"
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              disabled={current >= pages - 1}
-              onClick={() => setPage(current + 1)}
-              className="rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-30 disabled:hover:text-muted-foreground"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
+      <Pager
+        page={current}
+        perPage={perPage}
+        total={items.length}
+        onPage={setPage}
+        className="mt-3 border-t border-border/60 pt-3"
+      />
     </>
   )
 }
@@ -462,10 +462,24 @@ function Paged<T>({
  * this player has never reported anybody, which is itself a thing worth
  * knowing. A tab with the count hidden would just look unvisited.
  *
- * TEN ROWS A PAGE, via the same `Paged` the other lists use. `key={tab}`
- * remounts it on a tab change, which resets to page one — staying on page three
- * of a list you just swapped out is the kind of thing that reads as a broken
- * filter.
+ * REAL TABS NOW, not two styled <button>s. The strip this replaces had no
+ * `role="tablist"`, no `aria-selected`, no roving tabindex and no arrow keys —
+ * it looked like tabs and behaved like two unrelated buttons. `ui/tabs` is Base
+ * UI underneath, so arrows move between them, Enter activates, and the panel is
+ * announced as the thing the tab controls.
+ *
+ * THE ROOT IS CONTROLLED, and that is not optional. `tab` is read outside the
+ * panels: the "N PENDING" badge in the section header counts the tab you are
+ * looking at. A `defaultValue` root would leave that badge frozen on the first
+ * tab's number while the list under it changed, which is the specific kind of
+ * wrong that gets believed.
+ *
+ * FIVE ROWS A PAGE, and the page still resets on a tab change — by unmount
+ * rather than by `key={tab}`. Base UI panels default to `keepMounted={false}`,
+ * so each direction has its own `Paged` and the hidden one is torn down; coming
+ * back lands on page one exactly as the remount used to. Worth stating because
+ * it is now a consequence of a default rather than of a line of code: if
+ * `keepMounted` is ever added here, the reset goes with it.
  */
 function IncidentsPanel({
   against,
@@ -497,53 +511,77 @@ function IncidentsPanel({
         ) : null
       }
     >
-      <div className="mb-3 flex flex-wrap gap-1">
-        {(
-          [
-            ['against', `Filed against them (${against.length})`],
-            ['by', `Filed by them (${filed.length})`],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={cn(
-              'rounded-lg px-3 py-1.5 text-sm transition-colors',
-              tab === id
-                ? 'bg-card text-foreground ring-1 ring-inset ring-border'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as 'against' | 'by')}
+        className="gap-3"
+      >
+        <TabsList>
+          <TabsTrigger value="against">
+            Filed against them ({against.length})
+          </TabsTrigger>
+          <TabsTrigger value="by">Filed by them ({filed.length})</TabsTrigger>
+        </TabsList>
 
-      {rows.length ? (
-        <Paged key={tab} items={rows}>
-          {(slice) => (
-            <ul>
-              {slice.map((i) => (
-                <IncidentRow
-                  key={i.id}
-                  i={i}
-                  now={now}
-                  direction={tab}
-                  categoryLabel={categoryLabel}
-                />
-              ))}
-            </ul>
-          )}
-        </Paged>
-      ) : (
-        <Empty>
-          {tab === 'against'
-            ? 'Nobody has ever filed an incident about this player.'
-            : 'This player has never reported anybody.'}
-        </Empty>
-      )}
+        <TabsContent value="against">
+          <IncidentList
+            rows={against}
+            direction="against"
+            now={now}
+            categoryLabel={categoryLabel}
+          />
+        </TabsContent>
+        <TabsContent value="by">
+          <IncidentList
+            rows={filed}
+            direction="by"
+            now={now}
+            categoryLabel={categoryLabel}
+          />
+        </TabsContent>
+      </Tabs>
     </Section>
+  )
+}
+
+/** One direction's worth of incidents, paginated, or the sentence for none. */
+function IncidentList({
+  rows,
+  direction,
+  now,
+  categoryLabel,
+}: {
+  rows: ProfileIncident[]
+  direction: 'against' | 'by'
+  now: number
+  categoryLabel: Record<string, string>
+}) {
+  if (rows.length === 0) {
+    return (
+      <Empty>
+        {direction === 'against'
+          ? 'Nobody has ever filed an incident about this player.'
+          : 'This player has never reported anybody.'}
+      </Empty>
+    )
+  }
+
+  return (
+    <Paged items={rows} perPage={PROFILE_PER_PAGE}>
+      {(slice) => (
+        <ul>
+          {slice.map((i) => (
+            <IncidentRow
+              key={i.id}
+              i={i}
+              now={now}
+              direction={direction}
+              categoryLabel={categoryLabel}
+            />
+          ))}
+        </ul>
+      )}
+    </Paged>
   )
 }
 
@@ -955,7 +993,7 @@ export function ProfileView({
         }
       >
         {moderationActions.length ? (
-          <Paged items={moderationActions}>
+          <Paged items={moderationActions} perPage={PROFILE_PER_PAGE}>
             {(slice) => (
               <ul>
                 {slice.map((a, i) => (
@@ -1068,7 +1106,7 @@ export function ProfileView({
             </Empty>
           )
         ) : (
-          <Paged items={p.matches}>
+          <Paged items={p.matches} perPage={PROFILE_PER_PAGE}>
             {(slice) => (
               <ul className="space-y-0">
                 {slice.map((m) => (

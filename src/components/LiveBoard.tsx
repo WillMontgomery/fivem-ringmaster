@@ -7,10 +7,10 @@ import { MatchCard, squadColour } from '@/components/MatchCard'
 import { PlayerTable } from '@/components/PlayerTable'
 import { ServerStrip } from '@/components/ServerStrip'
 import { Card } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { PlayerRow as Player } from '@/lib/ingest'
 import { useLiveState } from '@/lib/livePoll'
 import type { liveView } from '@/lib/state'
-import { cn } from '@/lib/utils'
 
 type View = ReturnType<typeof liveView>
 
@@ -44,10 +44,6 @@ export function LiveBoard({
   // renders exactly what it was given.
   const polled = useLiveState(live)
   const view = polled?.view ?? initialView
-  // "All players" is the default view: the first question on opening the
-  // console is almost always "who is on", not "how are the matches arranged".
-  const [mode, setMode] = useState<'match' | 'all'>('all')
-
   /**
    * A ticking clock, so "connected for" counts up between pushes instead of
    * freezing until the next snapshot arrives.
@@ -129,63 +125,37 @@ export function LiveBoard({
       )}
 
       {view.online && (
-        <>
-          <div className="flex items-center gap-2">
-            <div className="flex gap-0.5 rounded-lg border border-border bg-card/60 p-1">
-              {(
-                [
-                  { k: 'all', label: 'All players', icon: Rows3 },
-                  { k: 'match', label: 'By match', icon: LayoutGrid },
-                ] as const
-              ).map(({ k, label, icon: Icon }) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setMode(k)}
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors',
-                    mode === k
-                      ? 'bg-primary/15 text-primary'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <Icon className="size-3.5" />
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
+        /*
+          TWO ARRANGEMENTS, AS REAL TABS.
 
-          {mode === 'match' ? (
-            <div className="space-y-4">
-              {view.matches.map((m) => (
-                <MatchCard
-                  key={m.id}
-                  match={m}
-                  players={playersOf(m.id)}
-                  server={server}
-                  now={now}
-                />
-              ))}
+          This was a hand-rolled segmented control: two <button>s and a ternary,
+          with no tablist role, no aria-selected and no arrow keys — the third
+          copy of a strip the profile page and the incident queue were each
+          carrying their own version of. It is a genuine tab: two mutually
+          exclusive views of the same data, swapping the whole body.
 
-              {lobby.length > 0 && (
-                <Card className="surface-edge gap-0 overflow-hidden py-0">
-                  <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
-                    <span className="text-sm">Lobby</span>
-                    <span className="text-xs text-muted-foreground">
-                      connected, not in a match
-                    </span>
-                  </header>
-                  <PlayerTable
-                    players={lobby}
-                    server={server}
-                    now={now}
-                    squadColour={() => undefined}
-                  />
-                </Card>
-              )}
-            </div>
-          ) : (
+          UNCONTROLLED, because nothing outside reads which one is open. The
+          ternary already unmounted the hidden arrangement, so `PlayerTable`'s
+          search and sort were already discarded on a switch; Base UI panels
+          default to `keepMounted={false}` and do exactly the same thing.
+
+          "All players" stays the default: the first question on opening the
+          console is almost always "who is on", not "how are the matches
+          arranged".
+        */
+        <Tabs defaultValue="all" className="gap-4">
+          <TabsList>
+            <TabsTrigger value="all">
+              <Rows3 />
+              All players
+            </TabsTrigger>
+            <TabsTrigger value="match">
+              <LayoutGrid />
+              By match
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="all">
             <Card className="surface-edge gap-0 overflow-hidden py-0">
               <PlayerTable
                 players={view.players}
@@ -202,8 +172,37 @@ export function LiveBoard({
                 }
               />
             </Card>
-          )}
-        </>
+          </TabsContent>
+
+          <TabsContent value="match" className="space-y-4">
+            {view.matches.map((m) => (
+              <MatchCard
+                key={m.id}
+                match={m}
+                players={playersOf(m.id)}
+                server={server}
+                now={now}
+              />
+            ))}
+
+            {lobby.length > 0 && (
+              <Card className="surface-edge gap-0 overflow-hidden py-0">
+                <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
+                  <span className="text-sm">Lobby</span>
+                  <span className="text-xs text-muted-foreground">
+                    connected, not in a match
+                  </span>
+                </header>
+                <PlayerTable
+                  players={lobby}
+                  server={server}
+                  now={now}
+                  squadColour={() => undefined}
+                />
+              </Card>
+            )}
+          </TabsContent>
+        </Tabs>
       )}
     </div>
   )
