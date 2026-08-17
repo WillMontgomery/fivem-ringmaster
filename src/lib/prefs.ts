@@ -32,14 +32,23 @@ import { DISPLAY_LOCALE, FALLBACK_TIME_ZONE } from './time'
 
 export const THEME_COOKIE = 'rm_theme'
 export const TZ_COOKIE = 'rm_tz'
-/** Presence-only. Set when someone dismisses the prompt without answering. */
-export const PREFS_NAG_COOKIE = 'rm_prefs_nag'
+
+/*
+ * THERE IS NO `rm_prefs_nag` ANY MORE, and its absence is deliberate rather
+ * than an oversight. The prompt used to be dismissable four ways, only one of
+ * which ("More settings") wrote nothing at all — see PrefsDialog for how that
+ * made the dialog reappear on the page it had just navigated to. The prompt now
+ * has exactly one exit, so "have they answered" is `rm_tz` and nothing else.
+ *
+ * Anyone still holding the old cookie is prompted once more. That is correct:
+ * they dismissed a question they were never given a working way to answer, and
+ * until they answer it their timestamps read UTC.
+ */
 
 /** The localStorage key the theme lived in before this. Migrated, then dead. */
 export const LEGACY_THEME_KEY = 'ringmaster.theme'
 
 export const PREF_MAX_AGE_SECONDS = 60 * 60 * 24 * 365
-export const NAG_MAX_AGE_SECONDS = 60 * 60 * 24 * 180
 
 /**
  * THREE VALUES, NOT TWO.
@@ -63,7 +72,7 @@ export interface Prefs {
   /** False when the theme is the default rather than a stated choice. */
   themeIsSet: boolean
   locale: string
-  /** Nobody has stated a zone and nobody has dismissed the prompt. */
+  /** Nobody has stated a zone. The prompt cannot be closed any other way. */
   shouldPrompt: boolean
 }
 
@@ -163,7 +172,6 @@ export function normalizeTheme(raw: string | null | undefined): Theme | null {
 export function readPrefs(jar: CookieJar): Prefs {
   const theme = normalizeTheme(jar.get(THEME_COOKIE)?.value)
   const timeZone = normalizeTimeZone(jar.get(TZ_COOKIE)?.value)
-  const dismissed = jar.get(PREFS_NAG_COOKIE) !== undefined
 
   return {
     theme: theme ?? 'system',
@@ -171,7 +179,7 @@ export function readPrefs(jar: CookieJar): Prefs {
     timeZone: timeZone ?? FALLBACK_TIME_ZONE,
     timeZoneIsSet: timeZone !== null,
     locale: DISPLAY_LOCALE,
-    shouldPrompt: timeZone === null && !dismissed,
+    shouldPrompt: timeZone === null,
   }
 }
 

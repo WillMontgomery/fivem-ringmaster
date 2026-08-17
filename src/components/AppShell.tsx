@@ -645,8 +645,10 @@ export async function AppShell({
             has happened for two hours. Renders nothing. */}
         {signedIn && <IdleGuard deadline={deadline} />}
 
-        {/* Asked once, on the first login that has no timezone stored and no
-            record of the question being dismissed. */}
+        {/* Asked on every login until it is answered, because the answer is
+            what dismisses it. This renders on all thirteen routes, so a prompt
+            with any other exit remounts on the next navigation — which is
+            exactly what "More settings" used to do. See PrefsDialog. */}
         {signedIn && prefs.shouldPrompt && (
           <PrefsDialog initialTheme={prefs.theme} />
         )}

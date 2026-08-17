@@ -1,7 +1,6 @@
 'use client'
 
 import { Clock } from 'lucide-react'
-import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 
@@ -18,13 +17,7 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { IDLE_POLICY_LABEL } from '@/lib/idle'
-import {
-  NAG_MAX_AGE_SECONDS,
-  PREFS_NAG_COOKIE,
-  normalizeTimeZone,
-  writePrefCookie,
-  type Theme,
-} from '@/lib/prefs'
+import { normalizeTimeZone, type Theme } from '@/lib/prefs'
 
 /**
  * Asked once: how do you want this console to look, and where are you.
@@ -41,12 +34,30 @@ import {
  * indistinguishable from the behaviour it replaces for anyone who never
  * answers, and would remove every reason to answer.
  *
- * SHOWN ONCE, THEN NEVER AGAIN UNASKED. Dismissal is persisted for six months
- * in `rm_prefs_nag`; without that it would re-fire on every navigation, since
- * the shell that mounts it renders on all thirteen routes. The settings page is
- * the destination for anyone who dismissed it and changed their mind, which is
- * also why this is allowed to be a dialog at all — a modal with nowhere to send
- * the person who closes it is a dead end.
+ * ANSWERING IS THE ONLY WAY OUT, and every other exit has been removed: no
+ * "Not now", no "More settings", no close X, no backdrop press, no Escape.
+ *
+ * IT USED TO HAVE ALL FIVE AND THAT IS WHAT MADE IT RECUR. `shouldPrompt` is
+ * `rm_tz` unset — a cookie only saving writes — so the only exit that stopped
+ * the question being asked again was Save. "Not now" and the X wrote a
+ * six-month `rm_prefs_nag` to paper over it, but "More settings" wrote NOTHING
+ * and navigated to /settings, which renders this same shell: the dialog
+ * remounted on top of the page it had just sent you to, and again on every
+ * navigation after. The one button that looked like the way to answer properly
+ * was the one that guaranteed the question would keep coming back.
+ *
+ * That is why there is no nag cookie any more. A dialog with one exit needs no
+ * record of the other four, and a cookie nothing writes but something still
+ * reads is the shape of bug this codebase produces most.
+ *
+ * A MANDATORY MODAL IS ONLY ACCEPTABLE BECAUSE THE ANSWER IS PRE-FILLED. The
+ * detected zone arrives selected and Save is live on the first frame, so the
+ * cost of the question is one click. It stays a question rather than a silent
+ * detection for the reason above: timestamps here are read as evidence.
+ *
+ * Base UI asks for a `Dialog.Close` inside a modal popup so touch screen
+ * readers can escape it. Save is that escape — it is reachable by keyboard from
+ * the moment the dialog opens and it always closes the dialog.
  *
  * OPENED IN AN EFFECT, NEVER DURING RENDER. Whether to prompt is decided on the
  * server from cookies; opening during render would put a focus trap into the
@@ -75,16 +86,9 @@ export function PrefsDialog({ initialTheme }: { initialTheme: Theme }) {
     setOpen(true)
   }, [])
 
-  /** Stop asking. Not an answer — times stay UTC, which is the honest result. */
-  const dismiss = () => {
-    writePrefCookie(PREFS_NAG_COOKIE, 'off', NAG_MAX_AGE_SECONDS)
-    setOpen(false)
-  }
-
   const save = () => {
     applyTheme(theme)
     if (zone) applyTimeZone(zone)
-    writePrefCookie(PREFS_NAG_COOKIE, 'off', NAG_MAX_AGE_SECONDS)
     setOpen(false)
 
     // Server components formatted this page's timestamps with the OLD zone.
@@ -96,16 +100,21 @@ export function PrefsDialog({ initialTheme }: { initialTheme: Theme }) {
   return (
     <Dialog
       open={open}
-      onOpenChange={(v) => {
-        // Escape and the backdrop both land here. Closing without answering is
-        // a dismissal, so it persists — otherwise the dialog returns on the
-        // next click and becomes something to fight rather than to read.
-        if (!v) dismiss()
-      }}
+      // NO `onOpenChange`, and that is the whole mechanism. The dialog is
+      // controlled, so a close request from Escape or the backdrop reaches a
+      // handler that does not exist and the open state never moves. Save is the
+      // only code path that lowers it.
+      //
+      // `disablePointerDismissal` on top of that, so an outside press does not
+      // even start the close it cannot finish.
+      disablePointerDismissal
     >
       {/* Wider than the `sm:max-w-sm` default: this holds a searchable list of
-          four hundred timezones, not a confirm prompt. */}
-      <DialogContent className="sm:max-w-lg">
+          four hundred timezones, not a confirm prompt.
+
+          `showCloseButton={false}`: the X is the shell's default and it was one
+          of the exits that let this recur. */}
+      <DialogContent className="sm:max-w-lg" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>Set up your console</DialogTitle>
           <DialogDescription>
@@ -158,22 +167,13 @@ export function PrefsDialog({ initialTheme }: { initialTheme: Theme }) {
           </p>
         </div>
 
-        {/* Last child: DialogFooter's negative margins assume that position. */}
+        {/* Last child: DialogFooter's negative margins assume that position.
+
+            One button. `disabled` is unreachable in practice — `zone` is seeded
+            from the browser's own detection in the mount effect — and is kept
+            for the case where `Intl` reports something the normaliser rejects,
+            where the picker below is still a working way to answer. */}
         <DialogFooter>
-          <Button variant="ghost" onClick={dismiss}>
-            Not now
-          </Button>
-          {/* `nativeButton={false}` because the render prop supplies an <a>,
-              not a <button>. Base UI logs an accessibility error otherwise —
-              it assumes native button semantics unless told the element is
-              something else. */}
-          <Button
-            variant="ghost"
-            nativeButton={false}
-            render={<Link href="/settings" />}
-          >
-            More settings
-          </Button>
           <Button onClick={save} disabled={!zone}>
             Save
           </Button>
