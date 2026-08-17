@@ -50,6 +50,12 @@ credentials
 # Same convention as the gamemode repo.
 PLAN.md
 
+# Agent worktrees. `git worktree add` leaves a directory with its own .git file,
+# which `git add -A` from the main checkout commits as an EMBEDDED REPO -- a
+# gitlink to a commit that exists nowhere the remote can see. That happened once
+# in the gamemode repo and the commit had to be rebuilt. Same convention here.
+.worktrees/
+
 # Local overrides
 *.local
 config.local.*
