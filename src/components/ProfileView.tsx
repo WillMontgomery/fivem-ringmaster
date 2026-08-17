@@ -420,10 +420,13 @@ const PROFILE_PER_PAGE = 5
 function Paged<T>({
   items,
   perPage = PROFILE_PER_PAGE,
+  label,
   children,
 }: {
   items: T[]
   perPage?: number
+  /** Names this list's pager. Three of them share this page — see Pager. */
+  label: string
   children: (slice: T[]) => React.ReactNode
 }) {
   const [page, setPage] = useState(0)
@@ -441,6 +444,7 @@ function Paged<T>({
         perPage={perPage}
         total={items.length}
         onPage={setPage}
+        label={label}
         className="mt-3 border-t border-border/60 pt-3"
       />
     </>
@@ -567,7 +571,7 @@ function IncidentList({
   }
 
   return (
-    <Paged items={rows} perPage={PROFILE_PER_PAGE}>
+    <Paged items={rows} perPage={PROFILE_PER_PAGE} label="Incident pages">
       {(slice) => (
         <ul>
           {slice.map((i) => (
@@ -993,7 +997,11 @@ export function ProfileView({
         }
       >
         {moderationActions.length ? (
-          <Paged items={moderationActions} perPage={PROFILE_PER_PAGE}>
+          <Paged
+            items={moderationActions}
+            perPage={PROFILE_PER_PAGE}
+            label="Kick and ban pages"
+          >
             {(slice) => (
               <ul>
                 {slice.map((a, i) => (
@@ -1106,7 +1114,7 @@ export function ProfileView({
             </Empty>
           )
         ) : (
-          <Paged items={p.matches} perPage={PROFILE_PER_PAGE}>
+          <Paged items={p.matches} perPage={PROFILE_PER_PAGE} label="Match history pages">
             {(slice) => (
               <ul className="space-y-0">
                 {slice.map((m) => (

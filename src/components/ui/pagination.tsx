@@ -45,7 +45,12 @@ function PaginationContent({ className, ...props }: React.ComponentProps<"ul">) 
   return (
     <ul
       data-slot="pagination-content"
-      className={cn("flex flex-row items-center gap-1", className)}
+      // WRAPS RATHER THAN CLIPS. Nine pages of numbered buttons plus two arrows
+      // is wider than a phone-width card, and a nowrap row would put the last
+      // pages — including Next — past the edge with nothing to scroll. The
+      // parent already wraps the range label away from the control; this lets
+      // the control wrap within itself when even that is not enough.
+      className={cn("flex flex-row flex-wrap items-center justify-end gap-1", className)}
       {...props}
     />
   )

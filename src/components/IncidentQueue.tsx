@@ -163,6 +163,7 @@ function QueuePanel({
             page={current}
             perPage={PER_PAGE}
             total={rows.length}
+            label="Incident queue pages"
             onPage={setPage}
             className="border-t border-border px-4 py-3"
           />

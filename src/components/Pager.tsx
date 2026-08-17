@@ -44,6 +44,7 @@ export function Pager({
   perPage,
   total,
   onPage,
+  label,
   className,
 }: {
   /** Zero-indexed, and already clamped against `total` by the caller. */
@@ -51,6 +52,17 @@ export function Pager({
   perPage: number
   total: number
   onPage: (page: number) => void
+  /**
+   * What this pager pages, e.g. "Match history pages".
+   *
+   * NAMED PER LIST BECAUSE A PAGE CAN HOLD SEVERAL. Each of these is a
+   * navigation landmark, and the player profile mounts three — incidents,
+   * kicks and bans, match history. Landmarks are how a screen-reader user jumps
+   * around a page, so three called "pagination" is a menu of three identical
+   * entries leading somewhere different. Falls back to the bare name for a page
+   * with only one.
+   */
+  label?: string
   /** Where this footer sits — the border and padding of its host list. */
   className?: string
 }) {
@@ -71,7 +83,7 @@ export function Pager({
         {from}–{to} of {total}
       </span>
 
-      <Pagination>
+      <Pagination aria-label={label ?? 'pagination'}>
         <PaginationContent>
           <PaginationItem>
             <PaginationPrevious

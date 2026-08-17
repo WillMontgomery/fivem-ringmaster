@@ -1,11 +1,26 @@
+'use client'
+
 import { OctagonX } from 'lucide-react'
 import Link from 'next/link'
+import { useState } from 'react'
 
+import { Pager } from '@/components/Pager'
 import { Card } from '@/components/ui/card'
 import type { AuditRow } from '@/lib/audit'
 import type { Prefs } from '@/lib/prefs'
 import { formatInstant, utcIso } from '@/lib/time'
 import { cn } from '@/lib/utils'
+
+/**
+ * Ten a page, matching /moderation.
+ *
+ * THE SAME ROWS WERE PAGINATED IN ONE PLACE AND NOT THE OTHER. `ModerationLog`
+ * takes `audit.recent(200)`, filters it to kicks, and pages it at ten; this file
+ * took `audit.recent(100)` and rendered all hundred in one list. So the console
+ * paginated a filtered SUBSET of the audit log while showing the raw log whole
+ * — on the page whose own heading is "every action any admin took".
+ */
+const PER_PAGE = 10
 
 /**
  * The audit log's rows.
@@ -96,6 +111,15 @@ export function AuditList({
   rows: AuditRow[]
   prefs: Prefs
 }) {
+  const [page, setPage] = useState(0)
+
+  // Clamped rather than trusted, the same way ModerationLog does it: a refresh
+  // that shrinks the list under the current page would otherwise render an
+  // empty page above a control insisting there is more.
+  const pages = Math.ceil(rows.length / PER_PAGE)
+  const current = Math.min(page, Math.max(0, pages - 1))
+  const slice = rows.slice(current * PER_PAGE, current * PER_PAGE + PER_PAGE)
+
   return (
     <Card className="surface-edge gap-0 overflow-hidden py-0">
       {rows.length === 0 ? (
@@ -104,7 +128,7 @@ export function AuditList({
         </p>
       ) : (
         <ul className="divide-y divide-border/60">
-          {rows.map((r) => {
+          {slice.map((r) => {
             const bad = r.outcome === 'failed'
             return (
               <li
@@ -173,6 +197,15 @@ export function AuditList({
           })}
         </ul>
       )}
+
+      <Pager
+        page={current}
+        perPage={PER_PAGE}
+        total={rows.length}
+        onPage={setPage}
+        label="Audit log pages"
+        className="border-t px-4 py-3"
+      />
     </Card>
   )
 }

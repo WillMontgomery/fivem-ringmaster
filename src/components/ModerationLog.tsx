@@ -216,6 +216,7 @@ export function ModerationLog({
               page={kickCurrent}
               perPage={PER_PAGE}
               total={kicks.length}
+              label="Kick pages"
               onPage={setKickPage}
               className="border-t border-border px-4 py-3"
             />
@@ -282,6 +283,7 @@ export function ModerationLog({
               page={banCurrent}
               perPage={PER_PAGE}
               total={bans.length}
+              label="Active ban pages"
               onPage={setBanPage}
               className="border-t border-border px-4 py-3"
             />
