@@ -1,5 +1,42 @@
 "use client"
 
+/**
+ * TOOLTIP: ONE SHORT PHRASE, ON A CONTROL. Its sibling is `hover-card.tsx`, and
+ * the boundary between them is the whole reason this comment exists — two
+ * components with overlapping jobs and nothing written down is how this console
+ * accumulated nine native `title` attributes and one lonely hover card.
+ *
+ *   Use `Tooltip` for about six words naming or explaining a control that a
+ *   keyboard can actually focus, so the popup opens on `:focus-visible` too.
+ *   `TooltipContent` is a single-line pill — `inline-flex items-center text-xs`
+ *   on an inverted background. A sentence does not survive in it.
+ *
+ *   Use `HoverCard` when the content has real internal structure: a header row,
+ *   a body, a footer. A CARD IS A LAYOUT, NOT AN EMPHASIS LEVEL. Prose is not
+ *   promoted to a card for being important; it is moved there for having parts.
+ *
+ * NEITHER ONE IS AN ACCESSIBILITY MECHANISM. In Base UI 1.7.0 the hover
+ * interaction is `mouseOnly: true`, so it never fires on touch. Focus is wired
+ * separately (`useFocus`), so a tooltip on a REAL control does open on
+ * `:focus-visible` — which is most of why the trigger being focusable matters.
+ * But the popup gets no `role="tooltip"` and no `aria-describedby` anywhere in
+ * this package, so it is never associated with its trigger and a screen reader
+ * is told nothing by it. Any fact worth showing must ALSO exist in the DOM —
+ * visible, or `sr-only` and pointed at with `aria-describedby`. `PlayerTable`'s
+ * `FilterChip` is the worked example, and note that its `aria-describedby`
+ * points at the `sr-only` copy, never at the popup.
+ *
+ * AND THE NATIVE `title` ATTRIBUTE IS NOT THE CHEAP VERSION OF THIS FILE. It is
+ * banned on DOM elements; it cannot be selected, focused, or read aloud, and it
+ * never fires on a touch device. The full rule, with the reasoning and the
+ * per-site history, is in `docs/hover-text.md`.
+ *
+ * DELAYS ARE PER-TRIGGER. `delay` and `closeDelay` are props on
+ * `TooltipTrigger`, not just on the `Provider` — so tuning one site does not
+ * require nesting a second provider, and "the delays feel different" is never a
+ * reason to reach for the other component.
+ */
+
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip"
 
 import { cn } from "@/lib/utils"

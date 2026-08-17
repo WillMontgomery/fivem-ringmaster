@@ -4,11 +4,10 @@ import { OctagonX } from 'lucide-react'
 import Link from 'next/link'
 import { useState } from 'react'
 
+import { LocalTime } from '@/components/LocalTime'
 import { Pager } from '@/components/Pager'
 import { Card } from '@/components/ui/card'
 import type { AuditRow } from '@/lib/audit'
-import type { Prefs } from '@/lib/prefs'
-import { formatInstant, utcIso } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 /**
@@ -49,9 +48,18 @@ const PER_PAGE = 10
  * it used to use resolved `undefined` to the Node process's timezone — the
  * container's, not the reader's — and RSC output is serialised once and never
  * re-executed in the browser, so there was nothing to correct it after mount.
- * Every time here goes through `formatInstant` with the zone the reader stated
- * and carries the UTC instant on `title` for anyone reconciling against a
+ * Every time here goes through `LocalTime` with the zone the reader stated, and
+ * shows the UTC instant VISIBLY beside it for anyone reconciling against a
  * game-server log.
+ *
+ * IT USED TO FORMAT ITS OWN TIMES, importing `formatInstant` and `utcIso`
+ * directly rather than using `LocalTime` like everything else, and putting the
+ * UTC on a `title` attribute. That is how the two drifted: `lib/time.ts` claimed
+ * "EVERY DISPLAYED TIME KEEPS ONE" while this file was the only place still
+ * doing it by hand. Folding it into `LocalTime` means the next change to how a
+ * timestamp reads happens once. This is also the log-correlation surface, so it
+ * is the first place the UTC became visible text rather than hover text — and
+ * the worst possible place for a popup, at ten rows a page.
  */
 
 const ACTION_LABEL: Record<string, string> = {
@@ -104,13 +112,14 @@ function PersonLink({
   )
 }
 
-export function AuditList({
-  rows,
-  prefs,
-}: {
-  rows: AuditRow[]
-  prefs: Prefs
-}) {
+/**
+ * `prefs` USED TO BE A PROP HERE and is now read from context by `LocalTime`.
+ * Threading it in alongside the provider that already holds it gave the zone two
+ * sources of truth in one tree — the exact hazard `PrefsProvider`'s own comment
+ * warns about, where somebody passes prefs they built locally and reintroduces
+ * the ambient-zone bug one component at a time.
+ */
+export function AuditList({ rows }: { rows: AuditRow[] }) {
   const [page, setPage] = useState(0)
 
   // Clamped rather than trusted, the same way ModerationLog does it: a refresh
@@ -180,12 +189,12 @@ export function AuditList({
                   )}
                 </div>
                 <div className="shrink-0 text-right">
-                  <div
-                    className="text-xs tabular-nums text-muted-foreground"
-                    title={utcIso(r.ts)}
-                  >
-                    {formatInstant(r.ts, prefs, { withYear: false })}
-                  </div>
+                  <LocalTime
+                    ms={r.ts}
+                    withYear={false}
+                    utc
+                    className="block text-xs tabular-nums text-muted-foreground"
+                  />
                   {bad && (
                     <div className="text-xs uppercase tracking-wider text-danger">
                       failed

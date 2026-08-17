@@ -1,11 +1,9 @@
 import { CircleSlash } from 'lucide-react'
-import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
 import { AuditList } from '@/components/AuditList'
 import * as audit from '@/lib/audit'
-import { readPrefs } from '@/lib/prefs'
 import { currentAdmin } from '@/lib/session'
 
 /**
@@ -25,7 +23,6 @@ export default async function AuditPage() {
   const admin = await currentAdmin()
   if (!admin) redirect('/login')
 
-  const prefs = readPrefs(await cookies())
   const rows = await audit.recent(100)
 
   return (
@@ -42,7 +39,7 @@ export default async function AuditPage() {
           </p>
         </div>
 
-        <AuditList rows={rows} prefs={prefs} />
+        <AuditList rows={rows} />
 
         <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground/60">
           <CircleSlash className="size-3" />

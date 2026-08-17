@@ -598,14 +598,29 @@ export async function AppShell({
               /*
                 THE WIDEST THING IN THE HEADER at ~200px uppercased, and the one
                 that made the old overlap reachable. Below `xl` it keeps the icon
-                and drops the words, with the full text on the element's title --
-                the same trade PlayerSearchTrigger already makes with its
-                placeholder and its ⌘K hint. The sidebar still shows the state in
-                words, so nothing is only available here.
+                and drops the words.
+
+                THE FALLBACK USED TO BE A `title` ATTRIBUTE, AND IT WAS BACKWARDS.
+                The words are hidden precisely at the narrow widths -- and narrow
+                overwhelmingly means touch, where a `title` never fires at all.
+                It was also sitting on an inert `<span>` (`Badge` renders one via
+                `useRender`), so it was unreachable by keyboard and silent to a
+                screen reader at every width. The mechanism was excluded by
+                exactly the condition that triggered it.
+
+                SO THE WORDS NEVER LEAVE THE DOM; they only stop being painted.
+                `sr-only` is `position: absolute` and out of flow, so the Badge's
+                `h-5 overflow-hidden` is unaffected below `xl` -- and because
+                `not-sr-only` restores `white-space: normal`, the nowrap has to be
+                put back explicitly at `xl`.
+
+                Sighted mouse users between 768px and 1280px lose nothing worth a
+                portal: `MaintenanceBadge` in the sidebar shows the state in words
+                down to 768px, and below that the sidebar is a Sheet, where the
+                hover never fired either.
               */
               <Badge
                 variant="outline"
-                title={`Maintenance ${b.maintenance}`}
                 className={cn(
                   'gap-1.5 border-0 text-xs font-medium uppercase tracking-wider ring-1 ring-inset',
                   b.maintenance === 'draining'
@@ -614,7 +629,7 @@ export async function AppShell({
                 )}
               >
                 <CalendarClock className="size-3" />
-                <span className="hidden xl:inline">
+                <span className="sr-only xl:not-sr-only xl:whitespace-nowrap">
                   Maintenance {b.maintenance}
                 </span>
               </Badge>

@@ -511,19 +511,41 @@ export function MaintenancePanel({
         </div>
 
         {canRun && (
-          <Button
-            variant="default"
-            disabled={busy || Boolean(live)}
-            title={
-              live
-                ? 'Cancel the window that is already scheduled first.'
-                : undefined
-            }
-            onClick={revert}
-          >
-            {busy ? <Loader2 className="animate-spin" /> : <Undo2 />}
-            Revert to main
-          </Button>
+          /*
+            THE REASON IS WRITTEN DOWN, NOT HOVERED, AND THAT IS FORCED.
+            A native `title` fires on a `disabled` button; a `TooltipTrigger`
+            does not, because a disabled control swallows the pointer events the
+            trigger listens for. So a like-for-like conversion here deletes the
+            explanation outright, in the one state where the button explains
+            nothing on its own -- which the comment above calls the single moment
+            where "which code is this" matters most.
+
+            The in-repo workaround is to wrap the disabled button in a bare
+            `<span>` (`PlayerActions.tsx:87`), but that only restores the mouse
+            case: the span has no `tabIndex` and no role, so the keyboard and the
+            screen reader still get nothing. There are two copies of that shape
+            already; a third is not the fix.
+
+            NOT `aria-describedby` EITHER: a `disabled` button is not focusable,
+            so nothing ever reaches the description. The visible sentence is what
+            does the work, and it is rendered only while `live`, so the panel
+            gains no permanent noise.
+          */
+          <div className="flex flex-col items-end gap-1">
+            <Button
+              variant="default"
+              disabled={busy || Boolean(live)}
+              onClick={revert}
+            >
+              {busy ? <Loader2 className="animate-spin" /> : <Undo2 />}
+              Revert to main
+            </Button>
+            {live && (
+              <p className="text-xs text-muted-foreground">
+                Cancel the window that is already scheduled first.
+              </p>
+            )}
+          </div>
         )}
       </div>
     </Card>
