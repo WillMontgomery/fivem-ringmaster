@@ -1,7 +1,7 @@
 'use client'
 
 import { ArrowDown, ArrowUp, ChevronsUpDown, Search, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 
 import { openPlayerSearch } from '@/components/PlayerSearch'
 import { PlayerRowView } from '@/components/PlayerRow'
@@ -13,6 +13,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import type { PlayerRow as Player } from '@/lib/ingest'
 import { bucketOf, stateKey, type StateBucket } from '@/lib/playerState'
 import { cn } from '@/lib/utils'
@@ -79,7 +84,13 @@ const COLUMNS: Column[] = [
 const FILTERS: Array<{
   key: 'all' | StateBucket
   label: string
-  /** Shown on hover, because "In the air" needs to say which states it holds. */
+  /**
+   * The chip's explanation — "In the air" has to say which states it holds.
+   *
+   * Rendered by `FilterChip` in two places at once: a tooltip for the mouse and
+   * an `sr-only` element for everyone else. Edit it here; the chip is the only
+   * consumer.
+   */
   title: string
   match: (p: Player) => boolean
 }> = [
@@ -120,6 +131,84 @@ const FILTERS: Array<{
     match: (p) => bucketOf(p.state) === 'lobby',
   },
 ]
+
+/**
+ * One filter chip, with its explanation attached in both directions at once.
+ *
+ * THE TWO HALVES ARE ONE COMPONENT ON PURPOSE. This is the only site in the
+ * console where a tooltip is strictly better than putting the words on screen:
+ * six chips sit in a row and their explanations are one to two lines each, so
+ * inlining them would be a paragraph where a toolbar belongs. These are also
+ * real `<button>`s, so the popup opens on `:focus-visible` — verified with an
+ * actual Tab press — which the native `title` never did.
+ *
+ * BUT A TOOLTIP ALONE IS A REGRESSION HERE. The native `title` this replaces was
+ * announced by screen readers, and Base UI's popup carries no `role="tooltip"`
+ * and no `aria-describedby` at all (verified in 1.7.0), so it is never
+ * associated with the button and never announced. Shipping only the popup would
+ * quietly take the explanation away from the readers who most needed it.
+ *
+ * So the string is rendered twice and neither copy can be deleted without
+ * noticing the other. There is no lint rule standing behind this; the component
+ * boundary is the enforcement.
+ *
+ * THE `sr-only` SPAN SITS OUTSIDE THE BUTTON, and that placement is the whole
+ * trick. Inside, it would join the button's accessible name — the "All" chip
+ * would announce as "All 12 Everyone connected, whatever they are doing" — so it
+ * lives outside and is pointed at with `aria-describedby`, which is the
+ * attribute for "extra detail, read after the name".
+ *
+ * AND NOT `aria-label`. Overwriting the name with `${label}, ${count}. ${title}`
+ * is the tempting one-liner and it breaks WCAG 2.5.3 Label in Name: the
+ * accessible name would no longer contain the visible text verbatim, so
+ * "click All" stops working for anyone driving this by voice.
+ */
+function FilterChip({
+  label,
+  count,
+  description,
+  active,
+  onSelect,
+}: {
+  label: string
+  count: number
+  description: string
+  active: boolean
+  onSelect: () => void
+}) {
+  const id = useId()
+
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-describedby={id}
+              onClick={onSelect}
+              className={cn(
+                'rounded-md px-2 py-1 text-xs transition-colors',
+                active
+                  ? 'bg-primary/15 text-primary'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            />
+          }
+        >
+          {label}
+          <span className="ml-1.5 tabular-nums opacity-50">{count}</span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{description}</TooltipContent>
+      </Tooltip>
+      {/* `sr-only` is `position: absolute`, so this is not a flex item and adds
+          no gap to the chip row it sits in. */}
+      <span id={id} className="sr-only">
+        {description}
+      </span>
+    </>
+  )
+}
 
 function SortIcon({ dir }: { dir: 'asc' | 'desc' | null }) {
   if (dir === 'asc') return <ArrowUp className="size-3" />
@@ -224,26 +313,16 @@ export function PlayerTable({
         </div>
 
         <div className="flex gap-0.5 rounded-lg border border-border bg-background/40 p-0.5">
-          {FILTERS.map((f) => {
-            const count = players.filter(f.match).length
-            return (
-              <button
-                key={f.key}
-                type="button"
-                title={f.title}
-                onClick={() => setFilter(f.key)}
-                className={cn(
-                  'rounded-md px-2 py-1 text-xs transition-colors',
-                  filter === f.key
-                    ? 'bg-primary/15 text-primary'
-                    : 'text-muted-foreground hover:text-foreground',
-                )}
-              >
-                {f.label}
-                <span className="ml-1.5 tabular-nums opacity-50">{count}</span>
-              </button>
-            )
-          })}
+          {FILTERS.map((f) => (
+            <FilterChip
+              key={f.key}
+              label={f.label}
+              count={players.filter(f.match).length}
+              description={f.title}
+              active={filter === f.key}
+              onSelect={() => setFilter(f.key)}
+            />
+          ))}
         </div>
       </div>
 

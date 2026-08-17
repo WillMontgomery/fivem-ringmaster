@@ -25,6 +25,11 @@ import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 // Aliased: `Ban` in this file is already the lucide icon.
 import type { Ban as BanRecord } from '@/lib/bans'
 import { humanDuration } from '@/lib/duration'
@@ -266,30 +271,56 @@ const MODE_LABEL: Record<string, string> = {
 function MatchRow({ m }: { m: ProfileMatch }) {
   const firstButDead = m.placement === 1 && !m.won
 
+  /**
+   * ONLY THE SURPRISING CASE GETS AN EXPLANATION.
+   *
+   * The old `title` covered both `won` and `firstButDead`. The winning case did
+   * not need it: the gold ring and the trophy beside the number already say it,
+   * and a popup on every winning row is noise on a page a moderator scrolls.
+   * `#1 in plain grey` is the one that is genuinely unreadable without a
+   * sentence, because it looks like a rendering bug rather than a real outcome.
+   *
+   * AND IT IS THE `<Tooltip>` ITSELF THAT IS CONDITIONAL, not the string inside
+   * it. Passing `undefined` content to a mounted tooltip buys an empty popup on
+   * every ordinary row — the exact defect a naive conversion produces here.
+   */
+  const badgeClass = cn(
+    'flex w-16 shrink-0 items-center justify-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs font-semibold ring-1 ring-inset',
+    m.won
+      ? 'bg-warn/10 text-warn ring-warn/30'
+      : 'bg-muted/40 text-muted-foreground ring-border',
+  )
+  const badgeInner = (
+    <>
+      {m.won && <Trophy className="size-3" />}
+      {m.placement > 0 ? `#${m.placement}` : '—'}
+    </>
+  )
+  const deadFirstNote =
+    'Placed first but did not survive — the storm took the last squad, so the match had no winner.'
+
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/60 py-2.5 text-sm first:border-t-0 first:pt-0">
-      <span
-        className={cn(
-          'flex w-16 shrink-0 items-center justify-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs font-semibold ring-1 ring-inset',
-          m.won
-            ? 'bg-warn/10 text-warn ring-warn/30'
-            : 'bg-muted/40 text-muted-foreground ring-border',
-        )}
-        // BOTH CASES EXPLAIN THEMSELVES ON HOVER, because "#1 in gold" and "#1
-        // in grey" are otherwise a colour difference somebody has to already
-        // know the meaning of. The trophy is the non-colour half of the same
-        // signal; this is the sentence behind it.
-        title={
-          m.won
-            ? 'Won — still alive when the match ended.'
-            : firstButDead
-              ? 'Placed first but did not survive — the storm took the last squad, so the match had no winner.'
-              : undefined
-        }
-      >
-        {m.won && <Trophy className="size-3" />}
-        {m.placement > 0 ? `#${m.placement}` : '—'}
-      </span>
+      {firstButDead ? (
+        <>
+          <Tooltip>
+            {/* `render` keeps this a `<span>` with its own classes. Left to
+                itself `TooltipTrigger` renders a `<button>`, which would put a
+                button in a bare `<li>` and restyle the badge. */}
+            <TooltipTrigger render={<span className={badgeClass} />}>
+              {badgeInner}
+            </TooltipTrigger>
+            <TooltipContent side="top">{deadFirstNote}</TooltipContent>
+          </Tooltip>
+          {/* This trigger is an inert `<span>`, so nothing focuses it and the
+              popup only ever opens for a mouse; and Base UI gives the popup no
+              `role` and no `aria-describedby`, so it is never announced anyway.
+              The sentence therefore also exists in the DOM. */}
+          <span className="sr-only">{deadFirstNote}</span>
+        </>
+      ) : (
+        <span className={badgeClass}>{badgeInner}</span>
+      )}
 
       {/* THE FIELD SIZE SITS WITH THE PLACEMENT, because it is the half that
           gives it meaning: third of eight and third of ninety-six are not the
@@ -313,12 +344,12 @@ function MatchRow({ m }: { m: ProfileMatch }) {
       </span>
 
       {/* TIME ALIVE, NOT MATCH LENGTH. Every player in one match shares its
-          duration; how long each of them survived is the interesting half. */}
-      <span
-        className="w-20 shrink-0 font-mono text-xs text-muted-foreground"
-        title="How long they stayed alive"
-      >
-        {humanDuration(m.survivedMs)}
+          duration; how long each of them survived is the interesting half —
+          which the word "alive" now says in the row instead of on hover.
+          WIDENED w-20 -> w-32 to pay for it: `humanDuration` emits up to
+          "12h 30m", and "12h 30m alive" does not fit in 80px. */}
+      <span className="w-32 shrink-0 font-mono text-xs text-muted-foreground">
+        {humanDuration(m.survivedMs)} alive
       </span>
 
       <span className="font-mono text-xs text-muted-foreground">

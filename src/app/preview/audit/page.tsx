@@ -147,7 +147,7 @@ function Preview() {
                 <span className="text-danger">failed</span> did not happen.
               </p>
             </div>
-            <AuditList rows={AUDIT_ROWS} prefs={PREFS} />
+            <AuditList rows={AUDIT_ROWS} />
           </div>
 
           <div>

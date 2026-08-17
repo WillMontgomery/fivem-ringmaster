@@ -91,15 +91,20 @@ function Row({
         </p>
       </div>
 
+      {/* THE WORD IS IN THE ROW, NOT ON HOVER. "3d" sitting beside an opened-at
+          timestamp is genuinely ambiguous — age, or a deadline? — so the
+          disambiguation is worth keeping, but the span has no fixed width, so
+          the word costs nothing. A tooltip here would also have been a trap:
+          this span is inside the row's `<Link>`, and a default `TooltipTrigger`
+          renders a `<button>`, which is invalid inside an `<a>`. */}
       {i.state === 'pending_review' && (
         <span
           className={cn(
             'shrink-0 font-mono text-xs',
             now - i.openedAt > 24 * 3600_000 ? 'text-warn' : 'text-muted-foreground',
           )}
-          title="How long this has been waiting"
         >
-          {waiting(i.openedAt, now)}
+          {waiting(i.openedAt, now)} waiting
         </span>
       )}
     </Link>

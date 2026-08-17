@@ -1,5 +1,37 @@
 "use client"
 
+/**
+ * HOVER CARD: CONTENT WITH PARTS. Its sibling is `tooltip.tsx`, and the boundary
+ * between them is the whole reason this comment exists — two components with
+ * overlapping jobs and nothing written down is how this console accumulated nine
+ * native `title` attributes and one lonely hover card.
+ *
+ *   Use `HoverCard` when what you are showing has real internal structure: a
+ *   header row, a body, a footer. `FeedStatus` is the reference — status dot and
+ *   label, then the age, then the refresh interval. `Provenance` is the second,
+ *   and it spent a long time crammed into a tooltip that could not hold it.
+ *
+ *   Use `Tooltip` for about six words on a focusable control. A CARD IS A
+ *   LAYOUT, NOT AN EMPHASIS LEVEL: a single important sentence does not get
+ *   promoted to a 256px popup with 10px of padding for being important. If the
+ *   words fit next to the thing, they belong next to the thing and neither
+ *   component is the answer.
+ *
+ * NEITHER ONE IS AN ACCESSIBILITY MECHANISM. In Base UI 1.7.0 the hover
+ * interaction is `mouseOnly: true`, so it never fires on touch; focus is wired
+ * separately, but every hover card in this app triggers from an inert `<span>`,
+ * which nothing can focus. And the popup gets no `role` and no
+ * `aria-describedby`, so it is never announced. Any fact worth showing must ALSO
+ * exist in the DOM — visible, or `sr-only`. See `docs/hover-text.md`.
+ *
+ * TWO SHARP EDGES. `HoverCardTrigger` renders an `<a>` by default, so pass
+ * `render={<span … />}` unless a link is genuinely what you want. And this is
+ * Base UI's `PreviewCard` underneath, not a "hover card" namespace — the name
+ * here is shadcn's, which is worth knowing before searching the upstream docs.
+ * Delays (`delay`, `closeDelay`) are props on the trigger; there is no provider
+ * for this component and none is needed.
+ */
+
 import { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card"
 
 import { cn } from "@/lib/utils"

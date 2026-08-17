@@ -162,16 +162,45 @@ export function formatInstant(
 }
 
 /**
- * The UTC rendering, for `title=` attributes.
+ * The UTC rendering, for a reader's eyes.
  *
- * EVERY DISPLAYED TIME KEEPS ONE. The zone suffix says which offset was
- * applied; this is the unambiguous underlying instant, for the moment someone
- * is comparing a console timestamp against a game-server log line. Same shape
- * `api/bans/route.ts` already sends to players at the door.
+ * THIS USED TO SAY "for `title=` attributes", and it used to claim that EVERY
+ * DISPLAYED TIME KEEPS ONE. Neither is true any more, and the second had
+ * quietly stopped being true long before the sentence was deleted. See
+ * `docs/hover-text.md`: the native `title` attribute is banned on DOM elements,
+ * because a fact parked there cannot be selected, focused, or read aloud, and
+ * never appears at all on a touch device.
+ *
+ * SO THE UTC IS EITHER VISIBLE OR IT IS NOT THERE. `LocalTime`'s `utc` prop
+ * renders this string as muted text beside the local one, and it is turned on
+ * at the surfaces where somebody is genuinely lining a console row up against a
+ * game-server log line — the audit log and an incident's event timeline. This
+ * is deliberately NOT a machine-readable format; it is padded and suffixed for
+ * reading. For the machine-readable one, see `machineInstant`.
  */
 export function utcIso(ms: number | null | undefined): string {
   if (!isRenderableInstant(ms)) return 'unknown'
   return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC'
+}
+
+/**
+ * The instant as `<time dateTime>` requires it, or `undefined`.
+ *
+ * NOT `utcIso`, AND THE DIFFERENCE IS A SILENT BUG. `utcIso` returns
+ * `"2026-08-16 14:32 UTC"` — a space instead of the `T`, no seconds, and a
+ * trailing word. That is a pleasant thing to read and an invalid HTML datetime,
+ * which a browser does not complain about; it simply parses nothing and the
+ * attribute conveys nothing to anything that reads it. Feeding the display
+ * string to the machine-readable slot is the obvious move and it is wrong.
+ *
+ * RETURNS `undefined`, NOT A PLACEHOLDER, for anything unrenderable, so that
+ * `<time dateTime={machineInstant(ms)}>` omits the attribute entirely rather
+ * than asserting a bogus one. An absent `dateTime` on a `<time>` element is
+ * legal — the element then just means "this text is a time".
+ */
+export function machineInstant(ms: number | null | undefined): string | undefined {
+  if (!isRenderableInstant(ms)) return undefined
+  return new Date(ms).toISOString()
 }
 
 /**

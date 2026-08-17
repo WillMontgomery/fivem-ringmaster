@@ -293,7 +293,13 @@ function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
       aria-label="Toggle Sidebar"
       tabIndex={-1}
       onClick={toggleSidebar}
-      title="Toggle Sidebar"
+      // Upstream shadcn also carries `title="Toggle Sidebar"` here. Dropped: it
+      // repeated the `aria-label` one line up, on an element that is
+      // `tabIndex={-1}`, `hidden` below `sm`, and 16px of invisible resize strip
+      // whose cursor already states its job -- and `SidebarTrigger` is the same
+      // action with a real label. No input method loses anything, and deleting
+      // one line is a smaller divergence from upstream than wrapping a
+      // deliberately unfocusable handle in a tooltip. See docs/hover-text.md.
       className={cn(
         "absolute inset-y-0 z-20 hidden w-4 transition-all ease-linear group-data-[side=left]:-right-4 group-data-[side=right]:left-0 after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] hover:after:bg-sidebar-border sm:flex ltr:-translate-x-1/2 rtl:-translate-x-1/2",
         "in-data-[side=left]:cursor-w-resize in-data-[side=right]:cursor-e-resize",

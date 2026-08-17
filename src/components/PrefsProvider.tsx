@@ -3,7 +3,7 @@
 import { createContext, useContext } from 'react'
 
 import { DEFAULT_PREFS, type Prefs } from '@/lib/prefs'
-import { formatInstant, utcIso, type FormatInstantOptions } from '@/lib/time'
+import { formatInstant, type FormatInstantOptions } from '@/lib/time'
 
 /**
  * The reader's display preferences, resolved once on the server.
@@ -44,16 +44,21 @@ export function usePrefs(): Prefs {
  * `formatInstant(ts, prefs)` — a two-argument version invites someone to pass
  * prefs they built locally, which is how the ambient-zone bug gets reintroduced
  * one component at a time.
+ *
+ * IT USED TO HAND BACK AN `iso` TOO, and that member existed for exactly one
+ * purpose: filling `title=` attributes. With the native `title` attribute banned
+ * on DOM elements (`docs/hover-text.md`) it had zero callers, and a zone-free
+ * `iso` sitting on the zone-aware hook is an invitation to put a fact back
+ * somewhere only a mouse can reach it. `utcIso` is still exported from
+ * `lib/time.ts` for the visible UTC that `LocalTime` renders.
  */
 export function useFormatInstant(): {
   format: (ms: number | null | undefined, opts?: FormatInstantOptions) => string
-  iso: (ms: number | null | undefined) => string
   timeZone: string
 } {
   const prefs = usePrefs()
   return {
     format: (ms, opts) => formatInstant(ms, prefs, opts),
-    iso: utcIso,
     timeZone: prefs.timeZone,
   }
 }
