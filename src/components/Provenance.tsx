@@ -79,7 +79,13 @@ export function ProvenanceTag({ kind }: { kind: Kind }) {
           both wrong markup and a styling surprise. */}
       <HoverCardTrigger
         render={
+          // `data-accent-chip` is what lets this drop its own hue when it sits
+          // on a player's Discord accent colour — see .accent-surface in
+          // globals.css. An attribute rather than a prop because the decision
+          // belongs to the surface, not to the chip: this component has no way
+          // of knowing what it has been placed on.
           <span
+            data-accent-chip=""
             className={cn(
               'inline-flex cursor-help items-center gap-1 rounded px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
               k.className,

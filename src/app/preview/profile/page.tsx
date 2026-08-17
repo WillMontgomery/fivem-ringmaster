@@ -1,12 +1,22 @@
 import { notFound } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
-import { PlayerActions } from '@/components/PlayerActions'
+import {
+  DiscordChromeProvider,
+  DiscordChromeStateProvider,
+} from '@/components/DiscordChrome'
 import { ProfileView } from '@/components/ProfileView'
 import type { Ban } from '@/lib/bans'
+import { accentSurface } from '@/lib/contrast'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 import { CATEGORY_LABEL } from '@/lib/incidents'
-import type { Profile, ProfileIncident, ProfileMatch } from '@/lib/profile'
+import type {
+  DiscordChrome,
+  DiscordNameChange,
+  Profile,
+  ProfileIncident,
+  ProfileMatch,
+} from '@/lib/profile'
 import { cn } from '@/lib/utils'
 import { thresholdFor } from '@/lib/xp'
 
@@ -29,12 +39,22 @@ import { thresholdFor } from '@/lib/xp'
  * issue and the widest string the curve can ever produce, so the fix stays
  * checkable.
  *
- * FOUR INDEPENDENT AXES, because they are independent in life:
+ * FIVE INDEPENDENT AXES, because they are independent in life:
  *
  *   ?state=      match history — played / legacy / never / unreadable
  *   ?incidents=  0, 1, 5, 6 and 43 rows, for the tabs and the page boundary
  *   ?xp=         the reported truncation value, and the curve's worst case
  *   ?mod=        the top bar's moderation buttons, in each of their shapes
+ *   ?discord=    the Discord chrome: absent, loading, timed out, full, and the
+ *                two accent colours that break a naive implementation
+ *
+ * THE DISCORD AXIS IS THE ONE THAT CANNOT BE REACHED ANY OTHER WAY. Every other
+ * state on this page needs a live session and an AWS credential; the Discord
+ * ones additionally need a bot token, a particular player, and — for the states
+ * that matter most — Discord to be slow or broken on demand. `?discord=white`
+ * and `?discord=black` are the two accent colours that make an unclamped
+ * implementation illegible, and neither of them can be produced by looking at a
+ * real profile unless somebody happens to have chosen one.
  *
  * THE FIXTURE LIVES HERE, NOT IN lib/. src/lib/profile.ts deleted its
  * demoProfile() on the grounds that a fixture producing a plausible Profile is
@@ -393,6 +413,173 @@ const MOD_CASES = {
 
 type ModKey = keyof typeof MOD_CASES
 
+/* ---------------------------------------------------------------------------
+ * DISCORD
+ *
+ * THE IMAGES ARE INLINE SVG DATA URIs, not CDN links, and that is what makes
+ * this harness usable. The skeleton is held until every image has DECODED (see
+ * components/DiscordChrome), so a preview that pointed at cdn.discordapp.com
+ * would exercise the gate only for whoever happened to have working DNS and no
+ * proxy — and would exercise it against a real person's avatar. These load
+ * locally, instantly, every time, and belong to nobody.
+ *
+ * They are deliberately ugly. A screenshot of this page must not be mistakable
+ * for a real player's profile.
+ * ------------------------------------------------------------------------- */
+
+function svgDataUri(svg: string): string {
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
+const PREVIEW_AVATAR = svgDataUri(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+     <rect width="128" height="128" fill="#2f3145"/>
+     <circle cx="64" cy="50" r="24" fill="#8b5cf6"/>
+     <path d="M16 128c0-28 21-46 48-46s48 18 48 46z" fill="#8b5cf6"/>
+     <text x="64" y="120" font-family="monospace" font-size="13" fill="#c4b5fd"
+           text-anchor="middle">PREVIEW</text>
+   </svg>`,
+)
+
+/**
+ * Stands in for Discord's generic default avatar.
+ *
+ * The real one is a CDN URL, and the real page uses it — but pointing this
+ * harness at cdn.discordapp.com would make the image gate depend on the
+ * network, which is the one thing a preview route must not do. Grey and
+ * featureless, like the thing it represents.
+ */
+const PREVIEW_DEFAULT_AVATAR = svgDataUri(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+     <rect width="128" height="128" fill="#5865f2"/>
+     <circle cx="64" cy="50" r="22" fill="#ffffff"/>
+     <path d="M20 128c0-26 20-42 44-42s44 16 44 42z" fill="#ffffff"/>
+   </svg>`,
+)
+
+const PREVIEW_BANNER = svgDataUri(
+  `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="240" viewBox="0 0 600 240">
+     <defs>
+       <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+         <stop offset="0" stop-color="#7c3aed"/>
+         <stop offset="0.5" stop-color="#0ea5e9"/>
+         <stop offset="1" stop-color="#10b981"/>
+       </linearGradient>
+     </defs>
+     <rect width="600" height="240" fill="url(#g)"/>
+     <circle cx="140" cy="80" r="90" fill="#f472b6" opacity="0.55"/>
+     <circle cx="470" cy="180" r="110" fill="#fbbf24" opacity="0.45"/>
+   </svg>`,
+)
+
+/**
+ * A name history with both fields in it, because they read differently.
+ *
+ * The @handle change is the rarer and more interesting one; the display-name
+ * change is the common one. A profile with both is the only way to see that the
+ * `@` prefix is applied to one and not the other.
+ */
+const FORMER_NAMES: DiscordNameChange[] = [
+  { field: 'globalName', from: 'Slippery Jim', to: 'preview~', at: BASE - 12 * HOUR },
+  { field: 'username', from: 'jimbo_prv', to: 'preview_player', at: BASE - 40 * HOUR },
+  { field: 'globalName', from: 'jimbo', to: 'Slippery Jim', at: BASE - 300 * HOUR },
+  { field: 'globalName', from: 'newbie', to: 'jimbo', at: BASE - 380 * HOUR },
+]
+
+const PREVIEW_DISCORD_ID = '000000000000000001'
+
+function chrome(overrides: Partial<DiscordChrome> = {}): DiscordChrome {
+  return {
+    id: PREVIEW_DISCORD_ID,
+    answered: true,
+    avatarUrl: PREVIEW_AVATAR,
+    real: true,
+    bannerUrl: PREVIEW_BANNER,
+    accent: accentSurface('#ff11ff'),
+    username: 'preview_player',
+    globalName: 'preview~',
+    formerNames: FORMER_NAMES,
+    ...overrides,
+  }
+}
+
+/**
+ * A promise the harness can control, standing in for the live Discord call.
+ *
+ * `null` means "no Discord id" — the state the owner called out specifically:
+ * no skeleton, no wait, render immediately. Everything else is a promise,
+ * because a promise is what the real page passes.
+ */
+const DISCORD_CASES = {
+  /* No Discord identifier on the registry row. Nothing is coming, so nothing is
+     promised: no skeleton anywhere, and the card has no banner strip. */
+  none: { label: 'no discord id', make: () => null },
+
+  /*
+   * THE SKELETON, HELD INDEFINITELY, so it can be read rather than glimpsed.
+   *
+   * This one does not go through a promise at all — the page pins the context
+   * state directly. See the comment at the render for why every attempt to do
+   * it with a promise wedges the request rather than the render. `make` is
+   * never called for this key.
+   */
+  loading: { label: 'loading', make: () => null },
+
+  /*
+   * THE FIVE SECONDS ELAPSING, then the reveal. The one case that shows the
+   * behaviour the owner asked for end to end: skeleton, images decoded off
+   * screen, everything Discord-shaped appearing at one instant.
+   */
+  slow: {
+    label: 'slow then full',
+    make: () =>
+      new Promise<DiscordChrome>((resolve) => setTimeout(() => resolve(chrome()), 4_000)),
+  },
+
+  /*
+   * DISCORD DID NOT ANSWER — a timeout, a 429, a missing token, all of which
+   * land here identically. The stored names still show, marked "(last known)",
+   * because they are Ringmaster's own record rather than Discord's.
+   */
+  timeout: {
+    label: 'timed out',
+    make: async () =>
+      chrome({
+        answered: false,
+        avatarUrl: PREVIEW_DEFAULT_AVATAR,
+        real: false,
+        bannerUrl: null,
+        accent: null,
+      }),
+  },
+
+  /* The whole thing: real avatar, banner, accent, both names, four renames. */
+  full: { label: 'full profile', make: async () => chrome() },
+
+  /*
+   * THE TWO ACCENTS THAT BREAK A NAIVE IMPLEMENTATION.
+   *
+   * `#ffffff` painted raw is invisible against the light theme's white card and
+   * takes its text with it; `#000000` does the same to the dark theme. Both go
+   * through accentSurface, which clamps them to #c7c7c7 and #383838 and derives
+   * the text colour from what came out — 11.47:1 and 11.06:1 respectively.
+   *
+   * LOOK AT THESE IN BOTH THEMES. The failure they exist to catch is a surface
+   * dissolving into the page, and each of them only dissolves in one of the two.
+   */
+  white: { label: 'accent #ffffff', make: async () => chrome({ accent: accentSurface('#ffffff') }) },
+  black: { label: 'accent #000000', make: async () => chrome({ accent: accentSurface('#000000') }) },
+
+  /* No accent and no banner: an ordinary Discord account. The card has a face
+     and a handle and no colour, which is what most players will look like. */
+  plain: {
+    label: 'no accent',
+    make: async () => chrome({ accent: null, bannerUrl: null, formerNames: [] }),
+  },
+} satisfies Record<string, { label: string; make: () => Promise<DiscordChrome> | null }>
+
+type DiscordKey = keyof typeof DISCORD_CASES
+
 function fixture(
   matches: Profile['matches'],
   stats: Profile['stats'],
@@ -404,7 +591,6 @@ function fixture(
   return {
     license: LICENSE,
     name: 'Preview Player',
-    avatarUrl: null,
     identifiers: [
       { kind: 'license', value: 'preview000000000000000000000000000', firstSeen: BASE - 400 * HOUR },
     ],
@@ -570,11 +756,54 @@ async function Preview({
   const incidents = pick(sp.incidents, INCIDENT_CASES, 'many' as IncidentKey)
   const xp = pick(sp.xp, XP_CASES, 'reported' as XpKey)
   const mod = pick(sp.mod, MOD_CASES, 'online' as ModKey)
+  const discord = pick(sp.discord, DISCORD_CASES, 'full' as DiscordKey)
 
-  const params = { state, incidents, xp, mod }
+  const params = { state, incidents, xp, mod, discord }
   const { matches, stats } = MATCH_CASES[state]
   const p = fixture(matches, stats, xp, incidents, mod)
   const now = BASE + 5 * 60_000
+
+  // Built here and NOT awaited, exactly as the real page builds it — awaiting it
+  // would hide the one behaviour half these cases exist to show.
+  const chromePromise = DISCORD_CASES[discord].make()
+
+  const body = (
+    <div className="mx-auto max-w-5xl space-y-4">
+      <nav className="space-y-1.5 rounded-lg border border-border bg-card/60 p-2">
+        <Axis name="state" keys={Object.keys(MATCH_CASES)} current={state} params={params} />
+        <Axis
+          name="incidents"
+          keys={Object.keys(INCIDENT_CASES)}
+          current={incidents}
+          params={params}
+        />
+        <Axis name="xp" keys={Object.keys(XP_CASES)} current={xp} params={params} />
+        <Axis name="mod" keys={Object.keys(MOD_CASES)} current={mod} params={params} />
+        <Axis
+          name="discord"
+          keys={Object.keys(DISCORD_CASES)}
+          current={discord}
+          params={params}
+        />
+        {/*
+          The accent's actual numbers, printed rather than eyeballed. This is
+          the only place the clamp and the derived foreground are visible as
+          values instead of as a colour somebody has an opinion about — and it
+          is how a change to lib/contrast.ts shows up as a different number on a
+          page rather than as nothing at all.
+        */}
+        <AccentReadout discord={discord} />
+      </nav>
+
+      <ProfileView
+        p={p}
+        now={now}
+        banned={MOD_CASES[mod].ban !== null}
+        categoryLabel={CATEGORY_LABEL}
+        moderation={MOD_CASES[mod]}
+      />
+    </div>
+  )
 
   return (
     <AppShell
@@ -583,27 +812,56 @@ async function Preview({
       badges={DEMO_BADGES}
       feed={{ lastPushAt: now - 1_200, bootEpoch: 'preview', now }}
     >
-      <div className="mx-auto max-w-5xl space-y-4">
-        <nav className="space-y-1.5 rounded-lg border border-border bg-card/60 p-2">
-          <Axis name="state" keys={Object.keys(MATCH_CASES)} current={state} params={params} />
-          <Axis
-            name="incidents"
-            keys={Object.keys(INCIDENT_CASES)}
-            current={incidents}
-            params={params}
-          />
-          <Axis name="xp" keys={Object.keys(XP_CASES)} current={xp} params={params} />
-          <Axis name="mod" keys={Object.keys(MOD_CASES)} current={mod} params={params} />
-        </nav>
+      {/*
+        ONE CASE TAKES A DIFFERENT ROUTE, and it is the one that has to.
 
-        <ProfileView
-          p={p}
-          now={now}
-          banned={MOD_CASES[mod].ban !== null}
-          categoryLabel={CATEGORY_LABEL}
-          moderation={MOD_CASES[mod]}
-        />
-      </div>
+        Every other Discord case builds its promise on the SERVER, exactly as the
+        real page does, so what is being reviewed is the actual hand-off and not
+        an imitation of it. `loading` cannot be done that way at all: a promise
+        that never settles never closes the RSC stream either, so the request
+        hangs and the tab spins — and moving the promise to the client does not
+        help, because a client component is still rendered on the server and
+        `use()` still suspends there. Measured, not assumed: both versions wedged
+        a navigation for five minutes before this branch existed.
+
+        So this one pins the state instead of producing it. The consequence is
+        worth stating: `?discord=loading` exercises what the loading state LOOKS
+        like and not the machinery that reaches it. `slow` exercises the
+        machinery.
+      */}
+      {discord === 'loading' ? (
+        <DiscordChromeStateProvider state={{ status: 'loading' }}>
+          {body}
+        </DiscordChromeStateProvider>
+      ) : (
+        <DiscordChromeProvider promise={chromePromise}>{body}</DiscordChromeProvider>
+      )}
     </AppShell>
+  )
+}
+
+/** What `accentSurface` did to the colour this case asked for. */
+function AccentReadout({ discord }: { discord: DiscordKey }) {
+  const raw =
+    discord === 'white' ? '#ffffff' : discord === 'black' ? '#000000' : '#ff11ff'
+  const surface = accentSurface(raw)
+
+  const shows = discord === 'white' || discord === 'black' || discord === 'full' || discord === 'slow'
+  if (!surface || !shows) return null
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1 text-xs text-muted-foreground">
+      <span className="w-20 shrink-0 uppercase tracking-wider">accent</span>
+      <span
+        className="rounded px-2 py-0.5 font-mono"
+        style={{ backgroundColor: surface.background, color: surface.foreground }}
+      >
+        {surface.raw} → {surface.background}
+      </span>
+      <span className="font-mono">
+        text {surface.foreground} · {surface.ratio.toFixed(2)}:1
+        {surface.clamped ? ' · clamped' : ' · unclamped'}
+      </span>
+    </div>
   )
 }

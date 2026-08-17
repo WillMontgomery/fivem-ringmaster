@@ -17,13 +17,14 @@ import {
 import { useState } from 'react'
 import Link from 'next/link'
 
+import { useAccent, useDiscordChrome } from '@/components/DiscordChrome'
 import { Pager } from '@/components/Pager'
 import { PlayerActions } from '@/components/PlayerActions'
 import { ProvenanceTag } from '@/components/Provenance'
 import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   Tooltip,
@@ -33,7 +34,7 @@ import {
 // Aliased: `Ban` in this file is already the lucide icon.
 import type { Ban as BanRecord } from '@/lib/bans'
 import { humanDuration } from '@/lib/duration'
-import type { Profile, ProfileIncident, ProfileMatch } from '@/lib/profile'
+import type { DiscordNameChange, Profile, ProfileIncident, ProfileMatch } from '@/lib/profile'
 import { formatCount } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { progress } from '@/lib/xp'
@@ -58,6 +59,22 @@ function ago(ms: number, now: number): string {
   return `${humanDuration(now - ms)} ago`
 }
 
+/**
+ * A panel, with its header painted in the player's Discord accent colour.
+ *
+ * "USE THEIR BANNER COLOR TO COLOR THE BACKGROUND OF THE TOP OF OUR TABLES" —
+ * the owner. This is that, and it is the one place on the page where text sits
+ * on a colour somebody else chose, which is why it is also the only place the
+ * contrast maths is load-bearing. `accent.background` has already been clamped
+ * into a mid lightness band and `accent.foreground` derived from its luminance;
+ * see src/lib/contrast.ts. Nothing here ever sees the raw value.
+ *
+ * NO SKELETON ON THESE HEADERS, deliberately. The title, the provenance tag and
+ * the count are all known immediately and none of them comes from Discord —
+ * hiding "Kicks and bans" behind a grey bar for five seconds would be a worse
+ * page, not a more honest one. The colour arrives with everything else Discord
+ * and fades in over 300ms rather than snapping.
+ */
 function Section({
   title,
   provenance,
@@ -71,9 +88,24 @@ function Section({
   children: React.ReactNode
   className?: string
 }) {
+  const accent = useAccent()
+
   return (
     <Card className={cn('surface-edge animate-rise gap-0 overflow-hidden py-0', className)}>
-      <header className="flex items-center gap-2 border-b border-border bg-card/60 px-4 py-2.5">
+      <header
+        className={cn(
+          'flex items-center gap-2 border-b border-border px-4 py-2.5',
+          accent ? 'accent-surface' : 'bg-card/60',
+        )}
+        style={
+          accent
+            ? ({
+                '--rm-accent-bg': accent.background,
+                '--rm-accent-fg': accent.foreground,
+              } as React.CSSProperties)
+            : undefined
+        }
+      >
         <span className="text-sm">{title}</span>
         {provenance}
         {action && <div className="ml-auto">{action}</div>}
@@ -540,7 +572,10 @@ function IncidentsPanel({
         // Counts the tab you are looking at, not a fixed one — a "2 PENDING"
         // badge above a list that has none in it is just wrong.
         pending > 0 ? (
-          <Badge className="border-0 bg-warn/10 text-xs font-semibold uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
+          <Badge
+            data-accent-chip=""
+            className="border-0 bg-warn/10 text-xs font-semibold uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30"
+          >
             {pending} pending
           </Badge>
         ) : null
@@ -620,6 +655,205 @@ function IncidentList({
   )
 }
 
+/**
+ * The banner strip across the top of the identity card.
+ *
+ * WHAT IT IS: the player's own Discord banner image, blurred, over their accent
+ * colour. The owner asked for exactly this — "for their profile banner we could
+ * use their own banner image as a blurred background for that banner" — and it
+ * is the only place on the page that shows what somebody's Discord profile
+ * looks like rather than merely what it is called.
+ *
+ * IT CARRIES NO TEXT, AND THAT IS A CONTRAST DECISION RATHER THAN A LAYOUT ONE.
+ * Everything else on this page that sits on the accent colour is legible
+ * because `accentSurface` clamped the colour and derived the foreground from
+ * it. That guarantee does not survive an arbitrary image being composited in:
+ * with a banner at even a quarter of the mix, a mid-tone accent that measures
+ * 4.50:1 on its own drops to 3.09:1 against a white banner. So the band is
+ * decorative and every word on this card sits on the card.
+ *
+ * RETURNS NULL IN THREE DIFFERENT NOTHINGS. No Discord id, Discord did not
+ * answer, and an account with neither a banner nor an accent all produce no
+ * band — the card simply starts at its content, exactly as it did before any of
+ * this existed. Only the middle of those three is worth saying out loud, and
+ * `DiscordNames` says it.
+ */
+function IdentityBanner() {
+  const state = useDiscordChrome()
+
+  // No Discord id: nothing is coming, so nothing is promised. The owner was
+  // explicit that a skeleton here would be a lie.
+  if (state.status === 'absent') return null
+
+  if (state.status === 'loading') {
+    return <Skeleton className="h-24 w-full rounded-none" />
+  }
+
+  const { bannerUrl, accent } = state.chrome
+  if (!bannerUrl && !accent) return null
+
+  return (
+    <div
+      aria-hidden
+      className="relative h-24 w-full overflow-hidden"
+      style={accent ? { backgroundColor: accent.background } : undefined}
+    >
+      {bannerUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={bannerUrl}
+          alt=""
+          /*
+            SCALED UP BEFORE IT IS BLURRED. A blur samples outside the element,
+            so an unscaled image feathers to transparent at all four edges and
+            the band ends up with pale borders it did not ask for. 110% pushes
+            those artefacts outside the clip.
+          */
+          className="size-full scale-110 object-cover blur-lg"
+        />
+      )}
+      {/* A downward fade into the card, so the band ends rather than stops. */}
+      <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-card/70" />
+    </div>
+  )
+}
+
+/**
+ * The face.
+ *
+ * THREE STATES AND THEY ARE NOT INTERCHANGEABLE. A skeleton means a Discord id
+ * exists and its picture is on the way; initials mean there is no Discord id at
+ * all and never will be a picture; the generic Discord logo means we asked and
+ * they have no avatar set, or nobody answered. The last of those is the one
+ * worth a tooltip, because a coloured Discord logo looks enough like a chosen
+ * avatar to be mistaken for one.
+ */
+function Face({ name }: { name: string }) {
+  const state = useDiscordChrome()
+
+  if (state.status === 'loading') {
+    return <Skeleton className="size-14 shrink-0 rounded-xl" />
+  }
+
+  const initials = (
+    <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary ring-1 ring-inset ring-primary/25">
+      {name.slice(0, 2).toUpperCase()}
+    </div>
+  )
+
+  if (state.status === 'absent') return initials
+
+  const { avatarUrl, real, answered } = state.chrome
+  if (!avatarUrl) return initials
+
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={avatarUrl}
+      alt=""
+      title={
+        real
+          ? undefined
+          : answered
+            ? "Discord's default avatar — this player has not set a picture."
+            : "Discord's default avatar — Discord did not answer, so we do not know what they use."
+      }
+      className="size-14 shrink-0 rounded-xl object-cover ring-1 ring-inset ring-primary/25"
+    />
+  )
+}
+
+/** "was Slippery Jim until 12 Aug", for one superseded name. */
+function FormerName({ change }: { change: DiscordNameChange }) {
+  return (
+    <span className="whitespace-nowrap">
+      <span className="text-muted-foreground/70">
+        {change.field === 'username' ? '@' : ''}
+      </span>
+      {change.from}
+      <span className="text-muted-foreground/70">
+        {' '}
+        until <LocalTime ms={change.at} />
+      </span>
+    </span>
+  )
+}
+
+/**
+ * Who Discord says this is, and who it used to say.
+ *
+ * TWO NAMES, BECAUSE DISCORD HAS TWO AND THEY MEAN DIFFERENT THINGS. The global
+ * name is the display name — freely changed, and the one a human recognises.
+ * The username is the @handle. A moderator matching a report to an account
+ * needs the handle; a moderator recognising somebody needs the display name.
+ *
+ * "FORMERLY KNOWN AS" IS THE POINT OF STORING ANY OF THIS. It is the only thing
+ * on this line that the live Discord call cannot produce — see
+ * recordDiscordIdentity in lib/players.ts — and it is there because renaming is
+ * what a reported player does next.
+ */
+function DiscordNames() {
+  const state = useDiscordChrome()
+
+  if (state.status === 'absent') return null
+
+  if (state.status === 'loading') {
+    return <Skeleton className="mt-1.5 h-3.5 w-56" />
+  }
+
+  const { answered, username, globalName, formerNames } = state.chrome
+
+  if (!answered && !username && !globalName && formerNames.length === 0) {
+    return (
+      <p
+        className="mt-1.5 text-xs text-muted-foreground/70"
+        title="The page rendered without it rather than waiting. Nothing here is a statement about this player."
+      >
+        Discord did not answer.
+      </p>
+    )
+  }
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      {globalName && <span className="text-foreground/80">{globalName}</span>}
+      {username && <span className="font-mono">@{username}</span>}
+      {!answered && (
+        <span title="Showing the names Ringmaster last recorded; Discord did not answer this time.">
+          (last known)
+        </span>
+      )}
+      {/*
+        TWO INLINE, THE REST ON HOVER. A player who renames often would
+        otherwise push the whole card taller than the panels beside it, and the
+        two most recent are the ones that answer "were they called something
+        else when this was reported". The rest are still reachable and still
+        stored — see DISCORD_NAME_HISTORY in lib/players.ts for the cap that is
+        a real deletion rather than a display limit.
+      */}
+      {formerNames.length > 0 && (
+        <span className="flex flex-wrap items-baseline gap-x-1.5">
+          <span className="text-muted-foreground/70">formerly</span>
+          {formerNames.slice(0, 2).map((c, i) => (
+            <FormerName key={`${c.field}-${c.at}-${i}`} change={c} />
+          ))}
+          {formerNames.length > 2 && (
+            <span
+              className="cursor-help underline decoration-dotted underline-offset-2"
+              title={formerNames
+                .slice(2)
+                .map((c) => `${c.field === 'username' ? '@' : ''}${c.from}`)
+                .join(' · ')}
+            >
+              +{formerNames.length - 2} more
+            </span>
+          )}
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function ProfileView({
   p,
   now,
@@ -673,26 +907,19 @@ export function ProfileView({
       </Link>
 
       {/* Identity. First, because every other panel is worthless if this is
-          the wrong person. */}
-      <Card className="surface-edge animate-rise gap-0 overflow-hidden px-5 py-4">
+          the wrong person.
+
+          THE CARD'S OWN PADDING IS GONE so the banner strip can be full bleed;
+          the content below it carries the padding instead. */}
+      <Card className="surface-edge animate-rise gap-0 overflow-hidden p-0">
+        <IdentityBanner />
+
         {/* items-center: the name sits on the avatar's midline rather than
               hanging off its top edge. */}
-        <div className="flex flex-wrap items-center gap-4">
-          {/* THE FACE, when Discord gives us one. Falls back to initials rather
-              than to a broken image, and the fallback is also what a player
-              with no Discord link gets — which is a real state, not an error. */}
-          {p.avatarUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={p.avatarUrl}
-              alt=""
-              className="size-12 shrink-0 rounded-xl object-cover ring-1 ring-inset ring-primary/25"
-            />
-          ) : (
-            <div className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary ring-1 ring-inset ring-primary/25">
-              {p.name.slice(0, 2).toUpperCase()}
-            </div>
-          )}
+        <div className="flex flex-wrap items-center gap-4 px-5 py-4">
+          {/* THE FACE. Skeleton, initials or a picture — see Face for why those
+              three are not the same state wearing different clothes. */}
+          <Face name={p.name} />
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -732,7 +959,13 @@ export function ProfileView({
             </div>
             {/* The license used to sit here as well as in the identifiers box.
                 One copy is enough, and the box is where somebody looking for an
-                identifier will go. */}
+                identifier will go.
+
+                WHAT DISCORD CALLS THEM DOES sit here, under the in-game name,
+                because "is this the right person" is answered by a Discord
+                handle far more often than by a license — and because a name
+                that changed last Tuesday is a moderation fact. */}
+            <DiscordNames />
           </div>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -1019,6 +1252,7 @@ export function ProfileView({
         action={
           moderationActions.length > 0 ? (
             <Badge
+              data-accent-chip=""
               variant="outline"
               className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
             >
@@ -1112,6 +1346,7 @@ export function ProfileView({
         action={
           p.matches && p.matches.length > 0 ? (
             <Badge
+              data-accent-chip=""
               variant="outline"
               className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
             >

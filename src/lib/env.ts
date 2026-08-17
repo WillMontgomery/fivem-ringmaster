@@ -30,8 +30,13 @@ const schema = z.object({
    * never that person.
    *
    * The bot needs no privileged intents and no server membership: `GET
-   * /users/{id}` returns username and avatar hash to any bot, and cannot read
-   * messages, see servers, or act on anyone.
+   * /users/{id}` returns username, global name, avatar hash, banner and accent
+   * colour to any bot, and cannot read messages, see servers, or act on anyone.
+   *
+   * ONE CALL PER PROFILE PAGE VIEW, uncached, with a five-second ceiling. That
+   * is deliberate and it is the owner's decision: styling is the one thing where
+   * a cached answer is the wrong answer. The profile page never blocks on it —
+   * see lib/discord.ts and components/DiscordChrome.tsx.
    */
   DISCORD_BOT_TOKEN: z.string().optional(),
 

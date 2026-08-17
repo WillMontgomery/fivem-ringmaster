@@ -312,6 +312,54 @@
   }
 
   /*
+   * A SURFACE PAINTED IN SOMEBODY ELSE'S COLOUR.
+   *
+   * Used on the profile page for the panel headers, which the owner asked to be
+   * coloured with the player's own Discord accent. The two custom properties are
+   * set inline by the component, because the value comes from a stranger's
+   * account and cannot be a token in this file.
+   *
+   * NEITHER VALUE IS THE RAW ACCENT. `--rm-accent-bg` has been clamped into a
+   * mid lightness band and `--rm-accent-fg` was derived from its luminance —
+   * see src/lib/contrast.ts and scripts/check-contrast.mjs, which walks all
+   * 16,777,216 possible accent colours and fails the build if any of them
+   * produces text under 4.5:1. Nothing here should ever be handed a colour
+   * straight off the Discord API.
+   *
+   * The transition is not decoration: the accent arrives after the page has
+   * rendered, and a header snapping from grey to magenta reads as a glitch
+   * while the same change over 300ms reads as the page finishing.
+   */
+  .accent-surface {
+    background-color: var(--rm-accent-bg);
+    color: var(--rm-accent-fg);
+    transition:
+      background-color 300ms ease,
+      color 300ms ease;
+  }
+
+  /*
+   * Chips inside an accent surface give up their own hue.
+   *
+   * The provenance tags and the count badges in these headers are normally
+   * coloured by MEANING — info blue for identity, amber for pending. Those hues
+   * are tuned against the theme's own card background and read as anything from
+   * muddy to invisible on an arbitrary magenta, so inside an accent surface they
+   * become monochrome: the header's derived foreground, at the two alphas that
+   * keep a chip legible against the colour it is sitting on.
+   *
+   * A REAL LOSS, STATED HERE SO IT IS NOT REDISCOVERED AS A BUG. The "N PENDING"
+   * badge stops being amber on a profile whose owner has set an accent colour.
+   * The word "pending" still says what the colour said, and the alternative —
+   * amber text on a colour chosen by a stranger — is a badge nobody can read.
+   */
+  .accent-surface [data-accent-chip] {
+    color: inherit;
+    background-color: color-mix(in srgb, currentColor 16%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 34%, transparent);
+  }
+
+  /*
    * Motion.
    *
    * MOVEMENT MEANS SOMETHING ARRIVED OR CHANGED. Nothing loops, nothing floats,

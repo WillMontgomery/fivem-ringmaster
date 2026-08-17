@@ -1,4 +1,5 @@
 import { ddb, tables } from './dynamo'
+import type { DiscordNameChange } from './profile'
 
 /**
  * The player registry: everyone this server has ever seen.
@@ -32,6 +33,51 @@ export interface IdentifierSighting {
   value: string
   firstSeen: number
   lastSeen: number
+}
+
+/**
+ * What Discord called this player, and what it used to call them.
+ *
+ * THE ONLY DISCORD DATA THIS CONSOLE STORES, and the reason it is stored is the
+ * reason nothing else is. Avatar, banner and accent colour are fetched live on
+ * every profile render, because a stale answer to "what do they look like now"
+ * is simply the wrong answer. Names are not like that: `GET /users/{id}`
+ * returns the present and nothing else, so calling it a thousand times still
+ * cannot tell you that somebody used to be called something different. If
+ * Ringmaster does not write it down at the moment it notices, the fact does not
+ * exist anywhere.
+ *
+ * AND IT IS A MODERATION FACT. Renaming is the ordinary thing a reported player
+ * does next, and the registry already keeps in-game name history for exactly
+ * that reason (see `names` below). This is the same idea applied to the
+ * identity a human actually recognises them by.
+ *
+ * THE ID IS STORED TOO, and not redundantly. `identifiers.discord` holds every
+ * Discord id this license has ever presented; this holds the one these names
+ * belong to. When somebody switches Discord accounts the names do not continue
+ * a history, they start a new one, and comparing ids is how that is noticed
+ * rather than silently recorded as a rename.
+ */
+export interface DiscordIdentity {
+  /** The Discord user id these names were read from. */
+  id: string
+  /** The @handle, as of `changedAt`. */
+  username: string | null
+  /** The display name, as of `changedAt`. */
+  globalName: string | null
+  /** Superseded names, newest first. Capped — see DISCORD_NAME_HISTORY. */
+  former: DiscordNameChange[]
+  /** When Ringmaster first recorded a Discord identity for this license. */
+  firstSeen: number
+  /**
+   * When these names were last WRITTEN, which is not when they were last SEEN.
+   *
+   * Named for what it is. A profile render that finds nothing changed does not
+   * write, so this does not tick on every page view — and a field called
+   * `lastSeen` that only moves on a change would be a small lie of exactly the
+   * kind this file has already had to remove once.
+   */
+  changedAt: number
 }
 
 export interface PlayerRecord {
@@ -93,6 +139,16 @@ export interface PlayerRecord {
   /** M7b. Progression, written at match end alongside stats. */
   xp?: number | null
   level?: number | null
+
+  /**
+   * Their Discord names, and the ones they used to have.
+   *
+   * Written by the profile page when it fetches Discord, not by the game — the
+   * game never talks to Discord and has no reason to. Absent for every player
+   * whose profile has not been opened since the token was configured, which is
+   * a real and readable state rather than a bug.
+   */
+  discord?: DiscordIdentity | null
 }
 
 /**
@@ -281,6 +337,109 @@ export async function recordDisconnect(
     .catch(() => {})
 }
 
+/**
+ * How many superseded Discord names one player keeps.
+ *
+ * A CAP, BECAUSE THIS LIST IS APPEND-ONLY AND THE INPUT IS A STRANGER. Discord
+ * display names can be changed as often as somebody likes, and a player who
+ * enjoys doing it would otherwise grow one DynamoDB item without bound until it
+ * hit the 400KB limit and every write to that row started failing — taking the
+ * session and playtime accounting with it, which is a much worse outcome than
+ * losing the twenty-first oldest nickname.
+ *
+ * Twenty is far past the point of usefulness for the question this answers
+ * ("what were they called around the time of the incident") and far short of
+ * anything that threatens the item.
+ */
+const DISCORD_NAME_HISTORY = 20
+
+/**
+ * Reconcile a live Discord answer against what we last stored.
+ *
+ * RETURNS THE MERGED IDENTITY WHETHER OR NOT IT WROTE, so the caller can render
+ * the current history rather than the one from before this render — the change
+ * that was just noticed is the one most worth showing.
+ *
+ * IT ONLY WRITES WHEN SOMETHING MOVED. A profile page is opened repeatedly and
+ * names change approximately never, so the ordinary render is a comparison and
+ * no DynamoDB call at all. Without that check this would be a write per page
+ * view, on a table the game also writes, for nothing.
+ *
+ * A NEW DISCORD ACCOUNT IS NOT A RENAME. When the id differs from the stored
+ * one the history is reset rather than continued: those names belonged to a
+ * different account, and stitching them together would manufacture a "formerly
+ * known as" that never happened. The old ids are still visible — the identifier
+ * list keeps every Discord id this license has presented — so nothing is lost,
+ * it is just not misattributed.
+ *
+ * THE WRITE IS CONDITIONAL ON THE ROW EXISTING. Viewing a profile must never
+ * create a registry entry: `players.playerFor` returning null means the game has
+ * never seen this license, and a page view is not a sighting.
+ */
+export async function recordDiscordIdentity(input: {
+  license: string
+  /** The stored block, already read by the caller. */
+  stored: DiscordIdentity | null | undefined
+  id: string
+  username: string | null
+  globalName: string | null
+  now: number
+}): Promise<DiscordIdentity> {
+  const { license, stored, id, username, globalName, now } = input
+
+  const sameAccount = stored?.id === id
+
+  const former: DiscordNameChange[] = sameAccount ? [...(stored?.former ?? [])] : []
+
+  if (sameAccount && stored) {
+    // A change FROM nothing is not a change — it is the first time we looked.
+    // Only a value being replaced is worth a row.
+    if (stored.username && stored.username !== username) {
+      former.unshift({ field: 'username', from: stored.username, to: username, at: now })
+    }
+    if (stored.globalName && stored.globalName !== globalName) {
+      former.unshift({ field: 'globalName', from: stored.globalName, to: globalName, at: now })
+    }
+  }
+
+  const identity: DiscordIdentity = {
+    id,
+    username,
+    globalName,
+    former: former.slice(0, DISCORD_NAME_HISTORY),
+    firstSeen: sameAccount && stored ? stored.firstSeen : now,
+    changedAt: now,
+  }
+
+  const unchanged =
+    sameAccount &&
+    stored != null &&
+    stored.username === username &&
+    stored.globalName === globalName
+
+  if (unchanged) {
+    // Nothing moved. Hand back what is already stored — including its original
+    // `changedAt`, because claiming it changed now would be false.
+    return stored
+  }
+
+  await ddb
+    .update({
+      TableName: tables.players,
+      Key: { license },
+      ConditionExpression: 'attribute_exists(license)',
+      UpdateExpression: 'SET discord = :d',
+      ExpressionAttributeValues: { ':d': identity },
+    })
+    .catch(() => {
+      /* No row, or DynamoDB said no. The page still renders; the history of
+         this one change is what is lost, and it will be re-noticed on the next
+         view because the stored value has not moved. */
+    })
+
+  return identity
+}
+
 /** Record a preferred name set from the pause menu. */
 export async function setPreferredName(
   license: string,
@@ -336,6 +495,8 @@ export async function search(query: string, limit = 10): Promise<PlayerRecord[]>
  * Discord API knows it. It was wired into the profile page and presented as
  * showing the player's picture, which it never did.
  *
- * lib/discord.ts asks the API when DISCORD_BOT_TOKEN is set, caches the hash,
- * and falls back to that same default when it is not.
+ * lib/discord.ts asks the API when DISCORD_BOT_TOKEN is set and falls back to
+ * that same default when it is not. It does NOT cache the hash, here or
+ * anywhere — see the note at the top of that file about the durable copy this
+ * module was once said to hold and never did.
  */

@@ -1,9 +1,10 @@
 import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
+import { DiscordChromeProvider } from '@/components/DiscordChrome'
 import { ProfileView } from '@/components/ProfileView'
 import * as audit from '@/lib/audit'
-import { avatarFor } from '@/lib/discord'
+import { discordChromeFor } from '@/lib/discord'
 import * as bans from '@/lib/bans'
 import { gameMatchesFor, gameProfileFor } from '@/lib/gameProfile'
 import * as incidents from '@/lib/incidents'
@@ -31,6 +32,13 @@ import { liveView } from '@/lib/state'
  *   bans                        the bans table
  *   incidents                   ringmaster-incidents, both directions
  *   match history               br-players, one `match#...` row per match (#153)
+ *   face, banner, accent        Discord, live, on every render
+ *   discord name history        ringmaster-players, written when it changes
+ *
+ * THE DISCORD HALF IS THE ONLY THING NOT AWAITED HERE, and the only thing on
+ * this page that can be slow for a reason outside this system. It is handed to
+ * the client as a promise and resolved behind a Suspense boundary, so a Discord
+ * outage costs a face and never a page. See `discordChrome` below.
  *
  * MATCH HISTORY IS REAL AS OF #153, and it brought a distinction with it that
  * did not exist while the list was permanently empty: an empty list no longer
@@ -89,12 +97,39 @@ export default async function PlayerProfilePage({
 
   // The Discord id is the newest sighting, not the first: somebody who changed
   // accounts should show the face attached to the one they use now.
-  //
-  // Resolved AFTER the batch above because it depends on `record`. It is one
-  // cached call and it degrades to the default avatar without a bot token, so
-  // it cannot hold the page up.
   const discordId = record?.identifiers.discord?.at(-1)?.value ?? null
-  const avatarUrl = await avatarFor(discordId)
+
+  /*
+   * DELIBERATELY NOT AWAITED, and that word is the whole design.
+   *
+   * This used to be `const avatarUrl = await avatarFor(discordId)`, one line
+   * below the batch above, and it was fine while it was a cached hash lookup.
+   * It stopped being fine when the owner asked for live styling on every render:
+   * an awaited five-second budget is five seconds before the first byte of a
+   * page a moderator opened to decide whether to ban somebody, with nothing on
+   * screen the entire time.
+   *
+   * So the promise goes to the client instead. React streams it through the
+   * Suspense boundary inside DiscordChromeProvider, which means the identifiers,
+   * the play record, the incident tabs, the match history and the kick and ban
+   * buttons are all interactive while Discord is still thinking. If it never
+   * answers, the page keeps everything it already had and loses only the face.
+   *
+   * NULL WHEN THERE IS NO DISCORD ID, and null is load-bearing rather than
+   * merely falsy: the provider renders no skeleton and waits for nothing in that
+   * case (the owner's instruction). A player who has never linked Discord is not
+   * a player whose Discord data is loading.
+   */
+  const discordChrome = discordId
+    ? discordChromeFor({
+        discordId,
+        license,
+        // Passed in rather than re-read: the registry row is already here, and
+        // the name history lives on it.
+        stored: record?.discord,
+        now,
+      })
+    : null
 
   // Name resolution, best first: what they asked to be called, then whoever is
   // connected now, then the registry, then the ban record. Never a guess.
@@ -110,7 +145,6 @@ export default async function PlayerProfilePage({
   const profile: Profile = {
     license,
     name,
-    avatarUrl,
 
     // ---- identity, from the console's own registry ----
     // THE LICENSE IS ADDED BACK HERE, and its absence was not obvious.
@@ -314,15 +348,24 @@ export default async function PlayerProfilePage({
         component would drag the AWS SDK into the browser bundle. The incident
         queue hands its labels down the same way.
       */}
-      <div className="mx-auto max-w-5xl space-y-4">
-        <ProfileView
-          p={profile}
-          now={now}
-          banned={bannedNow}
-          categoryLabel={incidents.CATEGORY_LABEL}
-          moderation={{ ban, online: live !== null, canBan }}
-        />
-      </div>
+      {/*
+        THE PROMISE CROSSES THE SERVER/CLIENT LINE, NOT AN ELEMENT. Same
+        reasoning as the `moderation` prop above: a server-built element handed
+        to a client component as a non-`children` prop trips React's dev key
+        check. A promise has no such problem — React serialises it as a pending
+        chunk, flushes everything around it, and fills it in when it settles.
+      */}
+      <DiscordChromeProvider promise={discordChrome}>
+        <div className="mx-auto max-w-5xl space-y-4">
+          <ProfileView
+            p={profile}
+            now={now}
+            banned={bannedNow}
+            categoryLabel={incidents.CATEGORY_LABEL}
+            moderation={{ ban, online: live !== null, canBan }}
+          />
+        </div>
+      </DiscordChromeProvider>
     </AppShell>
   )
 }

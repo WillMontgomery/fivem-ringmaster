@@ -18,7 +18,103 @@
  *   moderation Ringmaster's own tables — bans, audit, incidents.
  */
 
+import type { AccentSurface } from './contrast'
+
 export type Provenance = 'live' | 'identity' | 'stats' | 'moderation'
+
+/**
+ * One Discord name we watched get replaced.
+ *
+ * WHY THIS IS STORED WHEN EVERYTHING ELSE DISCORD IS FETCHED LIVE. The rest of
+ * the Discord data on this page — avatar, banner, accent — is asked for fresh on
+ * every render, because the only useful version of somebody's current styling is
+ * the current one. Names are different in kind: `GET /users/{id}` only ever
+ * returns the present, so a history of them cannot be derived from it however
+ * many times you call it. If Ringmaster does not write down what it saw, the
+ * fact that somebody was called something else last week does not exist
+ * anywhere.
+ *
+ * AND IT IS THE FACT THAT MATTERS. Changing your display name is a normal thing
+ * to do, and it is also precisely what somebody does after being reported. A
+ * moderator opening a profile needs to see "was Slippery Jim until Tuesday"
+ * without having to have been watching on Tuesday.
+ */
+export interface DiscordNameChange {
+  /**
+   * Which of the two names moved.
+   *
+   * `globalName` is the display name and changes freely; `username` is the
+   * @handle and is rarer and more interesting. They are recorded separately
+   * because they mean different things, not because they change together.
+   */
+  field: 'username' | 'globalName'
+  /** The value that was replaced. Never empty — a change from nothing is not one. */
+  from: string
+  /** What replaced it. Null when they cleared it, which globalName allows. */
+  to: string | null
+  /**
+   * When RINGMASTER first saw the new value — not when Discord applied it.
+   *
+   * Named `at` rather than `changedAt` for that reason. Nothing here can know
+   * when the change actually happened; it can only know when a profile page was
+   * opened and the answer had moved. On a player nobody looks at, that could be
+   * weeks late, and the UI says "noticed" rather than "changed" because of it.
+   */
+  at: number
+}
+
+/**
+ * Everything the profile page draws from Discord, resolved for one render.
+ *
+ * THIS IS THE ONLY REPRESENTATION. There is no second copy of the avatar hash
+ * on the player row shadowing it and no cache in front of it — the page asks
+ * Discord, gets this, and draws it. `lib/discord.ts` used to claim a durable
+ * copy existed; it did not, and the claim is gone rather than the code having
+ * grown one, because two representations of one thing with nothing asserting
+ * they agree is this repo's signature failure.
+ *
+ * `answered` IS NOT `avatarUrl === null`. Discord failing to answer and a
+ * player having no avatar set are different facts with the same silhouette, and
+ * the page says different things about them.
+ */
+export interface DiscordChrome {
+  /** The Discord user id this was resolved for. */
+  id: string
+  /**
+   * True when Discord answered inside the timeout with a usable body.
+   *
+   * False covers every failure the same way on purpose — no token, a 404, a
+   * rate limit, a five-second silence. None of them is a statement about the
+   * player, and the page says so in one sentence rather than five.
+   */
+  answered: boolean
+  /**
+   * Always a URL, so the page never has to draw a hole where a face goes.
+   *
+   * Falls back to Discord's generic default avatar — one of six coloured logos
+   * derived from the id — which is a picture but is never that person. See
+   * `real` for telling the two apart.
+   */
+  avatarUrl: string
+  /** False when `avatarUrl` is the generic default rather than their picture. */
+  real: boolean
+  /** Their profile banner, for the blurred backdrop. Null unless they have one. */
+  bannerUrl: string | null
+  /**
+   * Their accent colour, already made safe to put text on.
+   *
+   * Null when they have not set one. NOT null merely because it was extreme —
+   * `accentSurface` clamps rather than rejects, so a white or black accent still
+   * arrives here as a usable surface. See lib/contrast.ts.
+   */
+  accent: AccentSurface | null
+  /** The @handle. */
+  username: string | null
+  /** The display name, which is the one people actually recognise. */
+  globalName: string | null
+  /** Formerly known as, newest first. From the registry row, not from the API. */
+  formerNames: DiscordNameChange[]
+}
 
 export interface ProfileIdentifier {
   kind: string
@@ -107,8 +203,17 @@ export interface ProfileAction {
 export interface Profile {
   license: string
   name: string
-  /** Discord CDN avatar, when we have a Discord id for them. */
-  avatarUrl?: string | null
+
+  /*
+   * `avatarUrl` USED TO BE HERE and is gone rather than unused.
+   *
+   * It was resolved on the server, awaited inline, and baked into this object —
+   * which is exactly what made the whole page wait on Discord. Everything
+   * Discord-shaped now arrives separately as a `DiscordChrome`, resolved behind
+   * its own Suspense boundary, so a slow call costs the face and nothing else.
+   * Leaving a second avatar field here would have given the page two places to
+   * look for one picture.
+   */
 
   /** identity — the allowlisted scan, minus `ip`, which is never collected. */
   identifiers: ProfileIdentifier[]
