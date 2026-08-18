@@ -24,7 +24,7 @@ permissions from an *instance role*, which the AWS SDK picks up automatically.
 Console → **DynamoDB** → make sure the region selector says **us-east-2 (Ohio)**
 → *Tables* → *Create table*.
 
-Create six tables. For every one of them:
+Create nine tables. For every one of them:
 
 - **Capacity mode: On-demand.** The load is bursty and tiny between matches.
   Provisioned capacity would mean guessing a number and paying for it while
@@ -33,12 +33,34 @@ Create six tables. For every one of them:
 
 | Table name | Partition key | Sort key | Notes |
 |---|---|---|---|
-| `ringmaster-grants` | `license` (String) | — | Who can do what. **Needs a secondary index — see below.** Ringmaster writes; the game server must never touch this. |
-| `ringmaster-bans` | `license` (String) | — | Active and lifted bans |
+| `ringmaster-grants` | `license` (String) | — | Who can do what. **Needs a secondary index — see below.** Ringmaster writes; the game server only reads. |
+| `ringmaster-bans` | `license` (String) | — | Active and lifted bans. Ringmaster writes; the game server only reads. |
 | `ringmaster-audit` | `pk` (String) | `ts` (Number) | Every admin action. **Ringmaster only.** |
-| `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations |
+| `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations. The game appends; both sides read. |
 | `ringmaster-sessions` | `pk` (String) | `sk` (String) | Auth.js writes this. **Needs a secondary index *and* TTL — see below** |
-| `ringmaster-telemetry` | `host` (String) | `ts` (Number) | Host CPU/memory/network. **Add a TTL attribute named `expires`** |
+| `ringmaster-telemetry` | `host` (String) | `ts` (Number) | **Add a TTL attribute named `expires`.** Provisioned, and nothing writes it yet — see the note below. |
+| `ringmaster-maintenance` | `id` (String) | — | The scheduled maintenance window. **One item, `id = "current"`.** The game reads it for the drain gate. |
+| `ringmaster-players` | `license` (String) | — | This console's own player registry: identity, sessions, playtime |
+| `ringmaster-player-ids` | `id` (String) | — | Reverse index, identifier → the licenses that presented it. Answers "has this Discord account been here under another license", which a license-keyed table cannot. |
+
+> **Three of those nine were missing from this document until 2026-08-18**, and
+> the omission was not cosmetic: `ringmaster-maintenance`, `ringmaster-players`
+> and `ringmaster-player-ids` are all live in `src/lib/dynamo.ts`, and a stack
+> built from the old list gives you a console that signs you in and then throws
+> `ResourceNotFoundException` on the Host page, on every profile, and on the
+> identifier check that runs at connect. **If you created the tables before this
+> date, create these three now.**
+>
+> The list above is transcribed from `src/lib/dynamo.ts`, which is the only
+> place table names are constructed. Nothing asserts that this table and that
+> file agree — so when they disagree, the file is right.
+
+> **`ringmaster-telemetry` is provisioned and unwritten.** Host CPU/memory/
+> network is polled over SSH and held in memory on the Ringmaster box
+> (`src/lib/telemetry.ts`), so the graphs are lost on restart and the durable
+> record is an M3b follow-up that has not landed. Create the table and the TTL
+> anyway — provisioning it later is the same work plus a migration. **The game
+> box never writes it**, and never did; see the 2026-08-09 note in section 3.
 
 ### The secondary index on `ringmaster-sessions`
 
@@ -98,10 +120,26 @@ settings* → *Time to Live* → *Enable* → attribute name **`expires`**.
 > A typo here fails silently: rows simply never expire, and you find out months
 > later from the bill.
 
-### Stats tables
+### The game's own table, which Ringmaster reads
 
-`br_stats` (the game side) will define its own tables when M7b lands. They are
-not needed for Ringmaster and are not listed here.
+**This section used to say the game's tables "are not needed for Ringmaster and
+are not listed here". That has not been true since the profile page shipped.**
+
+The game side keeps everything of its own in **one** table, `br-players`,
+partition key `pk` (String) and sort key `sk` (String) — `sk = profile` for the
+career aggregate, `sk = purchases` for owned cosmetics, and one
+`sk = match#<endedAt>#<matchId>` row per match played. **You do not create it
+here**; it belongs to the game repo's deploy, which is where its definition
+lives.
+
+It is listed here because Ringmaster *reads* it — a `GetItem` for the
+progression panel and a `Query` with `begins_with(sk, 'match#')` for match
+history, both in `src/lib/gameProfile.ts`. That read is what the policy in
+section 2 does not currently grant; see the flag at the end of that section.
+
+The prefixes differ (`br-` versus `ringmaster-`) because the ownership does, and
+that is the whole point of the split: it lets an IAM policy say "this box reads
+the other side's data and never writes it" as an ARN rather than as a promise.
 
 ---
 
@@ -144,6 +182,25 @@ console under your username, or run `aws sts get-caller-identity`.
 
 Name the policy `RingmasterTableAccess` and save.
 
+> **⚠ The policy above does not cover everything this box reads, and the gap is
+> not written into it here on purpose.**
+>
+> `src/lib/gameProfile.ts` does a `GetItem` and a `Query` against **`br-players`**
+> — the game's table, which does not match `ringmaster-*` and is therefore
+> denied by the policy as written. The symptom is the profile page's Progression
+> and Match history panels coming back empty with an `AccessDeniedException` in
+> `journalctl -u ringmaster`, while every other panel works.
+>
+> **What the code needs** is `dynamodb:GetItem` and `dynamodb:Query` on
+> `arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/br-players`, and nothing more —
+> no write of any kind, which is the property `src/lib/dynamo.ts` describes as
+> deliberate ("Ringmaster only ever reads it").
+>
+> **This document deliberately does not paste that statement into the JSON
+> above.** IAM here is administered by hand, and a document that silently
+> widens a policy to match today's code is a document that widens it again next
+> time without anyone deciding to. Decide it, then write it.
+
 ---
 
 ## 3. IAM role for the **game server** box (us-east-2)
@@ -174,16 +231,44 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
 }
 ```
 
-**This is the whole policy today, and the shortest true sentence about it is
-that the game box cannot touch a single `ringmaster-*` table.** It writes its
-own match stats and nothing else. Not the grants table, not the audit log, not
-the ban list, not telemetry.
+**This is the starting policy, and the shortest true sentence about it is that
+the game box cannot touch a single `ringmaster-*` table.** It writes its own
+match data and nothing else. Not the grants table, not the audit log, not the
+ban list, not telemetry.
+
+**Three statements have been added to it since, and they are the only three.**
+The sections below are them — a read on bans, grants and the maintenance window;
+an append on incidents; and, since 2026-08-17, a read back of incident verdicts.
+The third one cost a property this document used to advertise, and it is written
+down below rather than quietly dropped.
 
 That matters because the game server is the box most exposed to the public
 internet, running software people actively try to exploit. If it is ever
 compromised, this policy means the attacker cannot grant themselves an admin
-scope, cannot edit the record of what they did, and cannot even find out who is
+scope, cannot edit the record of what they did, and cannot find out who is
 banned.
+
+> **⚠ The `Resource` above is `br-stats-*`, and the shipped game code reads and
+> writes `br-players`.** Nothing matches `br-stats-*`. This is not a consequence
+> of any of the three additions below — it predates all of them.
+>
+> **What the code needs**, from `js-src/br_ddb/src/index.js` (`TABLE_PREFIX_GAME`
+> defaults to `br-`, and every call site names the table `players`):
+> `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:UpdateItem` and
+> `dynamodb:BatchWriteItem` on
+> `arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/br-players`. The `BatchWriteItem`
+> is the match-history writer, which fires in batches of 25 at the end of every
+> match. There is no `Query` and no `Scan` against it from the game side.
+>
+> **The JSON above has deliberately not been rewritten to match.** Two live
+> possibilities and they need different fixes: either the role in AWS already
+> says something other than what is written here — in which case *this file* is
+> the stale copy and should be corrected from the real policy — or it says
+> exactly this, in which case the game box has been failing every write to
+> `br-players` since it shipped and the fix is a policy change somebody makes
+> deliberately, having read the paragraph above. **Check the real role before
+> changing either one.** A doc that quietly grants a wildcard to make an error
+> go away is worse than the error.
 
 > **Revised 2026-08-09** — if you created this role earlier it also granted
 > `ringmaster-telemetry`; **delete that ARN.** Host telemetry is polled by
@@ -191,13 +276,15 @@ banned.
 > that table. An earlier draft of this file had it in both places, which cannot
 > both be right.
 
-### The two reads it needs — Slice 2
+### The reads it needs — Slice 2
 
 The game box reads DynamoDB directly through the `br_ddb` resource: the ban gate
-checks a connecting player against the ban list, and the in-game admin surface
-(later) reads its own scopes rather than inventing a second permission source.
-Both are point lookups by license, and they share one statement so the exception
-stays visible rather than buried in a list of actions:
+checks a connecting player against the ban list, the in-game admin surface reads
+its own scopes rather than inventing a second permission source, and the drain
+gate reads the maintenance window so the server can refuse connections while it
+is draining. All are point lookups on a key the box already holds, and they
+share one statement so the exception stays visible rather than buried in a list
+of actions:
 
 ```json
 {
@@ -208,34 +295,67 @@ stays visible rather than buried in a list of actions:
   ],
   "Resource": [
     "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-bans",
-    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-grants"
+    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-grants",
+    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-maintenance"
   ]
 }
 ```
 
-**Add this when the ban gate ships, not before.** Nothing on the game side
-reaches Ringmaster's data until there is a feature that needs it. Verify it with
-`brddb` in the server console — it does one lookup of a license that will never
-exist, which proves credentials, route and permission together without depending
-on any row being present.
+> **`ringmaster-maintenance` was added to this list on 2026-08-18**, having been
+> read by `br:ddb:maintenance` for as long as the drain gate has existed and
+> named in neither the table list above nor this statement. It is one `GetItem`
+> on the fixed key `{id: "current"}`.
+>
+> **Every one of these reads fails OPEN**, and that is the architectural rule
+> rather than an implementation detail: an unreachable ban list must not become
+> a server nobody can join, and an unreadable maintenance row means no drain
+> rather than a locked server. **The game server does not depend on Ringmaster
+> being up** — only the reverse. That is why these questions go to DynamoDB
+> directly instead of over an HTTP call to the console, and it is a constraint
+> to preserve rather than a shortcut taken once.
+
+**This used to say "add it when the ban gate ships, not before". The ban gate
+has shipped — add it now.** `br_ddb` is live on the game box and the connect
+gate reads through it on every join.
+
+Verify it with **`brddb`** in the game server's console (`brddb` is registered by
+`br_ddb/server/debug.lua`). It looks up a license that will never exist, so a
+successful lookup returning nothing proves credentials, route and permission
+together without depending on any row being present. `brban <license>` is the
+same check against a license you care about.
 
 **Why this policy is shaped the way it is** — this is the single most important
 security control in the whole design, so it is worth understanding rather than
 pasting:
 
-- **`GetItem` only, on two named tables.** Enough to answer "is *this* license
-  banned?" and "what scopes does *this* license hold?" — both about one specific
-  license the box already has in hand.
+- **`GetItem` only, on named tables.** Enough to answer "is *this* license
+  banned?", "what scopes does *this* license hold?" and "are we draining?" —
+  each about one specific key the box already has in hand. (A `PutItem` was
+  added alongside it on 2026-08-14 and a fourth table on 2026-08-17; both are
+  the sections below.)
 - **No `ringmaster-audit`, at all.** The audit log is the record of what admins
   did. A compromised game host must not be able to read — still less rewrite —
-  the account of its own compromise. This is the line that does not move.
-- **No `Query` or `Scan` anywhere.** So a compromised game server cannot
-  enumerate who is banned or who the admins are. It can only confirm or deny a
-  license it was already given.
-- **No write actions anywhere.** It cannot lift a ban, and it cannot grant
-  itself a scope. `ringmaster-grants` stays *writable only by Ringmaster*, where
-  every change goes through the console's own scope check and lands in the audit
-  log.
+  the account of its own compromise. **This is the line that does not move**,
+  and it is the one line here that survived 2026-08-17 untouched.
+- **No `Query` and no `Scan` anywhere in `br_ddb` — and that is now the load-
+  bearing guarantee, not the table list.** Verified by reading
+  `js-src/br_ddb/src/index.js`: the only commands it imports from
+  `@aws-sdk/client-dynamodb` are `GetItemCommand`, `PutItemCommand`,
+  `UpdateItemCommand` and `BatchWriteItemCommand`. `QueryCommand` and
+  `ScanCommand` appear nowhere in the resource's source. So a compromised game
+  server cannot enumerate who is banned, who the admins are, or which cases are
+  open — it can only confirm or deny a key it was already given.
+
+  **Say it that way round on purpose.** Since 2026-08-17 the *grant* is broader
+  than the code (see below), so "it can only touch these ARNs" is no longer the
+  strong statement it used to be. "It cannot enumerate anything" still is, and
+  it is enforced by the absence of a verb rather than by an ARN list. If
+  `br_ddb` ever needs a `Query`, that is a conversation about this policy — not
+  a change to a function.
+- **No write action on anything that decides authority.** It cannot lift a ban,
+  and it cannot grant itself a scope. `ringmaster-grants`, `ringmaster-bans` and
+  `ringmaster-maintenance` stay *writable only by Ringmaster*, where every
+  change goes through the console's own scope check and lands in the audit log.
 - **No `DeleteItem` anywhere.** Nothing on the game side ever needs to destroy a
   row.
 
@@ -245,6 +365,141 @@ pasting:
 > pushed down and invalidated out of band — is a whole subsystem whose failure
 > mode is a stale permission, which is worse than a read. The read is narrow
 > (one license, no enumeration) and the write side is untouched.
+
+### The one write it needs — incidents, append-only
+
+**Added 2026-08-14, which is why it is worth reading rather than skipping: a
+role built from a copy of this file dated earlier than that cannot file an
+incident at all.** The game writes incident rows itself, directly
+into `ringmaster-incidents`, rather than sending them over the event channel for
+Ringmaster to write — that channel drops batches silently after four attempts,
+and the evidence buffer behind an incident is discarded at match end, so a case
+lost that way is unrecoverable. The event carries only the id; the row is
+already durable by the time it arrives. `js-src/br_ddb/src/index.js` in the
+gamemode is the authority here and states the grant it assumes.
+
+```json
+{
+  "Sid": "GameServerFileIncident",
+  "Effect": "Allow",
+  "Action": [
+    "dynamodb:PutItem"
+  ],
+  "Resource": [
+    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-incidents"
+  ]
+}
+```
+
+**The write is conditional on `attribute_not_exists(incidentId)`** on the game
+side, so it can add a case and cannot overwrite one. Even having since gained a
+read (next section), a compromised game box still cannot enumerate open cases,
+read who is banned, discover who the admins are, or alter a verdict. Append
+without any ability to enumerate is a much smaller blast radius than it first
+sounds.
+
+> **This section used to end by saying there was "no read of any kind on this
+> table", and used to close the verdict question with "Neither is done."** Both
+> sentences were true when written and neither is true now. They are named here
+> rather than deleted because they were load-bearing: `br_ddb`'s own header
+> comment cites them, and anyone who read this file between 2026-08-14 and
+> 2026-08-17 came away with the opposite of the current answer.
+
+### The read it gained — verdicts, decided 2026-08-17
+
+**Settled, deliberately, by the owner: `dynamodb:GetItem` on `ringmaster-*`.**
+Their words on the breadth of it were "this is deliberately broad, I know".
+fivem-br-gamemode#168 — 250 Volts to a reporter whose report led to an action —
+needed the verdict, and of the two options this file used to lay out (widen the
+policy, or push verdicts down the SSH dispatcher) the first was chosen. The
+second would have added a console→game path that must not lose messages, whose
+failure mode is an unpaid reward with nothing recording that it was owed.
+
+**The grant is broad and the code is not, and that difference is the whole
+story of this section.** The prefix covers `audit`, `bans`, `grants`,
+`incidents`, `maintenance`, `players`, `player-ids`, `sessions` and
+`telemetry`. `br_ddb` reads four of them and should read no more:
+
+| Table | Verb | What for |
+|---|---|---|
+| `ringmaster-bans` | `GetItem` | the connect gate |
+| `ringmaster-grants` | `GetItem` | in-game admin scopes |
+| `ringmaster-maintenance` | `GetItem` | the drain gate |
+| `ringmaster-incidents` | `GetItem` + `PutItem` | file a case, read its verdict |
+
+**What was actually applied**, so this file matches the role rather than
+describing an ideal of it:
+
+```json
+{
+  "Sid": "GameServerReadIncidentVerdict",
+  "Effect": "Allow",
+  "Action": [
+    "dynamodb:GetItem"
+  ],
+  "Resource": [
+    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-*"
+  ]
+}
+```
+
+**That wildcard is the owner's deliberate choice and is written here as such —
+not as a recommendation.** If you are creating this role fresh and would rather
+not carry the breadth, the four ARNs in the table above are sufficient for
+everything `br_ddb` does, and substituting them changes no behaviour. **When
+somebody comes to tighten the wildcard back to a list, that table is the
+answer** — it is transcribed from `js-src/br_ddb/src/index.js`, which names each
+table exactly once. Read the real role before editing either.
+
+**What the verdict read actually is**, verified in `br:ddb:incidentVerdict`
+(`js-src/br_ddb/src/index.js`, ~line 953) rather than described from memory:
+
+- **One `GetItem`**, keyed on `{incidentId}` alone. The table has no sort key.
+- **`ProjectionExpression` of exactly four attributes** — `incidentId`, `state`,
+  `verdict`, `resolvedAt`. (`state` is a DynamoDB reserved word and is aliased.)
+  **Deliberately not** `resolution` or `resolvedByName` — the moderator's prose
+  never crosses onto the game box — and **deliberately not** `reporterLicense`
+  or `subjectLicense`, so the read cannot confirm an identity the game did not
+  already hold. The evidence, chat log, kill log and capture keys are all on
+  that item and none of them are asked for.
+- **`ConsistentRead: false`.** A verdict one sweep late is paid one sweep late.
+- **By an id the box minted itself.** Every id this verb is called with came
+  back from `putIncident` on the same box, so "read back cases whose ids it
+  knows" means "read back its own".
+- **It fails closed**, unlike the ban gate. An unreadable case answers "not
+  settled", the claim stays on the queue, and the next sweep asks again — paying
+  on a failed read would credit Volts against a verdict nobody has seen.
+
+**What it cost, stated plainly so nobody has to rediscover it:** a compromised
+game box can now see the verdicts on cases it filed. It still cannot alter one —
+`ringmaster-incidents` remains write-append-only from that side, and the resolve
+path lives entirely in the console.
+
+### The incident rules this policy is built around
+
+Worth having beside the policy, because more than one of the guarantees above
+depends on them and they are decisions rather than implementation:
+
+- **An incident has exactly two states, `pending_review` and `resolved`, and it
+  cannot be re-opened.** The queue is a strictly-shrinking worklist. If the
+  behaviour continues, that is a *new* incident.
+- **A verdict cannot be changed after the fact.** It is written by the same
+  conditional update that moves the row to `resolved`, and that update refuses
+  to run against a row that is already resolved — so there is no window in which
+  an incident is resolved without a verdict, and no path that rewrites one.
+  There is no second function that takes an id and a verdict, and that absence
+  *is* the enforcement.
+- **A ban issued from an incident is a standard audit action.** It writes a
+  `ban.issue` row exactly like any other ban, plus an `incident.resolve` row for
+  the closure. Being reached from a case does not make it a different kind of
+  ban or exempt it from the audit log.
+- **A verdict only exists if the action did.** `ban` is written after the ban row
+  lands; `kick` after the game host accepts the command. Neither is a claim the
+  browser gets to make — which is the property that matters when Volts are paid
+  against it.
+- **Absent is not `none`.** An incident resolved before the field existed, or
+  auto-resolved by the system, carries no verdict at all, and that must not be
+  read as "no action was taken". It is a claim about a decision nobody made.
 
 ### Attach both roles
 
@@ -355,7 +610,12 @@ the peering.
 
 ## 6. S3 bucket for incident screenshots
 
-Not needed until M5. Listed here so it is not a surprise later.
+**Still not needed, and worth being precise about why.** Incidents themselves
+have shipped — the game files them, the console queues and resolves them — but
+the *screenshot* half of M5 has not: nothing in this repo constructs an
+`S3Client` or a presigned URL, and no IAM statement anywhere below or above
+mentions S3. Create the bucket when the capture path is built, not before.
+Listed here so it is not a surprise later.
 
 S3 → *Create bucket*, in **us-east-2**:
 

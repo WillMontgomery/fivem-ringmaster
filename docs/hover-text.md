@@ -16,6 +16,14 @@ Every string a reader needs must exist in the markup — visible, or `sr-only` a
 associated with a control via `aria-describedby`. Only after that may it *also*
 appear on hover.
 
+**The component library is Base UI, not Radix.** `@base-ui/react`, pinned at
+**1.7.0** in `package-lock.json`; there is no `@radix-ui/*` package in this repo
+at all. That matters on every line below, and it matters most when you go
+looking for help: nearly all shadcn material on the internet assumes Radix, and
+the two differ in the one prop this document leans on hardest —
+**`render={<span … />}`, never Radix's `asChild`.** Generating a component from
+the shadcn registry without checking will hand you the Radix variant.
+
 This is not a stylistic preference. In Base UI 1.7.0, verified in
 `node_modules` and then in a browser:
 
@@ -59,14 +67,28 @@ same text present as `sr-only`.
 
 A header row, a body, a footer. **A card is a layout, not an emphasis level.** A
 single sentence does not get promoted to a 256px card for being important. It
-gets moved there for having parts. `FeedStatus` and `Provenance` were the first
-two. `ProfileView`'s `IdLabel` is the third site and the first one that is a
-*label* rather than a chip: the "Display name" and "In-game name" rows of the
-identifiers panel each carry a heading, what the row is, and the trap it warns
-about — three pieces, which is what earned the card. The owner asked for both by
-name ("any helper text should be a hover card, not just out in the open"), and
-what they replaced was a permanent paragraph under one row and, under the other,
-no explanation at all.
+gets moved there for having parts.
+
+**There are four sites, in three files** — `FeedStatus.tsx`, `Provenance.tsx`,
+and two in `ProfileView.tsx`. A grep for `<HoverCard` returns exactly those.
+
+`FeedStatus` and `Provenance` were the first two. `ProfileView`'s `IdLabel` is
+the third and the first one that is a *label* rather than a chip: the "Display
+name" and "In-game name" rows of the identifiers panel each carry a heading,
+what the row is, and the trap it warns about — three pieces, which is what
+earned the card. The owner asked for both by name ("any helper text should be a
+hover card, not just out in the open"), and what they replaced was a permanent
+paragraph under one row and, under the other, no explanation at all.
+
+**The fourth is the ban chip on the profile**, and it is the worked example of
+rule 1 on a card rather than a tooltip. Its three rows — reason, who issued it,
+how long — are a `<dl>` in the popup *and* an `sr-only` sentence inside the
+trigger, so the screen-reader user gets the same three facts the popup carries.
+It also earns its own affordance: `cursor-help` alone only pays out once the
+pointer is already there, so the word "Banned" carries a dotted underline. **A
+chip that hides its own explanation until somebody happens to point at it is the
+complaint that produced `IdLabel` in the first place**; do not add a fifth
+without one.
 
 ### 6. The native `title` attribute is banned on DOM elements
 
@@ -148,7 +170,16 @@ two-sentence paragraphs in a single-line pill.
 - **`PlayerActions.tsx`** has the disabled-button defect twice more, worked
   around with a bare wrapper `<span>` that restores the mouse case and nothing
   else.
-- **There is no lint rule behind any of this.** An ESLint rule banning the
-  `title` JSX attribute on DOM elements — allowlisting `<iframe>`/`<svg>`, never
-  matching component props — is what would keep it from decaying, but the repo
-  has no ESLint config at all, so that is a bootstrap task of its own.
+- **There is no lint rule behind any of this, and `npm run lint` is not one
+  either.** The script exists in `package.json` and there is no ESLint config
+  file and no `eslint` dependency anywhere in the repo, so it is a name rather
+  than a gate — and it is *not* part of `npm run verify`, which is what actually
+  runs (`check:secrets`, `check:banrule`, `check:xpcurve`, `check:chips`,
+  `check:contrast`, `typecheck`). An ESLint rule banning the `title` JSX
+  attribute on DOM elements — allowlisting `<iframe>`/`<svg>`, never matching
+  component props — is what would keep this from decaying, but standing ESLint
+  up at all is the bootstrap task in front of it.
+
+  Until then the check is a grep, and rule 6's caveat is the whole difficulty:
+  `title=` returns both banned DOM attributes and legitimate component props,
+  and every hit has to be read and classified by hand.

@@ -21,9 +21,14 @@ tool, and "restart the server to change a number" is not a config system.
 | | |
 |---|---|
 | **Sees** | who is on the server right now, live; host CPU/memory/network; every anticheat firing |
-| **Acts** | kick, ban, spectate, trigger in-game events, edit hot-reloadable config |
-| **Remembers** | bans with the admin who issued them, an audit log of every action, incident reports with evidence |
+| **Acts** | kick, ban, resolve an incident with a verdict, trigger in-game events, edit hot-reloadable config |
+| **Remembers** | bans with the admin who issued them, an audit log of every action, incident reports and their timelines |
 | **Operates** | stop/restart the FXServer process, schedule maintenance windows around live matches |
+
+**`spectate` is a grant scope and nothing more.** It is defined in
+`src/lib/grants.ts` and there is no surface behind it — see
+[Spectate is deliberately absent](#milestones). Screenshots on incidents are the
+same shape: the incident pipeline ships, the capture half does not.
 
 ## Why this is a separate repo
 
@@ -56,11 +61,32 @@ Ringmaster — us-west-2                          [ this repo ]
         |    commands, process control, telemetry DynamoDB — us-east-2
         v                                         ^
 FXServer — us-east-2                              |  instance role:
-  supervisor -> FXServer stdin                    |  stats + telemetry
-  br_ringmaster resource — realtime push  --------+  writes, ban reads
-  bundled JS resource — DynamoDB writes
+  supervisor -> FXServer stdin                    |  br-players read/write
+  br_ringmaster resource — realtime push  --------+  ringmaster-* GetItem,
+  br_ddb resource — DynamoDB reads and writes     |  incidents append
   sshd + dispatch.sh (forced command only)        [ game repo ]
 ```
+
+**Host telemetry does not travel that right-hand arrow.** It is polled by
+Ringmaster over SSH and held in memory on the Ringmaster box; the game server
+never writes `ringmaster-telemetry`, and nothing does yet. An earlier version of
+this diagram said "stats + telemetry writes", which was wrong in both halves.
+
+### The game server does not depend on Ringmaster
+
+The owner's constraint, in their words: *"I don't want the game server to be
+reliant on Ringmaster — only the reverse is okay, since Ringmaster is a
+companion to the server."*
+
+That is why the game box talks to DynamoDB directly rather than asking this
+console anything. A connecting player's ban check, the in-game scope lookup and
+the drain gate are all point reads against DynamoDB, and **all three fail open**
+— an unreachable database must not become a server nobody can join. The one
+outbound path from game to console is a fire-and-forget push to the ingest
+endpoint, which nothing waits on.
+
+**Ringmaster being down costs you the admin panel, never the server.** Anything
+that would reverse that is a design change, not a convenience.
 
 ### No RCON, and that is a deliberate reversal
 
@@ -86,12 +112,33 @@ control, and a small supervisor on the game host relays them to FXServer's
 stdin. `rcon_password` is left unset, which is FXServer's default. **One
 channel, one port, and it is not the world-open one.**
 
-**Both sides write to DynamoDB, with deliberately unequal reach.** The game
-server writes stats and telemetry from a server-side JavaScript resource, using
-an EC2 instance role — no static credentials anywhere. Its IAM policy grants
-**no access to the grants, bans or audit tables**; those belong to Ringmaster
-alone, so a compromised game server cannot grant itself an admin scope or edit
-the record of what it did.
+**Both sides use DynamoDB, with deliberately unequal reach.** The game server
+reads and writes its own `br-players` table from the `br_ddb` server-side
+JavaScript resource, using an EC2 instance role — no static credentials
+anywhere.
+
+Its reach into Ringmaster's own `ringmaster-*` tables is narrow and has moved
+twice, so it is worth stating as it is today rather than as it was:
+
+- **It reads `ringmaster-bans`, `ringmaster-grants` and `ringmaster-maintenance`**
+  — point lookups on a key it already holds, for the connect gate, in-game admin
+  scopes and the drain gate.
+- **It appends to `ringmaster-incidents`** (conditional on the id being absent,
+  so it can file a case and never overwrite one) and, since 2026-08-17, **reads
+  back a four-attribute projection of one** — enough to answer "decided, and did
+  anything happen", and not the moderator's prose or either party's license.
+- **It never touches `ringmaster-audit`.** The audit log is the record of what
+  admins did; a compromised game host must not be able to read, still less
+  rewrite, the account of its own compromise. **This is the line that does not
+  move.**
+- **There is no `Query` and no `Scan` anywhere in `br_ddb`**, which is a stronger
+  guarantee than the table list and the one to lean on: a compromised game
+  server cannot enumerate who is banned, who the admins are, or which cases are
+  open. It can only confirm or deny a key it was already given.
+
+An earlier version of this section claimed the game's policy granted "no access
+to the grants, bans or audit tables". Two thirds of that is now wrong. The audit
+third is still true and is the part that was ever load-bearing.
 
 *Realtime* state — the live player list, host telemetry — takes a different
 path, pushing to Ringmaster's ingest endpoint, because polling DynamoDB for a
@@ -141,6 +188,38 @@ telemetry. Game commands and process control were originally two different
 channels because RCON cannot restart the process it runs inside — dropping RCON
 collapsed them into one.
 
+## Moderation rules that are settled
+
+These are the owner's decisions, not implementation details, and they are the
+ones most often got wrong from memory.
+
+- **An incident has exactly two states: `pending_review` and `resolved`.**
+  Anything the system actions itself opens as `resolved` — there is nothing for
+  anybody to do.
+- **An incident cannot be re-opened.** That makes the queue a strictly-shrinking
+  worklist rather than something that can bounce, and `resolved` a permanent
+  fact about a moment. If the behaviour continues, that is a *new* incident, and
+  the profile shows both.
+- **A verdict cannot be changed after the fact.** It is written by the same
+  conditional update that moves the row to `resolved`, and that update refuses
+  to run twice — so there is no resolved incident without a verdict and no path
+  that rewrites one. The immutability is what makes the game side's reward safe
+  to pay once and never reconcile.
+- **A ban issued from an incident is a standard audit action.** It writes a
+  `ban.issue` row exactly like any other ban, alongside the `incident.resolve`
+  row for the closure. Being reached from a case does not make it a different
+  kind of ban.
+- **`resolved` with no verdict is not "no action taken".** Incidents closed
+  before the verdict field existed, and ones the system auto-resolved, carry no
+  verdict at all. That is "do not know", and this console never converts "do not
+  know" into an answer.
+- **Report limits, per player per match: at most 5 players named in one
+  submission, and at most 3 submissions.** They are two separate limits and
+  both are live — three submissions naming five distinct players each is fifteen
+  reports and is fine. A separate rule caps one accusation per target per match,
+  so two submissions naming the same person count once. (`BR.Config.Report` in
+  the game repo is the authority; `maxTargets = 5`, `maxPerMatch = 3`.)
+
 ## Security posture
 
 The application layer is this repo's responsibility; the network layer (VPC
@@ -148,12 +227,16 @@ peering, security groups, Cloudflare WAF and SSL/TLS Full Strict) is handled
 outside it.
 
 **Nothing here is protected by the code being private.** Every actual secret
-lives outside the repo under any visibility setting — RCON password, SSH private
-key, Discord OAuth secret, session signing key, and *who the admins are* (that
-is data, in DynamoDB, never a committed file). DynamoDB access on both hosts is
-via an EC2 instance IAM role, so there is no static credential to leak
-anywhere. The game repo already publishes its anticheat thresholds on purpose;
-this is the same bet.
+lives outside the repo under any visibility setting — the SSH private key for
+the dispatch channel, the Discord OAuth secret, the Discord bot token, the
+session signing key, the ingest shared secret, and *who the admins are* (that is
+data, in DynamoDB, never a committed file). `.env.example` names every one of
+them and holds none. DynamoDB access on both hosts is via an EC2 instance IAM
+role, so there is no static credential to leak anywhere. The game repo already
+publishes its anticheat thresholds on purpose; this is the same bet.
+
+There is no RCON password on that list because there is no RCON password:
+`rcon_password` is left unset, which is FXServer's default. See above.
 
 The load-bearing pieces:
 
@@ -211,10 +294,17 @@ ahead of the tooling; the wiring waits.
 
 ## Stack
 
-**Locked** (2026-08-09): Next.js (App Router) + TypeScript + Auth.js, Tailwind,
+**Locked** (2026-08-09): Next.js (App Router) + TypeScript + Auth.js, Tailwind 4,
 DynamoDB via the AWS SDK's default credential chain. Resolved and locked against
 a real `npm install`, so `package-lock.json` — not this list — is the authority
 on versions.
+
+**The component primitives are Base UI, not Radix**, with shadcn components in
+`src/components/ui/` generated against it. That distinction has bitten this repo
+more than once, because most shadcn material on the internet assumes Radix: the
+prop for rendering a trigger as something else is **`render`**, not Radix's
+`asChild`. See [docs/hover-text.md](docs/hover-text.md), which is where the
+consequences are written down.
 
 Node 20+ and TypeScript. Unlike the game's NUI, this runs in a real browser, so
 **none of the CEF Chrome 103 constraints apply** — current CSS, current

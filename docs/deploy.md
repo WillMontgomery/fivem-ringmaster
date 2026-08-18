@@ -1,14 +1,32 @@
 # Deploying Ringmaster
 
-Setting up the us-west-2 box. Everything here runs **on that box**, not on the
-game server.
+Setting up the us-west-2 box.
 
-Nothing in this document touches the game host. The only thing that ever will
-is an outbound SSH connection, and that comes later.
+## Two boxes, and never assume which one you are on
+
+**There are two separate machines and no command in this file spans both.**
+
+| | Box | Region | What it is |
+|---|---|---|---|
+| **CONSOLE** | Ringmaster | us-west-2 | Node, Caddy, the systemd unit — this document |
+| **GAME** | FXServer | us-east-2 | FXServer, `br_ddb`, `dispatch.sh` — the game repo's deploy |
+
+**Unless a step says `[GAME]`, it runs on the CONSOLE box.** Every shell block
+below is on the CONSOLE box except the two marked otherwise, and those two are
+marked in their own heading as well as inline. This is spelled out because
+copy-pasting a run of commands that silently changes machines part-way through
+is how a box ends up with half of the wrong software on it — and `npm ci` on the
+game host in particular is a real hazard, since it is a machine that must not
+have Node at all.
+
+**You cannot chain across the two.** There is no `ssh` step in this document.
+The only link between the boxes is the forced-command SSH channel the app opens
+at runtime, over VPC peering, outbound from CONSOLE to GAME — configured here
+via `GAME_HOST`/`GAME_SSH_KEY` and never driven by hand from this file.
 
 ---
 
-## 1. Node
+## 1. Node — CONSOLE box
 
 Node 22 LTS. `package.json` requires `>=20`; 22 is the current LTS and is what
 the systemd unit below assumes.
@@ -36,8 +54,10 @@ Expect `v22.x` and `10.x` or later. If `node -v` prints `v12` or `v18`, an old
 apt `nodejs` is shadowing it — `sudo apt remove -y nodejs libnode-dev` and
 re-run the NodeSource step.
 
-> **Do not install Node on the game server.** It does not need one and the
-> gamemode's deploy explicitly avoids requiring it. Only this box runs Node.
+> **Do not install Node on the GAME box.** It does not need one and the
+> gamemode's deploy explicitly avoids requiring it — FXServer ships its own
+> runtime, and `br_ddb` is committed as a pre-bundled file precisely so nothing
+> has to be installed there. Only the CONSOLE box runs Node.
 
 ### Get the code
 
@@ -63,17 +83,27 @@ resolving something newer than what was tested.
 cp .env.example .env.local && nano .env.local
 ```
 
-Fill in every value. `AUTH_URL` must be the **public** origin
+Fill in every value marked `REPLACE_ME`. `AUTH_URL` must be the **public** origin
 (`https://your-domain`), because Auth.js builds the OAuth redirect URI from it
 and Discord rejects a mismatch.
+
+Four are genuinely optional and the app starts without them —
+`DISCORD_BOT_TOKEN` (without it every player shows a Discord default avatar
+rather than their own) and `GAME_HOST` / `GAME_SSH_KEY` / `GAME_SSH_USER`
+(without them the Host page says "not configured" rather than erroring).
+`src/lib/env.ts` is the authority on which are which: it validates the whole
+environment at first use and names **every** missing variable at once rather
+than one per restart.
 
 ```bash
 chmod 600 .env.local
 ```
 
-This file holds the Discord secret, the session signing key and the ingest
-secret. It is gitignored, and the secret-scanning gate would fail the build if
-it ever were not.
+This file holds the Discord OAuth secret, the Discord bot token, the session
+signing key, the ingest shared secret, and the **path** to the game host's SSH
+key — the key itself lives at that path and never enters this file or the repo.
+It is gitignored, and the secret-scanning gate would fail the build if it ever
+were not.
 
 > **The build does not require these**, deliberately — nothing reads the
 > environment at module load, so CI can build with no secrets at all. Set them
@@ -88,7 +118,7 @@ npm run build
 
 ---
 
-## 2. Why a reverse proxy
+## 2. Why a reverse proxy — CONSOLE box
 
 **One reason, and it is not architecture for its own sake: `next start` serves
 plain HTTP and cannot terminate TLS.** Something has to hold the Cloudflare
@@ -182,7 +212,7 @@ public IP, **proxied** (orange cloud), and **SSL/TLS → Overview → Full
 
 ---
 
-## 3. The app as a service
+## 3. The app as a service — CONSOLE box
 
 ```bash
 sudo nano /etc/systemd/system/ringmaster.service
@@ -232,7 +262,7 @@ systemctl status ringmaster --no-pager && journalctl -u ringmaster -n 30 --no-pa
 
 ---
 
-## 4. Discord
+## 4. Discord — browser, no box
 
 Discord Developer Portal → your application → **OAuth2** → *Redirects* → add:
 
@@ -245,7 +275,12 @@ instead of `https` will fail with an error that blames the wrong thing.
 
 ---
 
-## 5. Ports
+## 5. Ports — CONSOLE box's security group
+
+**This is the CONSOLE box's security group only.** The GAME box's inbound rules
+are a different list in a different region, and they are in `docs/aws-setup.md`
+§5. Do not merge the two tables in your head: the only thing GAME accepts is SSH
+on 22 from the us-west-2 CIDR.
 
 | Port | Open to | Why |
 |---|---|---|
@@ -269,11 +304,18 @@ curl -s https://www.cloudflare.com/ips-v4
 
 ## Checks
 
+### On the CONSOLE box
+
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/api/ingest
 ```
 
-`200` — the app is up locally.
+**`405` — and that is the pass.** `src/app/api/ingest/route.ts` exports `POST`
+and nothing else, so Next answers a `GET` with Method Not Allowed. Getting a
+status code at all is the thing being tested: it proves the app is listening on
+3000 and routing. **This document used to say `200` here**, which sent people
+looking for a fault that was not there. A connection refused is the real
+failure; anything else means the app is up.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://ringmaster.example.com/login
@@ -286,19 +328,40 @@ curl -s -o /dev/null -w '%{http_code}\n' https://ringmaster.example.com/
 ```
 
 `307` — redirected to login, because you have no session. If this returns
-`200`, stop: the auth guard is not working.
+`200`, stop: the auth guard is not working. **Note the middleware only enforces
+this in production** (`NODE_ENV=production`), which the systemd unit gives you;
+running `npm run dev` on this box will return `200` and prove nothing.
 
-From the **game** box, checking the ingest path is reachable over peering:
+### On the GAME box — the only two commands in this file that are
+
+**`[GAME]`** — these run on the FXServer host in us-east-2, not on the box you
+have been setting up. Nothing above this line does.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' http://<ringmaster-private-ip>:3000/api/ingest
 ```
 
-`200`. A hang means the security group; a refusal means the app is not running.
+`405`, for the same reason as above — it proves the peered path reaches the app.
+Use the **private** IP; the public one would test a route over the internet and
+prove nothing about the peering. A hang means the security group; a refusal
+means the app is not running.
+
+```
+brddb
+```
+
+In the **FXServer console** (not a shell), which confirms the game box's own
+DynamoDB access — credentials, route and IAM permission — independently of
+anything on the CONSOLE box. See `docs/aws-setup.md` §3. It is listed here only
+so that a failure gets attributed to the right machine: **the console being
+down does not affect it, and it does not affect the console.**
 
 ---
 
-## Deploying an update
+## Deploying an update — CONSOLE box
+
+**This updates the console and nothing else.** It does not touch the game
+server, and there is no step in it that reaches the other box.
 
 ```bash
 cd /opt/ringmaster && git pull && npm ci && npm run build && sudo systemctl restart ringmaster
@@ -308,3 +371,9 @@ Kept as a separate step from running, for the same reason the game server's
 deploy is: a restart should relaunch what is on disk, not silently pull new
 code — otherwise a crash-restart deploys whatever happened to be on `main` at
 that moment.
+
+> **Updating the GAME box is a different thing entirely and is not done from a
+> shell.** It runs from the console's Maintenance page, over the forced-command
+> SSH channel, against whichever branch that box is actually parked on — which
+> is not necessarily `main`. Nothing you type here affects it, and running the
+> line above will not deploy a gamemode change.
