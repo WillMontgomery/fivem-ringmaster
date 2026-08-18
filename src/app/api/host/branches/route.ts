@@ -29,7 +29,20 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(): Promise<Response> {
   try {
-    await authorize('process')
+    /**
+     * A READ, DESPITE THE HEAVY SCOPE AND DESPITE THE SSH ROUND TRIP, so it
+     * does not pay for the Discord role re-check that every write does.
+     *
+     * This is the one call site where the read/write answer looks arguable.
+     * It runs a `git fetch --prune` on the game box, which writes to a git
+     * directory — but it changes nothing a player, a moderator or the audit
+     * log can observe, and it is the shopping list for an action rather than
+     * the action. The write it leads to is POST /api/maintenance, which is
+     * marked `write` and is where the check belongs: refusing to LIST branches
+     * for a revoked admin buys nothing, because the deploy they would ask for
+     * is refused a moment later with the reason.
+     */
+    await authorize('process', 'read')
 
     if (!sshConfigured()) {
       return Response.json(

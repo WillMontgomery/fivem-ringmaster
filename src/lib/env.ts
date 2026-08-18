@@ -22,21 +22,36 @@ const schema = z.object({
   DISCORD_CLIENT_SECRET: z.string().min(1),
 
   /**
-   * OPTIONAL, and the only thing that makes real profile pictures possible.
+   * OPTIONAL, and it now does two jobs. ONE TOKEN, NOT TWO — a second bot
+   * credential for the second job would be a second thing to rotate and a
+   * second thing to leak.
    *
-   * A Discord user id cannot be turned into an avatar URL on its own — the CDN
-   * path needs the account's current avatar hash, which only the API knows.
-   * Without this the console shows Discord's generic default avatar, which is
-   * never that person.
+   * (1) REAL PROFILE PICTURES. A Discord user id cannot be turned into an
+   * avatar URL on its own — the CDN path needs the account's current avatar
+   * hash, which only the API knows. Without this the console shows Discord's
+   * generic default avatar, which is never that person. One uncached call per
+   * profile page view with a five-second ceiling, and the page never blocks on
+   * it. See lib/discord.ts and components/DiscordChrome.tsx.
    *
-   * The bot needs no privileged intents and no server membership: `GET
-   * /users/{id}` returns username, global name, avatar hash, banner and accent
-   * colour to any bot, and cannot read messages, see servers, or act on anyone.
+   * (2) THE ADMIN-ROLE RE-CHECK BEFORE EVERY WRITE. Ringmaster's permissions
+   * live in DynamoDB and are independent of Discord, so an admin removed from
+   * the Discord server kept a working console until a human revoked their row.
+   * Before every action that changes something, `GET
+   * /guilds/{guild}/members/{user}` is asked whether they still hold
+   * DISCORD_ADMIN_ROLE_ID. See lib/discordRole.ts.
    *
-   * ONE CALL PER PROFILE PAGE VIEW, uncached, with a five-second ceiling. That
-   * is deliberate and it is the owner's decision: styling is the one thing where
-   * a cached answer is the wrong answer. The profile page never blocks on it —
-   * see lib/discord.ts and components/DiscordChrome.tsx.
+   * THE SECOND JOB CHANGED WHAT THE BOT NEEDS, and this is the one deployment
+   * fact worth reading twice. Job (1) works from outside the server — `GET
+   * /users/{id}` answers any bot. Job (2) does NOT: the bot must be a MEMBER of
+   * the guild named in DISCORD_GUILD_ID. It still needs no privileged intents
+   * (only LIST Guild Members requires one; fetching a single member does not),
+   * still cannot read messages, and still cannot act on anyone.
+   *
+   * LEAVING IT UNSET IS A SUPPORTED STATE AND IT TURNS THE RE-CHECK OFF. The
+   * console keeps working on DynamoDB grants alone, exactly as it did before,
+   * and every write logs a warning naming this variable. It is not made
+   * required here because doing so would stop an already-deployed console at
+   * boot over a defence-in-depth check it had never had.
    */
   DISCORD_BOT_TOKEN: z.string().optional(),
 

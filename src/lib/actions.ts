@@ -1,10 +1,18 @@
 import { cookies } from 'next/headers'
 import { z } from 'zod'
 
+import { signOut } from '@/auth'
+
 import * as audit from './audit'
+import {
+  checkAdminRole,
+  enforceDiscordAdmin,
+  RoleRevokedError,
+} from './discordRole'
 import { ForbiddenError, requireScope, type Scope } from './grants'
 import { isIdle } from './activity'
-import { IDLE_ERROR_CODE } from './idle'
+import { ACTIVITY_COOKIE, IDLE_ERROR_CODE } from './idle'
+import { REVOKED_ERROR_CODE, REVOKED_MESSAGE } from './revocation'
 import { currentAdmin, type CurrentAdmin } from './session'
 
 /**
@@ -13,12 +21,19 @@ import { currentAdmin, type CurrentAdmin } from './session'
  * ONE PLACE THAT ORDERS THE STEPS, because the order is the security property
  * and getting it right once beats getting it right in each of eight routes:
  *
- *   authenticate → authorise → validate → record intent → act → record outcome
+ *   authenticate → authorise → re-check Discord → validate → record intent →
+ *   act → record outcome
  *
  * Authorisation before validation is deliberate. A caller without the scope
  * should not be able to learn anything about what the endpoint accepts — a
  * 400 that says "reason must be at least 3 characters" is a free schema oracle
  * for someone who has no business calling it at all.
+ *
+ * THE DISCORD RE-CHECK SITS AFTER THE GRANT CHECK AND NOT BEFORE IT, and that
+ * ordering is what the whole fail-open argument in lib/discordRole.ts rests on:
+ * by the time Discord is asked, the primary authorisation has already been
+ * satisfied against a live database read. It also means a stranger cannot make
+ * this console call Discord by POSTing at it.
  */
 
 /** A route handler failed in a way the caller should be told about. */
@@ -85,12 +100,37 @@ export interface ActionContext {
 }
 
 /**
- * Authenticate, authorise, and hand back the acting admin.
+ * Does this request change anything?
+ *
+ * A REQUIRED ARGUMENT, NOT AN OPTION WITH A DEFAULT, and that is the entire
+ * mechanism keeping the Discord re-check from quietly missing a route. There is
+ * no safe default: `read` would let a new write route skip the check by
+ * omission — the exact failure this repo has shipped before, where correct code
+ * has no callers — and `write` would put a Discord round trip in front of the
+ * two-second `/api/state` poll. Making it mandatory means `tsc` refuses to
+ * build a route whose author has not said which kind it is, and the answer is
+ * greppable afterwards.
+ *
+ * WHAT COUNTS AS A WRITE: anything that changes state anywhere — a ban, a lift,
+ * a kick, an incident verdict, a maintenance window, a branch switch, a deploy.
+ * Listing and viewing are reads even when they are expensive and even when they
+ * are guarded by a heavy scope; `/api/host/branches` is the case that looks
+ * ambiguous and is not, because a `git fetch` on the game box changes nothing a
+ * player or a moderator can observe.
+ */
+export type ActionIntent = 'read' | 'write'
+
+/**
+ * Authenticate, authorise, re-check Discord on writes, and hand back the acting
+ * admin.
  *
  * Throws {@link ActionError} with the right status for each failure, so a
  * route handler maps one error type rather than branching.
  */
-export async function authorize(scope: Scope): Promise<ActionContext> {
+export async function authorize(
+  scope: Scope,
+  intent: ActionIntent,
+): Promise<ActionContext> {
   /**
    * IDLE BEFORE ANYTHING ELSE, and read directly rather than inferred from the
    * null `currentAdmin()` already returns for it. Both refuse the request; only
@@ -124,13 +164,76 @@ export async function authorize(scope: Scope): Promise<ActionContext> {
     throw e
   }
 
-  return {
-    admin,
-    actor: {
-      license: admin.license,
-      name: admin.name,
-      discordId: admin.discordId,
-    },
+  const actor: audit.Actor = {
+    license: admin.license,
+    name: admin.name,
+    discordId: admin.discordId,
+  }
+
+  if (intent === 'write') {
+    await discordGate(scope, actor)
+  }
+
+  return { admin, actor }
+}
+
+/**
+ * Ask Discord whether this admin still holds the role, and act on the answer.
+ *
+ * ALL OF THE DECIDING HAPPENS IN lib/discordRole.ts — including which verdicts
+ * deny, what gets audited and whether the session is torn down — so that the
+ * checks in `discordRole.check.ts` exercise the shipped logic rather than a
+ * second copy of it. What lives here is only the wiring: the real Discord call,
+ * the real Auth.js sign-out, the real audit table.
+ *
+ * THE WAIT IS DELIBERATE AND IT IS UP TO FIVE SECONDS. Every write in this
+ * console is submitted behind a spinner that is already on screen (BanDialog,
+ * KickDialog, ConfirmDialog, MaintenancePanel and the moderation board's
+ * `toast.promise` all hold one), so a slow Discord costs a longer spinner and
+ * then the real outcome — not a frozen page and not a spurious failure.
+ */
+async function discordGate(scope: Scope, actor: audit.Actor): Promise<void> {
+  const jar = await cookies()
+
+  try {
+    await enforceDiscordAdmin({
+      discordId: actor.discordId,
+      actor,
+      scope,
+      deps: {
+        check: checkAdminRole,
+        endSession: async () => {
+          /**
+           * The session RECORD, not just the cookie. Auth.js deletes the
+           * DynamoDB row; clearing cookies alone would orphan it until its TTL
+           * and leave a session that a captured cookie still opens. Same exit
+           * the keepalive route and the sidebar's sign-out button use.
+           */
+          await signOut({ redirect: false })
+          // The activity cookie is bound to the session token it was minted
+          // against, so it is dead weight now. Dropped for the same reason the
+          // keepalive route drops it on an idle sign-out.
+          jar.delete(ACTIVITY_COOKIE)
+        },
+        audit: audit,
+        log: (level, message) => {
+          if (level === 'error') console.error(message)
+          else console.warn(message)
+        },
+      },
+    })
+  } catch (e) {
+    if (e instanceof RoleRevokedError) {
+      /**
+       * 403 RATHER THAN 401, and the difference is the message. A 401 says "log
+       * in again", which is precisely the wrong instruction: logging in again
+       * will fail, because `auth.ts`'s sign-in gate checks the same role. The
+       * code is what the browser acts on — see lib/api.ts — and the message is
+       * what it shows if the navigation is blocked.
+       */
+      throw new ActionError(REVOKED_MESSAGE, 403, REVOKED_ERROR_CODE)
+    }
+    throw e
   }
 }
 

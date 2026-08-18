@@ -61,7 +61,7 @@ const scheduleSchema = z
 
 export async function GET(): Promise<Response> {
   try {
-    await authorize('view')
+    await authorize('view', 'read')
     ensureDriver()
     const w = await maint.current()
     return Response.json({
@@ -76,7 +76,7 @@ export async function GET(): Promise<Response> {
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('process')
+    const { actor } = await authorize('process', 'write')
 
     const body = await req.json().catch(() => {
       throw new ActionError('Expected a JSON body.')

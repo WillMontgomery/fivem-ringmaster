@@ -61,7 +61,7 @@ const schema = z.object({
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('ban')
+    const { actor } = await authorize('ban', 'write')
 
     const body = await req.json().catch(() => {
       throw new ActionError('That request was not valid JSON.', 400)

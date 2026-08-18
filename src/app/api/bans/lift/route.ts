@@ -34,7 +34,7 @@ const liftSchema = z.object({
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('ban')
+    const { actor } = await authorize('ban', 'write')
 
     const body = await req.json().catch(() => {
       throw new ActionError('Expected a JSON body.')

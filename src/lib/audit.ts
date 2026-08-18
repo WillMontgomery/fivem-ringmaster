@@ -38,6 +38,35 @@ export type AuditAction =
   // thing that has to be comparable across actions later.
   | 'incident.resolve'
 
+  /**
+   * The Discord re-check refused a write and ended the session.
+   *
+   * AN ADMIN WHOSE ROLE WAS TAKEN AWAY, STILL TRYING TO ACT, is the single
+   * clearest thing an audit log can be asked to capture, and it is invisible
+   * everywhere else: the write never happened, so no ban or kick row records
+   * it, and the session is gone a moment later. `outcome` carries whether the
+   * sign-out actually succeeded — a `failed` row here means a revoked admin's
+   * session could not be torn down, which is the case worth paging somebody
+   * over. See lib/discordRole.ts.
+   */
+  | 'discord.revoked'
+
+  /**
+   * A write that went ahead WITHOUT a Discord answer, because Discord did not
+   * give one inside the budget.
+   *
+   * THIS IS THE RECEIPT FOR THE FAIL-OPEN DECISION. The gate allows a write
+   * when Discord times out or errors, on the reasoning that the DynamoDB grant
+   * — the primary authorisation — has already been checked live and passed. A
+   * fail-open nobody can see afterwards is indistinguishable from a check that
+   * was never running, so each one leaves a row and "was the Discord check up
+   * when this ban was issued" stays an answerable question.
+   *
+   * NOT written when the feature is simply unconfigured; that is a state, not
+   * an event, and it would be on every row forever. See lib/discordRole.ts.
+   */
+  | 'discord.unresolved'
+
 export type AuditOutcome = 'pending' | 'ok' | 'failed'
 
 export interface AuditRow {

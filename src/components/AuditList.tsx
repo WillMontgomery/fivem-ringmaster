@@ -71,6 +71,18 @@ const ACTION_LABEL: Record<string, string> = {
   'maintenance.drain': 'started draining the server',
   'maintenance.deploy': 'deployed the server update',
   'incident.resolve': 'closed an incident',
+
+  /**
+   * THE TWO ROWS NOBODY TOOK. Every other label in this map is an admin doing
+   * something; these are the console refusing one, and the wording keeps that
+   * distinction rather than blurring it into "tried to". A `discord.revoked`
+   * row means the write did not happen and the session was ended in the same
+   * breath — and if its outcome is `failed`, the sign-out itself did not work,
+   * which the red failure treatment above already makes impossible to skim
+   * past. See lib/discordRole.ts.
+   */
+  'discord.revoked': 'was signed out — their Discord admin role is gone',
+  'discord.unresolved': 'acted without a Discord role re-check',
 }
 
 /**

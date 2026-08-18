@@ -44,7 +44,7 @@ const kickSchema = z.object({
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor, admin } = await authorize('kick')
+    const { actor, admin } = await authorize('kick', 'write')
 
     if (!sshConfigured()) {
       throw new ActionError(

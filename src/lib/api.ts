@@ -1,3 +1,9 @@
+import {
+  REVOKED_ERROR_CODE,
+  REVOKED_MESSAGE,
+  REVOKED_REASON,
+} from './revocation'
+
 /**
  * Calling our own API, with failures that say what happened.
  *
@@ -27,9 +33,9 @@ export async function postJson<T = { ok?: boolean; error?: string }>(
 
   const text = await res.text()
 
-  let data: (T & { ok?: boolean; error?: string }) | null = null
+  let data: (T & { ok?: boolean; error?: string; code?: string }) | null = null
   try {
-    data = JSON.parse(text) as T & { ok?: boolean; error?: string }
+    data = JSON.parse(text) as T & { ok?: boolean; error?: string; code?: string }
   } catch {
     // Not JSON. Say so precisely — the status is usually the whole answer, and
     // the first bytes distinguish a login redirect from a 404 from a crash.
@@ -38,6 +44,30 @@ export async function postJson<T = { ok?: boolean; error?: string }>(
       `Server returned ${res.status} ${res.statusText}${kind}. ` +
         `Body began: ${text.slice(0, 80).replace(/\s+/g, ' ').trim() || '(empty)'}`,
     )
+  }
+
+  /**
+   * ONE FAILURE IS ACTED ON RATHER THAN REPORTED: the acting admin's Discord
+   * admin role is gone, the write was refused, and the server has already
+   * deleted the session record.
+   *
+   * A FULL NAVIGATION, not a router push, for the same reason the idle timeout
+   * uses one (see hooks/use-idle-timeout.ts): every cached server component,
+   * every poller and every piece of module-level state in this tab is about to
+   * be wrong, and the session behind them no longer exists. The reason travels
+   * as a query param so the login page can explain what happened instead of
+   * showing a bare sign-in button to somebody who was mid-ban a second ago.
+   *
+   * THE THROW STILL HAPPENS, and it is not dead code. `location.replace` does
+   * not stop execution, and if the navigation is blocked or slow the caller's
+   * own error toast is the only thing the admin will see — so it carries the
+   * real reason rather than a generic "Request failed (403)".
+   */
+  if (data?.code === REVOKED_ERROR_CODE) {
+    if (typeof window !== 'undefined') {
+      window.location.replace(`/login?reason=${REVOKED_REASON}`)
+    }
+    throw new Error(REVOKED_MESSAGE)
   }
 
   if (!res.ok || data?.ok === false) {

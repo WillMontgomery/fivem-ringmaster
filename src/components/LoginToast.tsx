@@ -3,6 +3,8 @@
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
+import { REVOKED_DESCRIPTION, REVOKED_REASON } from '@/lib/revocation'
+
 /**
  * Surfaces a sign-in failure as a toast, once.
  *
@@ -20,6 +22,15 @@ import { toast } from 'sonner'
  * telling somebody who was working thirty seconds ago why they are suddenly
  * looking at a sign-in button. Without it an idle sign-out is indistinguishable
  * from the session having broken.
+ *
+ * THE REVOKED-ROLE MESSAGE IS A FOURTH, AND IT IS AN ERROR, NOT INFORMATION.
+ * The idle one is reassuring — nothing went wrong, the timeout did its job. This
+ * one is the opposite: somebody was halfway through issuing a ban, the ban did
+ * not happen, and their access is gone. Showing that as a calm blue "session
+ * ended" would be a lie of tone. It also has to say WHAT was removed and WHERE,
+ * because the fix is in Discord and not in this console — an admin who reads
+ * "signed out" will simply try to sign in again, and `auth.ts` will refuse them
+ * on the same role with a less specific message.
  */
 export function LoginToast({
   error,
@@ -40,6 +51,18 @@ export function LoginToast({
         description:
           'The console had been idle for two hours. Sign in again to pick up where you were.',
         duration: 8000,
+      })
+      return
+    }
+
+    if (reason === REVOKED_REASON) {
+      fired.current = true
+      // Longer than the others on purpose: this one is asking the reader to go
+      // do something in a different application, and eight seconds is not
+      // enough to read a sentence and decide who to ask.
+      toast.error('Your Discord admin role was removed', {
+        description: REVOKED_DESCRIPTION,
+        duration: 15000,
       })
       return
     }

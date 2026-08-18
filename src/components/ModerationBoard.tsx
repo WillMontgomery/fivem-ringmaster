@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { postJson } from '@/lib/api'
 import type { Ban } from '@/lib/bans'
 import { cn } from '@/lib/utils'
 
@@ -73,6 +74,14 @@ export function ModerationBoard({
    * whole console. The failure branch surfaces the API's own message, which is
    * written for an operator; unexpected errors are already generic by the time
    * they reach here (see lib/actions.ts).
+   *
+   * THE WRITES ON THIS PAGE GO THROUGH `postJson` LIKE EVERY OTHER ONE. They
+   * used to hand-roll `fetch` + `res.json()` — the same six lines, twice — and
+   * that is exactly how this board would have become the one place in the
+   * console that does NOT sign out an admin whose Discord role was pulled: the
+   * forced logout lives in `postJson`, and a second copy of the request code is
+   * a second copy that has to remember. The loading state is unchanged; the
+   * toast's `loading:` label is the spinner the Discord re-check waits behind.
    */
   const submit = async () => {
     setBusy(true)
@@ -83,29 +92,17 @@ export function ModerationBoard({
     }
 
     await toast
-      .promise(
-        (async () => {
-          const res = await fetch('/api/bans', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
-          })
-          const d = (await res.json()) as { ok?: boolean; error?: string }
-          if (!res.ok || !d.ok) throw new Error(d.error ?? 'Ban failed.')
-          return d
-        })(),
-        {
-          loading: 'Issuing ban…',
-          success: () => {
-            setLicense('')
-            setReason('')
-            setDays('')
-            void refresh()
-            return 'Ban recorded. It applies the next time they connect.'
-          },
-          error: (e: Error) => e.message,
+      .promise(postJson('/api/bans', body), {
+        loading: 'Issuing ban…',
+        success: () => {
+          setLicense('')
+          setReason('')
+          setDays('')
+          void refresh()
+          return 'Ban recorded. It applies the next time they connect.'
         },
-      )
+        error: (e: Error) => e.message,
+      })
       .unwrap()
       .catch(() => {
         /* the toast is the report; nothing else to do */
@@ -116,26 +113,14 @@ export function ModerationBoard({
 
   const doLift = async (b: Ban) => {
     await toast
-      .promise(
-        (async () => {
-          const res = await fetch('/api/bans/lift', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ license: b.license }),
-          })
-          const d = (await res.json()) as { ok?: boolean; error?: string }
-          if (!res.ok || !d.ok) throw new Error(d.error ?? 'Lift failed.')
-          return d
-        })(),
-        {
-          loading: 'Lifting ban…',
-          success: () => {
-            void refresh()
-            return 'Ban lifted. The record is kept.'
-          },
-          error: (e: Error) => e.message,
+      .promise(postJson('/api/bans/lift', { license: b.license }), {
+        loading: 'Lifting ban…',
+        success: () => {
+          void refresh()
+          return 'Ban lifted. The record is kept.'
         },
-      )
+        error: (e: Error) => e.message,
+      })
       .unwrap()
       .catch(() => {})
   }

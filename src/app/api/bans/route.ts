@@ -64,7 +64,7 @@ export async function GET(): Promise<Response> {
   try {
     // Reading the ban list needs `view`, not `ban`: a moderator who cannot
     // issue bans still has to be able to see who is banned.
-    await authorize('view')
+    await authorize('view', 'read')
     return Response.json({ ok: true, bans: await bans.all() })
   } catch (e) {
     return errorResponse(e)
@@ -73,7 +73,7 @@ export async function GET(): Promise<Response> {
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('ban')
+    const { actor } = await authorize('ban', 'write')
 
     const body = await req.json().catch(() => {
       throw new ActionError('Expected a JSON body.')

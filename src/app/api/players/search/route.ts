@@ -48,7 +48,7 @@ interface Row {
 
 export async function GET(req: Request): Promise<Response> {
   try {
-    await authorize('view')
+    await authorize('view', 'read')
 
     const q = (new URL(req.url).searchParams.get('q') ?? '').trim()
     const now = Date.now()

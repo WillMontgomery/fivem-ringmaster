@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 
 import { signIn } from '@/auth'
 import { LoginToast } from '@/components/LoginToast'
+import { REVOKED_DESCRIPTION, REVOKED_REASON } from '@/lib/revocation'
 import { currentAdmin } from '@/lib/session'
 
 /**
@@ -36,7 +37,11 @@ export default async function LoginPage({
   searchParams: Promise<{
     error?: string
     callbackUrl?: string
-    /** `idle` when the session ended for inactivity rather than by choice. */
+    /**
+     * `idle` when the session ended for inactivity rather than by choice, and
+     * `discord-role` when a write was refused because the acting admin no
+     * longer holds the Discord admin role (lib/revocation.ts).
+     */
     reason?: string
   }>
 }) {
@@ -95,6 +100,19 @@ export default async function LoginPage({
               className="mb-5 rounded-md border border-info/30 bg-info/5 px-4 py-3 text-sm text-info"
             >
               You were signed out after two hours of inactivity.
+            </p>
+          ) : null}
+          {reason === REVOKED_REASON && !error ? (
+            /* The inline copy, in the danger treatment rather than the info
+               one. Something DID go wrong from the reader's point of view:
+               the action they submitted did not happen and their access is
+               gone. `role="alert"` matches that and matches the error block
+               below, where an unstyled "status" would be read past. */
+            <p
+              role="alert"
+              className="mb-5 rounded-md border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
+            >
+              {REVOKED_DESCRIPTION}
             </p>
           ) : null}
           {error ? (

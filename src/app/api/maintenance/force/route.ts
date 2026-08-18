@@ -28,7 +28,7 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(): Promise<Response> {
   try {
-    const { actor } = await authorize('process')
+    const { actor } = await authorize('process', 'write')
 
     if (!sshConfigured()) {
       return Response.json(
