@@ -39,12 +39,14 @@ import { thresholdFor } from '@/lib/xp'
  * issue and the widest string the curve can ever produce, so the fix stays
  * checkable.
  *
- * FIVE INDEPENDENT AXES, because they are independent in life:
+ * SIX INDEPENDENT AXES, because they are independent in life:
  *
  *   ?state=      match history — played / legacy / never / unreadable
  *   ?incidents=  0, 1, 5, 6 and 43 rows, for the tabs and the page boundary
  *   ?xp=         the reported truncation value, and the curve's worst case
  *   ?mod=        the top bar's moderation buttons, in each of their shapes
+ *   ?names=      the IN-GAME rename history: never renamed, renamed twice, and
+ *                enough renames to reach the "+N more" overflow
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
  *                accent colours that break a naive implementation, and an
  *                account with no display name
@@ -503,6 +505,45 @@ const FORMER_NAMES: DiscordNameChange[] = [
   { field: 'globalName', from: 'newbie', to: 'jimbo', at: BASE - 380 * HOUR },
 ]
 
+/*
+ * THE IN-GAME NAME HISTORY, WHICH IS NOT THE DISCORD ONE.
+ *
+ * `p.names` is Ringmaster's own record of what the GAME called this license, and
+ * it has never been near Discord — different stream, different shape, and it
+ * survives `?discord=none` intact. It moved out of the Sessions panel and under
+ * the in-game name in Identifiers (owner: "what's the 'also known as' doing in
+ * the sessions box?"), which is the only reason it needs an axis: the fixture
+ * used to carry exactly one name, so the block was UNREACHABLE in this harness
+ * and had to be read on a live profile of somebody who happened to have renamed.
+ *
+ * THREE CASES, AND THE FIRST IS NOT A DEGENERATE ONE. With one name there is no
+ * history, so the row does not render at all — the current name is already the
+ * `<h1>` and a row repeating it is furniture. That absence is a decision and
+ * therefore something to be able to look at.
+ *
+ *   one      never renamed. NO row in Identifiers.
+ *   renamed  two former names, both inline, each with its "until".
+ *   many     five, so the third and beyond collapse into "+3 more" — the
+ *            overflow path `FormerNames` shares with the two Discord histories,
+ *            and which no fixture exercised for game names before.
+ */
+const GAME_NAMES: Array<{ name: string; firstSeen: number; lastSeen: number }> = [
+  { name: 'Preview Player', firstSeen: BASE - 120 * HOUR, lastSeen: BASE },
+  { name: 'PreviewPlayer99', firstSeen: BASE - 200 * HOUR, lastSeen: BASE - 120 * HOUR },
+  { name: 'xX_Preview_Xx', firstSeen: BASE - 260 * HOUR, lastSeen: BASE - 200 * HOUR },
+  { name: 'PrevPlyr', firstSeen: BASE - 320 * HOUR, lastSeen: BASE - 260 * HOUR },
+  { name: 'Preview', firstSeen: BASE - 370 * HOUR, lastSeen: BASE - 320 * HOUR },
+  { name: 'unnamed_preview', firstSeen: BASE - 400 * HOUR, lastSeen: BASE - 370 * HOUR },
+]
+
+const NAME_CASES = {
+  one: 1,
+  renamed: 3,
+  many: 6,
+} as const
+
+type NameKey = keyof typeof NAME_CASES
+
 const PREVIEW_DISCORD_ID = '000000000000000001'
 
 function chrome(overrides: Partial<DiscordChrome> = {}): DiscordChrome {
@@ -631,6 +672,7 @@ function fixture(
   incidents: IncidentKey,
   mod: ModKey,
   discord: DiscordKey,
+  names: NameKey,
 ): Profile {
   const counts = INCIDENT_CASES[incidents]
   return {
@@ -660,7 +702,9 @@ function fixture(
           ]),
       { kind: 'steam', value: '11000010fd4b9b2', firstSeen: BASE - 380 * HOUR },
     ],
-    names: [{ name: 'Preview Player', firstSeen: BASE - 400 * HOUR, lastSeen: BASE }],
+    // Newest first — index 0 is the current name and the tail is the history
+    // the Identifiers panel renders as "formerly …". See GAME_NAMES.
+    names: GAME_NAMES.slice(0, NAME_CASES[names]),
     firstSeen: BASE - 400 * HOUR,
     lastSeen: BASE,
     connected: stats ? { sessions: 74, playtimeMs: 96 * HOUR } : null,
@@ -823,10 +867,11 @@ async function Preview({
   const xp = pick(sp.xp, XP_CASES, 'reported' as XpKey)
   const mod = pick(sp.mod, MOD_CASES, 'online' as ModKey)
   const discord = pick(sp.discord, DISCORD_CASES, 'full' as DiscordKey)
+  const names = pick(sp.names, NAME_CASES, 'renamed' as NameKey)
 
-  const params = { state, incidents, xp, mod, discord }
+  const params = { state, incidents, xp, mod, discord, names }
   const { matches, stats } = MATCH_CASES[state]
-  const p = fixture(matches, stats, xp, incidents, mod, discord)
+  const p = fixture(matches, stats, xp, incidents, mod, discord, names)
   const now = BASE + 5 * 60_000
 
   // Built here and NOT awaited, exactly as the real page builds it — awaiting it
@@ -845,6 +890,15 @@ async function Preview({
         />
         <Axis name="xp" keys={Object.keys(XP_CASES)} current={xp} params={params} />
         <Axis name="mod" keys={Object.keys(MOD_CASES)} current={mod} params={params} />
+        {/* The in-game rename history, which is what the Identifiers panel's
+            "In-game name" row is a history of. Independent of `discord`: these
+            names come from the game, not from an account. */}
+        <Axis
+          name="names"
+          keys={Object.keys(NAME_CASES)}
+          current={names}
+          params={params}
+        />
         <Axis
           name="discord"
           keys={Object.keys(DISCORD_CASES)}

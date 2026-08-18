@@ -44,6 +44,31 @@ export function thresholdFor(level: number): number {
   return Math.floor(raw / ROUND_TO + 0.5) * ROUND_TO
 }
 
+/**
+ * The LIFETIME total at which this player reaches their next level.
+ *
+ * THE CURVE HAS ALWAYS BEEN CUMULATIVE AND THE SCREEN HAS ALWAYS HIDDEN IT.
+ * `progress` below returns `into`/`span` — where you are inside the current
+ * level, counted from zero every time you level up — and that pair was what
+ * the profile rendered. So a player with 18,196 lifetime XP read "1,846 /
+ * 3,750" next to a level 8 chip, and asked the obvious question: how can I be
+ * level 8 holding less XP than level 3 costs? (owner, 2026-08-17)
+ *
+ * They could not, and they never were. Both numbers were true and neither was
+ * the one being asked for. This is the pair that answers it — 18,196 / 20,100
+ * — the same two numbers the level itself is derived from.
+ *
+ * 0 MEANS THERE IS NO NEXT LEVEL rather than "the next level costs nothing".
+ * The alternative was null, and a null here would have to cross into Lua as a
+ * nil that every arithmetic caller would have to guard; 0 fails the `> 0` test
+ * that the max-level branch needs anyway.
+ */
+export function nextThresholdFor(xp: number): number {
+  const level = levelFor(xp)
+  if (level >= MAX_LEVEL) return 0
+  return thresholdFor(level + 1)
+}
+
 /** The level implied by a total XP value. */
 export function levelFor(xp: number): number {
   if (xp <= 0) return 1
@@ -56,19 +81,54 @@ export function levelFor(xp: number): number {
   return level
 }
 
-/** Progress through the current level. */
+/**
+ * Everything about where one lifetime XP total sits on the curve.
+ *
+ * TWO REPRESENTATIONS OF ONE POSITION, AND BOTH ARE NEEDED — which is exactly
+ * why they are returned together rather than from two functions a caller can
+ * pick the wrong one of:
+ *
+ *   `total` / `next`   THE CUMULATIVE PAIR. Lifetime XP, and the lifetime XP
+ *                      the next level starts at. This is the owner's model and
+ *                      the only pair that means anything on its own: 18,196 /
+ *                      20,100 is legible without knowing what level you are.
+ *   `into` / `span`    THE BAR'S GEOMETRY. A bar cannot be drawn from the
+ *                      cumulative pair — 18,196 out of 20,100 is 90% full at
+ *                      level 8 and 99% full at level 50, so every bar past the
+ *                      early game would read as nearly done. A bar's zero is
+ *                      the level's floor, not the player's first ever match.
+ *
+ * The two are the same fact: `into === total - thresholdFor(level)` and
+ * `next === thresholdFor(level) + span`. `check-xp-curve.mjs` asserts that on
+ * every case, because this repo's standing failure is two representations of
+ * one thing with nothing checking they agree — and this feature is that shape
+ * twice over (per-level vs cumulative here, TypeScript vs Lua across repos).
+ */
 export function progress(xp: number): {
   level: number
+  /** Lifetime XP, clamped at zero. */
+  total: number
+  /** Lifetime XP at which the next level begins. 0 at max level. */
+  next: number
   into: number
   span: number
   pct: number
 } {
-  const level = levelFor(xp)
-  if (level >= MAX_LEVEL) return { level, into: 0, span: 0, pct: 1 }
+  // Clamped rather than echoed. A negative total is impossible — the store
+  // only ever applies non-negative ADDs — but `levelFor` already answers 1 for
+  // it, and returning level 1 alongside `into: -500` would be the two halves
+  // of this function disagreeing about the same input.
+  const total = xp > 0 ? xp : 0
+
+  const level = levelFor(total)
+  if (level >= MAX_LEVEL) {
+    return { level, total, next: 0, into: 0, span: 0, pct: 1 }
+  }
 
   const lo = thresholdFor(level)
-  const span = thresholdFor(level + 1) - lo
-  if (span <= 0) return { level, into: 0, span: 0, pct: 0 }
+  const next = thresholdFor(level + 1)
+  const span = next - lo
+  if (span <= 0) return { level, total, next, into: 0, span: 0, pct: 0 }
 
-  return { level, into: xp - lo, span, pct: (xp - lo) / span }
+  return { level, total, next, into: total - lo, span, pct: (total - lo) / span }
 }

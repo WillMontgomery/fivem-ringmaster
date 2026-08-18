@@ -8,6 +8,7 @@ import {
   FileWarning,
   Flag,
   Flame,
+  Shirt,
   Skull,
   Swords,
   Trophy,
@@ -28,6 +29,11 @@ import { ProvenanceTag } from '@/components/Provenance'
 import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from '@/components/ui/hover-card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -48,7 +54,7 @@ import type {
 } from '@/lib/profile'
 import { formatCount } from '@/lib/time'
 import { cn } from '@/lib/utils'
-import { progress } from '@/lib/xp'
+import { nextThresholdFor } from '@/lib/xp'
 
 /**
  * Everything known about one person.
@@ -876,9 +882,10 @@ function IdentityBanner({ band }: { band: IdentityBand | null }) {
         />
       )}
       {/* A downward fade into the card, so the band ends rather than stops.
-          IT STOPS SHORT OF THE AVATAR: the fade is a full-width strip and the
-          avatar sits on top of it, ringed in the card's own colour, so the two
-          never argue about which is in front. */}
+          THE FADE IS WHY THIS WHOLE BAND IS `relative`, and that is the fact
+          FACE_STACK exists to answer: the fade is `absolute` and needs a
+          positioned ancestor, which puts the band into the painting step that
+          covers every non-positioned sibling. See FACE_STACK. */}
       <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-card/70" />
     </div>
   )
@@ -913,6 +920,40 @@ const FACE_SIZE = 'size-20'
 const FACE_RING = 'ring-[6px] ring-card'
 
 /**
+ * WHY THE FACE HAS TO BE POSITIONED, AND IT IS PAINTING ORDER RATHER THAN
+ * ARITHMETIC.
+ *
+ * THE BUG THIS FIXES: the top 45px of the avatar rendered UNDERNEATH the banner
+ * — the colour, the blurred image and the fade — instead of proud of it. The
+ * geometry was never wrong. Measured on the rendered page before touching
+ * anything: the band's bottom edge sits at y=482.78 and the avatar runs
+ * 437.78–527.78, i.e. exactly 45px above the line and 45px below it, which is
+ * what FACE_LIFT says it should be. `elementsFromPoint` at the avatar's own top
+ * returned, in front-to-back order, the fade, the banner image, the banner, and
+ * only THEN the avatar. It was behind all three.
+ *
+ * THE CAUSE IS `IdentityBanner`'s `relative`. Within one stacking context CSS
+ * paints in-flow, non-positioned block descendants (step 4) before positioned
+ * descendants with `z-index: auto` (step 8) — and DOM order only breaks ties
+ * WITHIN a step. The band is `position: relative`, because the fade inside it is
+ * `absolute` and needs an anchor; the avatar's wrapper was `position: static`.
+ * So the band painted in step 8 over an avatar in step 4, and coming first in
+ * the markup did not save it. Nothing had a `z-index`, nothing was
+ * `overflow-hidden` on the wrong element, and no gradient was drawn "after" the
+ * avatar in source order — the ordering was structural.
+ *
+ * THE FIX IS TO PUT THE FACE IN THE SAME STEP, where being later in the markup
+ * finally means something. `z-10` is belt and braces rather than the mechanism:
+ * `relative` alone is sufficient today, and the explicit index is what keeps
+ * this working if the band ever acquires one of its own.
+ *
+ * IT IS PAIRED WITH FACE_LIFT AND APPLIED WITH IT. With no band there is no
+ * overlap, nothing to sit in front of, and the avatar is not lifted either —
+ * see `?discord=plain` and `?discord=none` in the preview harness.
+ */
+const FACE_STACK = 'relative z-10'
+
+/**
  * The face, sitting proud of the bar with the player's name in it.
  *
  * TWO STATES, NOT THREE. Initials mean there is no Discord id at all and there
@@ -933,7 +974,9 @@ const FACE_RING = 'ring-[6px] ring-card'
 function Face({ name, overlap }: { name: string; overlap: boolean }) {
   const state = useDiscordChrome()
 
-  const frame = cn('shrink-0', overlap && FACE_LIFT)
+  // FACE_STACK travels with FACE_LIFT: the lift is what creates the overlap,
+  // and the overlap is the only thing that needs to be painted in front.
+  const frame = cn('shrink-0', overlap && FACE_LIFT, overlap && FACE_STACK)
 
   const initials = (
     <div className={frame}>
@@ -991,31 +1034,65 @@ function Face({ name, overlap }: { name: string; overlap: boolean }) {
   )
 }
 
+/**
+ * One superseded name, of any kind.
+ *
+ * NOT `DiscordNameChange`, AND THE DIFFERENCE IS THE POINT. The same "formerly
+ * …" line now renders THREE histories: the Discord @handle, the Discord display
+ * name, and the IN-GAME name the game server reports. The first two are
+ * `DiscordNameChange`s. The third comes from `p.names` — Ringmaster's own record
+ * of what the game called this player, which has never been near Discord and
+ * carries a `lastSeen` rather than a `to`. Casting game names into a
+ * Discord-shaped object so one component could take both would put a false claim
+ * in a type on a page a moderator acts from; a neutral shape and two three-line
+ * adapters cost less and lie about nothing.
+ */
+type FormerNameItem = {
+  /** The value that was replaced. Never empty. */
+  from: string
+  /** When it stopped being the current one, as far as Ringmaster can tell. */
+  at: number
+  /** Draws the `@` prefix. True for the Discord @handle and nothing else. */
+  handle: boolean
+}
+
+/** A Discord rename, as a former name. */
+function fromDiscord(c: DiscordNameChange): FormerNameItem {
+  return { from: c.from, at: c.at, handle: c.field === 'username' }
+}
+
 /** "was Slippery Jim until 12 Aug", for one superseded name. */
-function FormerName({ change }: { change: DiscordNameChange }) {
+function FormerName({ item }: { item: FormerNameItem }) {
   return (
     <span className="whitespace-nowrap">
-      <span className="text-muted-foreground/70">
-        {change.field === 'username' ? '@' : ''}
-      </span>
-      {change.from}
+      <span className="text-muted-foreground/70">{item.handle ? '@' : ''}</span>
+      {item.from}
       <span className="text-muted-foreground/70">
         {' '}
-        until <LocalTime ms={change.at} />
+        until <LocalTime ms={item.at} />
       </span>
     </span>
   )
 }
 
 /**
- * "formerly known as", for ONE of the two Discord names.
+ * "formerly known as", for ONE name.
  *
- * ONE COMPONENT, TWO PLACES. `formerNames` records renames of both names and
- * says which one moved, so the handle's history renders under the handle and the
- * display name's under the display name — from this single implementation, so
- * the two cannot drift into looking like different features. `field` is exactly
- * `'username' | 'globalName'`, so partitioning the list between them is total:
- * no recorded rename is dropped by being filed under the wrong name.
+ * ONE COMPONENT, THREE PLACES NOW. A rename history renders directly under the
+ * name it is a history OF — the @handle's beside the @handle, the display name's
+ * beside the display name, the in-game name's beside the in-game name — from
+ * this single implementation, so the three cannot drift into looking like
+ * different features. Partitioning is the caller's job and it is total: `field`
+ * is exactly `'username' | 'globalName'` for the Discord pair, and `p.names` is
+ * the whole of the game's.
+ *
+ * THE HISTORY MUST TOUCH ITS NAME, and that is the whole of the owner's fourth
+ * item. The in-game history used to sit in the Sessions panel under the heading
+ * "Also known as", two cards away from any name at all: a bare list of strings
+ * beside a session count, with nothing on screen saying whose names they were,
+ * which name they replaced, or when. "was Preview Player until 15 Aug" under a
+ * row labelled "In-game name" needs no explaining. A list of nouns next to
+ * "74 sessions" cannot be explained.
  *
  * TWO INLINE, THE REST REACHABLE. A player who renames often would otherwise
  * push the identity card taller than the panels beside it, and the two most
@@ -1028,19 +1105,17 @@ function FormerName({ change }: { change: DiscordNameChange }) {
  * on touch. Tooltip on an inert span plus the identical string as `sr-only` is
  * the conversion this file already uses for the placement badge.
  */
-function FormerNames({ changes }: { changes: DiscordNameChange[] }) {
-  if (changes.length === 0) return null
+function FormerNames({ items }: { items: FormerNameItem[] }) {
+  if (items.length === 0) return null
 
-  const rest = changes.slice(2)
-  const overflow = rest
-    .map((c) => `${c.field === 'username' ? '@' : ''}${c.from}`)
-    .join(' · ')
+  const rest = items.slice(2)
+  const overflow = rest.map((c) => `${c.handle ? '@' : ''}${c.from}`).join(' · ')
 
   return (
     <span className="flex flex-wrap items-baseline gap-x-1.5">
       <span className="text-muted-foreground/70">formerly</span>
-      {changes.slice(0, 2).map((c, i) => (
-        <FormerName key={`${c.field}-${c.at}-${i}`} change={c} />
+      {items.slice(0, 2).map((c, i) => (
+        <FormerName key={`${c.from}-${c.at}-${i}`} item={c} />
       ))}
       {rest.length > 0 && (
         <>
@@ -1132,7 +1207,7 @@ function DiscordNames() {
     <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
       {username && <span className="font-mono">@{username}</span>}
       {!answered && <LastKnown />}
-      <FormerNames changes={former} />
+      <FormerNames items={former.map(fromDiscord)} />
     </div>
   )
 }
@@ -1152,6 +1227,81 @@ const ID_LABEL =
   'w-28 shrink-0 text-xs uppercase tracking-wider text-muted-foreground'
 
 /**
+ * A label in that column that also explains itself, on hover and in the DOM.
+ *
+ * A HOVER CARD RATHER THAN OPEN TEXT, and that is the owner on both of the rows
+ * that use it: "any helper text should be a hover card, not just out in the
+ * open", and — of the history that used to sit in Sessions — "there's no hover
+ * card for me to know what that information is or means". The descriptor under
+ * the display name used to be a permanent three-line paragraph inside a panel of
+ * one-line rows, which is furniture on a page a moderator reads several times a
+ * day.
+ *
+ * IT IS A CARD AND NOT A TOOLTIP BECAUSE IT HAS PARTS. Rule 5 of
+ * docs/hover-text.md: a card is a layout, not an emphasis level. Both of these
+ * are a heading, then what the row IS, then the trap it exists to warn about —
+ * three pieces that do not survive in `TooltipContent`, which is a single-line
+ * pill. A one-sentence label would not have earned one.
+ *
+ * THE DOTTED UNDERLINE IS NOT DECORATION. The owner's complaint about the
+ * Sessions block was that nothing told him there was anything to read; a hover
+ * affordance nobody can see is the same defect with extra steps. `cursor-help`
+ * alone only pays out after the pointer is already there.
+ *
+ * AND THE WORDS ARE IN THE DOM TWICE, in one component, so neither copy can be
+ * deleted without seeing the other. Base UI's popup carries no `role` and no
+ * `aria-describedby`, and this trigger is an inert `<span>` that nothing can
+ * focus, so the hover reaches a sighted mouse user and nobody else. See
+ * docs/hover-text.md rule 1 — no fact may live only on hover.
+ */
+function IdLabel({ label, body }: { label: string; body: string[] }) {
+  return (
+    <HoverCard>
+      {/* `render` is not optional: `HoverCardTrigger` renders an `<a>` by
+          default, and an anchor with no href as the label of a table row is
+          both wrong markup and a styling surprise. */}
+      <HoverCardTrigger
+        render={
+          <span
+            className={cn(
+              ID_LABEL,
+              'cursor-help underline decoration-dotted decoration-muted-foreground/50 underline-offset-4',
+            )}
+          />
+        }
+      >
+        {label}
+        {/* STRINGS, NOT NODES, and that is what makes the two copies one fact:
+            the paragraphs below and this sentence are the same array, so a
+            change to the card cannot leave the announced version behind. It also
+            keeps a `<p>` out of a `<span>`, which React rejects as nesting. */}
+        <span className="sr-only">. {body.join(' ')}</span>
+      </HoverCardTrigger>
+      <HoverCardContent side="top" align="start">
+        <p className="text-sm font-medium">{label}</p>
+        <div className="mt-1.5 space-y-1.5 text-sm text-muted-foreground">
+          {body.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  )
+}
+
+/** What the display-name row means, in the card and in the DOM. */
+const DISPLAY_NAME_NOTE = [
+  'What Discord shows for this account right now — free text the player can change at any time, so it identifies nobody.',
+  'Their nickname inside our own Discord server can be different again, and this is not it: Ringmaster reads the account, not the server member. See the @handle beside their in-game name for the one value here that does identify the account.',
+]
+
+/** What the in-game-name row means, in the card and in the DOM. */
+const GAME_NAME_NOTE = [
+  'The name the game server reports for this license — what other players see in the lobby and on the kill feed.',
+  '"Formerly" is the names it used to be, each shown with the last time Ringmaster saw it in use. A rename immediately before an incident is itself worth knowing, which is why the old ones are kept rather than overwritten.',
+]
+
+/**
  * Every identifier we hold for this player, and what Discord calls them.
  *
  * THE DISPLAY NAME IS AN IDENTIFIER ROW NOW (owner, item 1). It sat unlabelled
@@ -1165,12 +1315,28 @@ const ID_LABEL =
  * free text the player edits at will. A row that sits in a table of identifiers
  * looking as solid as the ones above it, and is not, would be worse than no row
  * at all — so the descriptor says exactly that, and points at the @handle as the
- * stable one.
+ * stable one. THAT DESCRIPTOR IS A HOVER CARD NOW rather than a paragraph
+ * rendered under every profile forever — the owner's second item. See `IdLabel`.
+ *
+ * THE IN-GAME NAME HISTORY LANDED HERE TOO (owner, item 4). It was in the
+ * Sessions panel, as a heading reading "Also known as" over a list of bare
+ * strings — beside a session count and a connected duration, which are not names
+ * and have nothing to do with names. It is a history of ONE identifier, so it
+ * belongs under that identifier, which is what this panel is for. The row it now
+ * sits under is the same shape as the display name's, from the same components,
+ * for the same reason the two Discord histories share one: three renderings of
+ * "this person used to be called something else" is two too many.
  */
 function IdentifiersPanel({
   identifiers,
+  name,
+  names,
 }: {
   identifiers: ProfileIdentifier[]
+  /** The current in-game name — the `<h1>` at the top of the page. */
+  name: string
+  /** Every in-game name, newest first. Index 0 is the current one. */
+  names: Profile['names']
 }) {
   const state = useDiscordChrome()
   const chrome = state.status === 'ready' ? state.chrome : null
@@ -1179,6 +1345,29 @@ function IdentifiersPanel({
   const former = (chrome?.formerNames ?? []).filter(
     (c) => c.field === 'globalName',
   )
+
+  /*
+   * THE IN-GAME ROW APPEARS ONLY WHEN THERE IS A HISTORY, and that is a
+   * deliberate exception to this panel's usual "render absence as absence".
+   *
+   * The current in-game name is already the `<h1>` at the top of this page, 200px
+   * away and in 20px type. A permanent row repeating it under a label would be
+   * the same string twice on one screen for every player who has never renamed —
+   * which is most of them — and this repo has form for shipping two copies of one
+   * fact. The row earns its place when it carries something the `<h1>` cannot: a
+   * name that is no longer current.
+   *
+   * `names` is newest first, so index 0 is what the `<h1>` already says and the
+   * tail is the history.
+   */
+  const formerGameNames = names.slice(1).map((n) => ({
+    from: n.name,
+    // `lastSeen` is the last time the game reported this license under that
+    // name, which is the closest thing to "until" that exists — nothing here
+    // can know when the player actually typed a new one.
+    at: n.lastSeen,
+    handle: false,
+  }))
 
   /*
    * WHEN THE ROW EXISTS AT ALL, and the three cases are not the same.
@@ -1200,7 +1389,13 @@ function IdentifiersPanel({
     chrome !== null &&
     (chrome.answered || displayName !== null || former.length > 0)
 
-  if (identifiers.length === 0 && !showDisplayName) return <Empty />
+  if (
+    identifiers.length === 0 &&
+    !showDisplayName &&
+    formerGameNames.length === 0
+  ) {
+    return <Empty />
+  }
 
   return (
     <ul className="space-y-2">
@@ -1223,9 +1418,25 @@ function IdentifiersPanel({
         </li>
       ))}
 
+      {/* THE IN-GAME NAME, AND ONLY BECAUSE IT HAS A HISTORY — see
+          `formerGameNames`. This is the "Also known as" block from the Sessions
+          panel, back under the name it is a history of and with an explanation
+          attached to the label rather than nowhere. */}
+      {formerGameNames.length > 0 && (
+        <li className="flex items-baseline gap-3 border-t border-border/60 pt-2">
+          <IdLabel label="In-game name" body={GAME_NAME_NOTE} />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs text-foreground/90">{name}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              <FormerNames items={formerGameNames} />
+            </div>
+          </div>
+        </li>
+      )}
+
       {showDisplayName && chrome && (
         <li className="flex items-baseline gap-3 border-t border-border/60 pt-2">
-          <span className={ID_LABEL}>Display name</span>
+          <IdLabel label="Display name" body={DISPLAY_NAME_NOTE} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
               {displayName ? (
@@ -1243,14 +1454,13 @@ function IdentifiersPanel({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 text-xs text-muted-foreground/70">
-              What Discord shows for this account — free text they can change at
-              any time. The @handle beside their in-game name above is the one
-              that identifies the account.
-            </p>
+            {/* THE DESCRIPTOR THAT USED TO BE HERE IS ON THE LABEL NOW, as a
+                hover card — the owner's second item. It is not deleted: every
+                word of it is in `DISPLAY_NAME_NOTE`, rendered into the card and
+                into the DOM as `sr-only` by `IdLabel`. */}
             {former.length > 0 && (
               <div className="mt-1 text-xs text-muted-foreground">
-                <FormerNames changes={former} />
+                <FormerNames items={former.map(fromDiscord)} />
               </div>
             )}
           </div>
@@ -1382,8 +1592,13 @@ function ProfileSkeleton({ moderation }: { moderation: boolean }) {
       <Card className="surface-edge gap-0 overflow-hidden p-0">
         <Skeleton className="h-24 w-full rounded-none" />
         <div className="flex flex-wrap items-center gap-4 px-5 py-4">
-          {/* Same size, same lift, same ring as the real face — see FACE_LIFT. */}
-          <div className={cn('shrink-0', FACE_LIFT)}>
+          {/* Same size, same lift, same ring AND the same stacking as the real
+              face — see FACE_LIFT and FACE_STACK. The skeleton's band is a plain
+              `Skeleton` rather than a positioned element, so this one happened to
+              paint the right way round on DOM order alone; carrying FACE_STACK
+              anyway is what stops the two drawings drifting apart the next time
+              the band gains a child that needs an anchor. */}
+          <div className={cn('shrink-0', FACE_LIFT, FACE_STACK)}>
             <Skeleton className={cn(FACE_SIZE, FACE_RING, 'rounded-full')} />
           </div>
 
@@ -1417,8 +1632,13 @@ function ProfileSkeleton({ moderation }: { moderation: boolean }) {
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Identifiers: three value rows, then the display name with its
-            descriptor and its rename history under it. */}
+        {/* Identifiers: three value rows, then the in-game name and the display
+            name, each a name over its rename history.
+
+            TWO SHORT BLOCKS RATHER THAN ONE TALL ONE, because the display name's
+            three-line descriptor is not rendered any more — it moved onto the
+            label as a hover card, and a skeleton still drawing five lines there
+            would promise a paragraph that never arrives. See `IdLabel`. */}
         <SkeletonSection>
           <div className="space-y-2">
             {Array.from({ length: 3 }, (_, i) => (
@@ -1427,16 +1647,22 @@ function ProfileSkeleton({ moderation }: { moderation: boolean }) {
                 <Skeleton className="h-4 min-w-0 flex-1" />
               </div>
             ))}
-            <div className="flex items-baseline gap-3 border-t border-border/60 pt-2">
-              <Skeleton className="h-4 w-24 shrink-0" />
-              <div className="min-w-0 flex-1 space-y-1.5">
-                <Skeleton className="h-4 w-32" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-2/3" />
-                <Skeleton className="h-4 w-5/6" />
+            {Array.from({ length: 2 }, (_, i) => (
+              <div
+                key={i}
+                className="flex items-baseline gap-3 border-t border-border/60 pt-2"
+              >
+                <Skeleton className="h-4 w-24 shrink-0" />
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  {/* The name, then its "formerly …" list, which wraps to two
+                      lines at every width this card is ever drawn at. Measured
+                      against the real row rather than guessed: 18 + 7 + 32 = 57
+                      against the 58px the rendered row occupies. */}
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-8 w-5/6" />
+                </div>
               </div>
-            </div>
+            ))}
           </div>
         </SkeletonSection>
 
@@ -1450,13 +1676,18 @@ function ProfileSkeleton({ moderation }: { moderation: boolean }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
+        {/* Progression: two figures on a row, then the two that span it —
+            "lifetime xp" and "cosmetics owned". The trailing sentence this used
+            to draw is gone with the prose it stood for; cosmetics is a figure
+            now. */}
         <SkeletonSection>
           <SkeletonFigures n={2} className="grid grid-cols-2 gap-4" />
-          <div className="mt-4 space-y-1.5">
-            <Skeleton className="h-3 w-20" />
-            <Skeleton className="h-6 w-40" />
-          </div>
-          <Skeleton className="mt-3 h-3.5 w-44" />
+          {Array.from({ length: 2 }, (_, i) => (
+            <div key={i} className="mt-4 space-y-1.5">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-6 w-40" />
+            </div>
+          ))}
         </SkeletonSection>
 
         <SkeletonSection>
@@ -1713,10 +1944,15 @@ export function ProfileView({
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Section title="Identifiers" provenance={<ProvenanceTag kind="identity" />}>
-          {/* The stored identifiers plus what Discord calls this account —
-              see IdentifiersPanel for why the display name belongs here and the
-              @handle does not. */}
-          <IdentifiersPanel identifiers={p.identifiers} />
+          {/* The stored identifiers, what Discord calls this account, and what
+              the GAME has called it — see IdentifiersPanel for why the display
+              name belongs here, why the @handle does not, and why the in-game
+              rename history moved out of the Sessions panel. */}
+          <IdentifiersPanel
+            identifiers={p.identifiers}
+            name={p.name}
+            names={p.names}
+          />
         </Section>
 
         <Section
@@ -1816,6 +2052,14 @@ export function ProfileView({
                 ~180px it needs, which holds at every breakpoint and for the
                 widest span on the curve — checked in /preview/profile, which is
                 the only place this is visible without a live game table.
+
+                IT GOT WIDER when the pair below became the cumulative one, and
+                the headroom above is why that was affordable. The widest value
+                is no longer a span but a lifetime total: "991,549 / 991,550" at
+                level 99, which is 17 monospace characters, roughly 205px. Still
+                well inside the 330px this cell has at its narrowest, and the
+                `widest` fixture in /preview/profile is pinned to exactly that
+                total so it stays checked rather than remembered.
               */}
               <div className="grid grid-cols-2 gap-4">
                 <Figure icon={Trophy} value={p.progress.level} label="level" />
@@ -1825,35 +2069,79 @@ export function ProfileView({
                   label="volts"
                 />
                 {/*
-                  PROGRESS, NOT A LIFETIME TOTAL. "2,498 XP" answers a question
-                  nobody asks; "148 / 2,050" answers the one they do — how close
-                  is this player to levelling. It also makes this figure directly
-                  comparable with the bar in the player's own lobby, which is how
-                  the stored-level bug was spotted in the first place.
+                  THE LIFETIME TOTAL AGAINST THE NEXT THRESHOLD, which is what
+                  the levels are actually made of.
+
+                  THIS USED TO BE `into / span` — where the player sits inside
+                  the current level, counted from zero again on every level-up.
+                  That reads as a lifetime figure and is not one, and it is how
+                  the owner came to be looking at a level 8 chip beside "1,846 /
+                  3,750" and concluded the XP was resetting (2026-08-17). It was
+                  not: level 8 begins at 16,350 and costs 3,750, so that player
+                  holds 16,350 + 1,846 = 18,196 and reaches level 9 at 20,100.
+                  Both numbers on screen were true; neither was the one being
+                  asked for, and the label could not save a pair that needs the
+                  level chip beside it to mean anything.
+
+                  So the figure is now the pair that stands on its own. The BAR
+                  keeps the per-level geometry — `progress().into/span` — because
+                  a bar drawn from the cumulative pair would sit 90% full at
+                  level 8 and 99% full at level 50; a bar's zero is the level's
+                  floor. `check-xp-curve.mjs` asserts the two are the same fact.
+
+                  MAX LEVEL HAS NO NEXT THRESHOLD, and this used to render it as
+                  "0 / 0" — into and span are both zero up there. `nextThreshold
+                  For` returns 0 to say there is no next level, and it is spelt
+                  out rather than drawn as a division by nothing.
                 */}
                 <Figure
                   icon={Swords}
                   className="col-span-2"
-                  value={`${formatCount(progress(p.progress.xp).into)} / ${formatCount(
-                    progress(p.progress.xp).span,
-                  )}`}
-                  label="xp this level"
+                  value={
+                    nextThresholdFor(p.progress.xp) > 0
+                      ? `${formatCount(p.progress.xp)} / ${formatCount(
+                          nextThresholdFor(p.progress.xp),
+                        )}`
+                      : `${formatCount(p.progress.xp)} / max`
+                  }
+                  label="lifetime xp"
+                />
+                {/*
+                  A FIGURE, NOT A SENTENCE UNDER THE GRID — the owner: "on the
+                  progression table we make cosmetics owned its own large
+                  number."
+
+                  It was already only a count (#22 item 10: "we don't need to
+                  know what cosmetics they own, just 'x cosmetics owned' is
+                  enough"), but it was a count folded into grey prose below the
+                  table, which reads as a footnote about the panel rather than as
+                  one of its numbers. Nothing about the value changed; only what
+                  it is drawn as.
+
+                  IT SPANS THE ROW, AND THAT IS THE COLUMN-WIDTH DECISION.
+                  Promoting a value into this grid truncated a neighbour once
+                  already — see the block above — so this one takes no width from
+                  anybody: the grid is still two columns, `level` and `volts`
+                  still share the first row at exactly the widths they had, and
+                  the two spanning figures stack under them. The alternative, a
+                  third single-column cell, is a three-item row in a two-column
+                  grid, which leaves a hole beside it at every breakpoint and
+                  would have squeezed nothing but still looked broken. Measured
+                  at 375, 768, 1024 and 1280: no cell narrower than before this
+                  change, and no value truncated at any of them.
+
+                  ZERO IS A NUMBER HERE. The prose said "No cosmetics owned."; a
+                  figure says 0, which is the same fact in the shape the rest of
+                  the panel uses, and one fewer sentence to keep in step with a
+                  count.
+                */}
+                <Figure
+                  icon={Shirt}
+                  className="col-span-2"
+                  value={formatCount(p.progress.owned)}
+                  label="cosmetics owned"
                 />
               </div>
-              {/*
-                #22 item 10 — a count, not a list. Owner: "We don't need to know
-                what cosmetics they own, just 'x cosmetics owned' is enough."
-                What was here also listed what they were WEARING, as raw market
-                ids ("chute: chute_ember"), which is a wardrobe note on a page
-                used to decide whether to ban somebody.
-              */}
-              <p className="mt-3 text-sm text-muted-foreground">
-                {p.progress.owned === 0
-                  ? 'No cosmetics owned.'
-                  : `${formatCount(p.progress.owned)} cosmetic${
-                      p.progress.owned === 1 ? '' : 's'
-                    } owned.`}
-              </p>
             </>
           ) : (
             <Empty />
@@ -1868,36 +2156,27 @@ export function ProfileView({
         */}
         <Section title="Sessions" provenance={<ProvenanceTag kind="identity" />}>
           {p.connected ? (
-            <>
-              <div className="grid grid-cols-2 gap-4">
-                <Figure
-                  icon={Swords}
-                  value={p.connected.sessions}
-                  label="sessions"
-                />
-                <Figure
-                  icon={Clock}
-                  value={humanDuration(p.connected.playtimeMs)}
-                  label="connected"
-                />
-              </div>
-              {p.names.length > 1 && (
-                <div className="mt-3">
-                  <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                    Also known as
-                  </div>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {/* A rename right before an incident is itself a signal,
-                        which is why the history is kept rather than the latest
-                        name overwriting it. */}
-                    {p.names
-                      .slice(1)
-                      .map((n) => n.name)
-                      .join(' · ')}
-                  </p>
-                </div>
-              )}
-            </>
+            // "ALSO KNOWN AS" USED TO BE UNDER THIS GRID and is gone from here
+            // entirely (owner, item 4): "what's the 'also known as' doing in the
+            // sessions box? There's no hover card for me to know what that
+            // information is or means." It was a heading over a list of bare
+            // strings beside a session count — a history of a NAME filed under
+            // how long somebody has been connected. It is now a row under the
+            // in-game name in Identifiers, with the explanation on its label.
+            // See IdentifiersPanel. This panel is two numbers about connecting,
+            // and now only that.
+            <div className="grid grid-cols-2 gap-4">
+              <Figure
+                icon={Swords}
+                value={p.connected.sessions}
+                label="sessions"
+              />
+              <Figure
+                icon={Clock}
+                value={humanDuration(p.connected.playtimeMs)}
+                label="connected"
+              />
+            </div>
           ) : (
             <Empty />
           )}

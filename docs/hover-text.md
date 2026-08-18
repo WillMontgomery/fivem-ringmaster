@@ -59,7 +59,14 @@ same text present as `sr-only`.
 
 A header row, a body, a footer. **A card is a layout, not an emphasis level.** A
 single sentence does not get promoted to a 256px card for being important. It
-gets moved there for having parts. `FeedStatus` and `Provenance` are the two.
+gets moved there for having parts. `FeedStatus` and `Provenance` were the first
+two. `ProfileView`'s `IdLabel` is the third site and the first one that is a
+*label* rather than a chip: the "Display name" and "In-game name" rows of the
+identifiers panel each carry a heading, what the row is, and the trap it warns
+about — three pieces, which is what earned the card. The owner asked for both by
+name ("any helper text should be a hover card, not just out in the open"), and
+what they replaced was a permanent paragraph under one row and, under the other,
+no explanation at all.
 
 ### 6. The native `title` attribute is banned on DOM elements
 
