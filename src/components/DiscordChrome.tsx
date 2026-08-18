@@ -15,31 +15,39 @@ import type { DiscordChrome } from '@/lib/profile'
 /**
  * The Discord half of a profile page, and the gate that decides when to show it.
  *
- * THREE REQUIREMENTS THAT PULL AGAINST EACH OTHER, resolved here rather than in
- * the view:
+ * THREE REQUIREMENTS, resolved here rather than in the view:
  *
  *   1. ASK DISCORD EVERY RENDER (owner). Styling is the one thing where a
  *      cached answer is the wrong answer, so there is no cache anywhere — see
  *      lib/discord.ts.
- *   2. NEVER BLANK THE PAGE. A moderator opening a profile is deciding
- *      something about a person, and the identifiers, the play record and the
- *      moderation buttons must not wait five seconds on somebody's avatar.
+ *   2. THE WHOLE PAGE WAITS (owner). "While the colors/images are loading I want
+ *      the entire profile page to show shadcn skeletons." Requirement 2 USED TO
+ *      SAY THE OPPOSITE — never blank the page, stream the body, skeleton only
+ *      the Discord-shaped elements — and it is written down as reversed rather
+ *      than quietly edited, because the code below is the code that was built
+ *      for the old one and the shape it left behind is otherwise unexplainable.
  *   3. NOTHING POPS IN LATE (owner). "Data displays, then images lag behind" is
- *      the specific thing to avoid, so the Discord-shaped parts of the page
- *      appear at ONE instant, after their images are decoded — not when the
- *      JSON arrives.
+ *      the specific thing to avoid, so the page appears at ONE instant, after
+ *      the images are decoded — not when the JSON arrives.
  *
  * HOW THEY FIT TOGETHER. The server never awaits Discord; it hands this
- * component a promise. `Resolver` sits alone inside a Suspense boundary and is
- * the only thing that suspends, so the rest of the page streams immediately (1
- * and 2). When the promise lands, the images are fetched and DECODED before any
- * state flips (3). Every Discord-dependent element reads one status off the
- * context, so they cannot arrive at different times even by accident.
+ * component a promise (1). `Resolver` sits alone inside a Suspense boundary and
+ * is the only thing that suspends, so the RSC stream still flushes the page
+ * around it instead of holding the response open. When the promise lands, the
+ * images are fetched and DECODED before any state flips (3). Everything that
+ * draws reads one status off this context, and `ProfileView` reads that same
+ * status to decide between its skeleton and its content (2) — one signal, one
+ * swap, no possibility of two halves arriving separately.
  *
- * `absent` IS NOT `loading`, and the distinction is the owner's: a player with
- * no Discord identifier must render immediately with no skeleton and no wait,
- * because there is nothing to wait for. A skeleton there would be a promise the
- * page cannot keep.
+ * WHAT CHANGED FOR (2) IS IN ProfileView, NOT HERE, and deliberately: this
+ * component's job is to say WHEN the answer is drawable, and the view's job is
+ * to decide what to draw before then. Moving the skeleton in here would give the
+ * provider an opinion about page layout and leave the view with a second one.
+ *
+ * `absent` IS NOT `loading`, and the distinction is the owner's and SURVIVES the
+ * reversal above: a player with no Discord identifier must render immediately
+ * with no skeleton and no wait, because there is nothing to wait for. A skeleton
+ * there would be a promise the page cannot keep.
  *
  * WHY THE RESOLVER RENDERS NOTHING. It could have rendered the chrome directly
  * and let Suspense do the swap — but the swap would then happen when the JSON
@@ -54,9 +62,14 @@ import type { DiscordChrome } from '@/lib/profile'
  * API's; the CDN is a different service with a different failure mode, and a
  * fast API answer followed by a wedged image request would otherwise hold the
  * skeleton forever. Five again, because the images are the thing being waited
- * for on purpose and the rest of the page is already on screen — but it is a
- * ceiling, not a target: the ordinary case is two cached CDN images in well
- * under 200ms.
+ * for on purpose — but it is a ceiling, not a target: the ordinary case is two
+ * cached CDN images in well under 200ms.
+ *
+ * IT MATTERS MORE THAN IT DID. This used to hold back three elements while the
+ * rest of the page was already readable; it now holds back the whole profile, so
+ * a missing ceiling here would be a page that never arrives rather than a face
+ * that never arrives. Both halves of the wait are capped: DISCORD_TIMEOUT_MS in
+ * lib/discord.ts, then this.
  */
 const IMAGE_TIMEOUT_MS = 5_000
 
@@ -238,9 +251,12 @@ export function DiscordChromeProvider({
   return (
     <DiscordChromeStateProvider state={state}>
       {/*
-        fallback={null} because this renders nothing in either state. The
-        skeletons are not here — they are on the individual elements, which is
-        what lets the rest of the page render while this is outstanding.
+        fallback={null} because `Resolver` renders nothing in either state, so
+        there is nothing for a fallback to stand in for. The skeleton is not
+        here and must not move here: it is `ProfileView`'s, chosen from the
+        status this provider publishes, which is what keeps ONE component
+        deciding when Discord is ready and ONE component deciding what the page
+        looks like before then.
       */}
       {promise ? (
         <Suspense fallback={null}>

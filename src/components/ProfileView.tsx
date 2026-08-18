@@ -17,7 +17,11 @@ import {
 import { useState } from 'react'
 import Link from 'next/link'
 
-import { useAccent, useDiscordChrome } from '@/components/DiscordChrome'
+import {
+  type DiscordChromeState,
+  useAccent,
+  useDiscordChrome,
+} from '@/components/DiscordChrome'
 import { Pager } from '@/components/Pager'
 import { PlayerActions } from '@/components/PlayerActions'
 import { ProvenanceTag } from '@/components/Provenance'
@@ -33,8 +37,15 @@ import {
 } from '@/components/ui/tooltip'
 // Aliased: `Ban` in this file is already the lucide icon.
 import type { Ban as BanRecord } from '@/lib/bans'
+import type { AccentSurface } from '@/lib/contrast'
 import { humanDuration } from '@/lib/duration'
-import type { DiscordNameChange, Profile, ProfileIncident, ProfileMatch } from '@/lib/profile'
+import type {
+  DiscordNameChange,
+  Profile,
+  ProfileIdentifier,
+  ProfileIncident,
+  ProfileMatch,
+} from '@/lib/profile'
 import { formatCount } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { progress } from '@/lib/xp'
@@ -48,6 +59,20 @@ import { progress } from '@/lib/xp'
  * this server. Identity first, live state second, moderation history third,
  * play record last — not the other way round, however much prettier a wall of
  * stats would look at the top.
+ *
+ * NOTHING BELOW RENDERS UNTIL DISCORD IS READY, and that is a reversal the
+ * owner asked for by name: "While the colors/images are loading I want the
+ * entire profile page to show shadcn skeletons." The page used to stream its
+ * body immediately and suspend only the Discord-shaped parts. It now has ONE
+ * loading state — `ProfileSkeleton`, gated on the same `ready` signal
+ * `DiscordChrome` already produces — and the per-element skeletons that used to
+ * sit on the face, the banner and the names are gone rather than left beside it.
+ * Two loading paths for one wait is exactly the duplication this repo keeps
+ * shipping.
+ *
+ * THE NO-DISCORD-ID FAST PATH SURVIVES UNTOUCHED. `absent` is not `loading`: a
+ * player with no Discord identifier renders immediately, with no skeleton at
+ * all, because there is nothing to wait for. See DiscordChromeProvider.
  */
 
 function when(ms: number): string {
@@ -69,11 +94,14 @@ function ago(ms: number, now: number): string {
  * into a mid lightness band and `accent.foreground` derived from its luminance;
  * see src/lib/contrast.ts. Nothing here ever sees the raw value.
  *
- * NO SKELETON ON THESE HEADERS, deliberately. The title, the provenance tag and
- * the count are all known immediately and none of them comes from Discord —
- * hiding "Kicks and bans" behind a grey bar for five seconds would be a worse
- * page, not a more honest one. The colour arrives with everything else Discord
- * and fades in over 300ms rather than snapping.
+ * THESE HEADERS USED TO CARRY NO SKELETON, on the argument that the title, the
+ * provenance tag and the count are all known immediately and none of them comes
+ * from Discord. The owner has since asked for the opposite — the whole page
+ * waits — so the skeleton of this header lives in `SkeletonSection`, which is
+ * this component's shape with grey bars in it, and this component never renders
+ * at all until the accent is in hand. The 300ms transition on `.accent-surface`
+ * is therefore no longer doing the job it was added for; it is kept because a
+ * theme switch still crosses it.
  */
 function Section({
   title,
@@ -291,6 +319,110 @@ const MODE_LABEL: Record<string, string> = {
 }
 
 /**
+ * THE COLUMNS OF THE MATCH TABLE, DECLARED ONCE, LABELS AND WIDTHS TOGETHER.
+ *
+ * "The match history table should have column labels. It's impossible to read
+ * what these columns are supposed to mean" — the owner. A header row is only
+ * worth having if it lines up with the rows underneath it, and a header that
+ * carries its own copy of the widths is two representations of one layout with
+ * nothing asserting they agree. So the widths live here and BOTH the header and
+ * `MatchRow` read them from this array; changing a width in one place is the
+ * only way to change it at all.
+ *
+ * PLAIN ENGLISH, NOT FIELD NAMES. `placement` is where they finished, `total` is
+ * how many people were in the match with them, `survivedMs` is how long they
+ * stayed alive before dying — so "Placed", "Field" and "Survived". The last two
+ * columns each hold several numbers and are named for what they are about
+ * rather than for any one field inside them.
+ *
+ * THE MATCH ID IS GONE (owner: "Match IDs are not necessary to display in the
+ * table"). It was a bare `match 412` in a column of its own, with no link, no
+ * copy affordance and nothing anywhere else on the page pointing at it —
+ * checked before deleting. The FIELD is untouched: `m.matchId` is still the
+ * second half of every row's React key, which is what keeps two matches that
+ * ended in the same millisecond from colliding.
+ */
+const MATCH_COLUMNS = [
+  { key: 'placement', label: 'Placed', className: 'w-16 shrink-0' },
+  { key: 'field', label: 'Field', className: 'w-12 shrink-0' },
+  { key: 'ended', label: 'Ended', className: 'w-36 shrink-0' },
+  { key: 'mode', label: 'Mode', className: 'w-14 shrink-0' },
+  { key: 'survived', label: 'Survived', className: 'w-32 shrink-0' },
+  // The one elastic column, with a floor. `min-w-0` alone would let it collapse
+  // to nothing in a narrow card and wrap "7 kills · 1,642 dmg" one character to
+  // a line; 12rem is the width at which it wraps to two readable lines instead.
+  { key: 'fight', label: 'Kills and damage', className: 'min-w-[12rem] flex-1' },
+  // Auto width, pushed right, text right-aligned — so the label's right edge
+  // lands on the values' right edge without either being given a fixed width
+  // wide enough for the longest possible earnings string.
+  { key: 'earned', label: 'Earned', className: 'ml-auto shrink-0 text-right' },
+] as const
+
+type MatchColumnKey = (typeof MATCH_COLUMNS)[number]['key']
+
+/** The same classes, by name, for the row that renders values into them. */
+const MATCH_COL = Object.fromEntries(
+  MATCH_COLUMNS.map((c) => [c.key, c.className]),
+) as Record<MatchColumnKey, string>
+
+/**
+ * The flex layout every line of the table shares — header and rows alike.
+ *
+ * `flex-wrap` IS GONE, AND THE HEADER IS WHY. The row used to wrap: at a 1024px
+ * window the cells reflowed onto five lines, in an order that depended on how
+ * long each value happened to be. That was survivable while the columns were
+ * unlabelled — it is exactly what the owner was complaining about — but a header
+ * row over a wrapping row is worse than no header, because it lines up on the
+ * first line and then lies about every line after it. Measured before changing
+ * it: header on three lines, rows on five, at 1024px.
+ *
+ * SO THE TABLE SCROLLS INSTEAD OF REFLOWING. Every cell keeps its column and
+ * long text wraps INSIDE its own cell, which keeps the header true at every
+ * width; `MatchTable` puts the whole thing in an `overflow-x-auto` box so a
+ * narrow window gets a scrollbar rather than a horizontal page.
+ */
+const MATCH_LINE = 'flex items-center gap-x-4'
+
+/**
+ * The column labels.
+ *
+ * A `<li>` AT THE TOP OF THE LIST rather than a `<thead>`, because this is a
+ * flex list and not a `<table>`, and converting it would restyle every cell.
+ * The trade is stated rather than hidden: a screen reader announces the labels
+ * as the first item of the list rather than as headers bound to each cell.
+ */
+function MatchColumnLabels() {
+  return (
+    <li
+      className={cn(
+        MATCH_LINE,
+        'pb-2 text-xs uppercase tracking-wider text-muted-foreground',
+      )}
+    >
+      {MATCH_COLUMNS.map((c) => (
+        <span key={c.key} className={c.className}>
+          {c.label}
+        </span>
+      ))}
+    </li>
+  )
+}
+
+/**
+ * The scroll box the match table lives in.
+ *
+ * Shared by the table and by its skeleton, so the two cannot end up in boxes
+ * with different overflow behaviour and different heights.
+ */
+function MatchTable({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="overflow-x-auto">
+      <ul className="min-w-[42rem] space-y-0">{children}</ul>
+    </div>
+  )
+}
+
+/**
  * One match, as it was recorded when it ended.
  *
  * WINNING AND PLACING FIRST ARE DIFFERENT, and this row is the place a
@@ -299,6 +431,12 @@ const MODE_LABEL: Record<string, string> = {
  * no winner. The game stores `won` for exactly this, and the badge only goes
  * gold when it is true — a `#1` in plain grey with the explanation on hover is
  * the honest rendering of the other case.
+ *
+ * EVERY ROW NOW CARRIES ITS TOP BORDER. The `first:border-t-0 first:pt-0` this
+ * used to have made the first match sit flush with the top of the panel; the
+ * first child of the list is the label row now, so that rule would have deleted
+ * the rule UNDER the header instead — which is the one line that makes a header
+ * look like one.
  */
 function MatchRow({ m }: { m: ProfileMatch }) {
   const firstButDead = m.placement === 1 && !m.won
@@ -317,7 +455,8 @@ function MatchRow({ m }: { m: ProfileMatch }) {
    * every ordinary row — the exact defect a naive conversion produces here.
    */
   const badgeClass = cn(
-    'flex w-16 shrink-0 items-center justify-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs font-semibold ring-1 ring-inset',
+    'flex items-center justify-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs font-semibold ring-1 ring-inset',
+    MATCH_COL.placement,
     m.won
       ? 'bg-warn/10 text-warn ring-warn/30'
       : 'bg-muted/40 text-muted-foreground ring-border',
@@ -332,7 +471,7 @@ function MatchRow({ m }: { m: ProfileMatch }) {
     'Placed first but did not survive — the storm took the last squad, so the match had no winner.'
 
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border/60 py-2.5 text-sm first:border-t-0 first:pt-0">
+    <li className={cn(MATCH_LINE, 'border-t border-border/60 py-2.5 text-sm')}>
       {firstButDead ? (
         <>
           <Tooltip>
@@ -357,34 +496,42 @@ function MatchRow({ m }: { m: ProfileMatch }) {
       {/* THE FIELD SIZE SITS WITH THE PLACEMENT, because it is the half that
           gives it meaning: third of eight and third of ninety-six are not the
           same result, and the number alone cannot say which happened. */}
-      <span className="w-12 shrink-0 font-mono text-xs text-muted-foreground/70">
+      <span
+        className={cn(
+          MATCH_COL.field,
+          'font-mono text-xs text-muted-foreground/70',
+        )}
+      >
         {m.total > 0 ? `of ${m.total}` : ''}
       </span>
 
-      <span className="w-36 shrink-0 text-muted-foreground">
+      <span className={cn(MATCH_COL.ended, 'text-muted-foreground')}>
         <LocalTime ms={m.endedAt} />
       </span>
 
-      {/* The game server's own match number, kept so a row here can be lined up
-          against a line in the server log. */}
-      <span className="w-20 shrink-0 font-mono text-xs text-muted-foreground/70">
-        match {m.matchId}
-      </span>
-
-      <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">
+      <span
+        className={cn(MATCH_COL.mode, 'font-mono text-xs text-muted-foreground')}
+      >
         {MODE_LABEL[m.mode] ?? (m.mode || 'match')}
       </span>
 
       {/* TIME ALIVE, NOT MATCH LENGTH. Every player in one match shares its
           duration; how long each of them survived is the interesting half —
-          which the word "alive" now says in the row instead of on hover.
-          WIDENED w-20 -> w-32 to pay for it: `humanDuration` emits up to
+          which the word "alive" says in the row instead of on hover. The column
+          is w-32 rather than w-20 to pay for it: `humanDuration` emits up to
           "12h 30m", and "12h 30m alive" does not fit in 80px. */}
-      <span className="w-32 shrink-0 font-mono text-xs text-muted-foreground">
+      <span
+        className={cn(
+          MATCH_COL.survived,
+          'font-mono text-xs text-muted-foreground',
+        )}
+      >
         {humanDuration(m.survivedMs)} alive
       </span>
 
-      <span className="font-mono text-xs text-muted-foreground">
+      <span
+        className={cn(MATCH_COL.fight, 'font-mono text-xs text-muted-foreground')}
+      >
         {m.kills} {m.kills === 1 ? 'kill' : 'kills'} · {formatCount(m.damage)} dmg
         {m.downs > 0 ? ` · ${m.downs} ${m.downs === 1 ? 'down' : 'downs'}` : ''}
         {m.revives > 0
@@ -392,7 +539,9 @@ function MatchRow({ m }: { m: ProfileMatch }) {
           : ''}
       </span>
 
-      <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+      <span
+        className={cn(MATCH_COL.earned, 'font-mono text-xs text-muted-foreground')}
+      >
         +{formatCount(m.xpEarned)} XP · +{formatCount(m.voltsEarned)} volts
       </span>
     </li>
@@ -656,6 +805,35 @@ function IncidentList({
 }
 
 /**
+ * What the band across the top of the identity card is made of, or null when
+ * there is no band at all.
+ *
+ * ONE DECISION, TWO CONSUMERS, WHICH IS WHY IT IS A FUNCTION AND NOT AN `if`
+ * INSIDE THE BANNER. The band is drawn by `IdentityBanner`; the AVATAR also has
+ * to know whether it exists, because an avatar lifted up over a band that is not
+ * there hangs off the top of the card. Deciding "is there a band" in two places
+ * is how the two drift apart, which is this repo's signature failure — so it is
+ * decided here, once, and handed to both.
+ *
+ * RETURNS NULL IN THREE DIFFERENT NOTHINGS. No Discord id, Discord did not
+ * answer, and an account with neither a banner nor an accent all produce no
+ * band — the card simply starts at its content, exactly as it did before any of
+ * this existed. Only the middle of those three is worth saying out loud, and
+ * `DiscordNames` says it.
+ *
+ * THERE IS NO `loading` CASE. The whole page is a skeleton until Discord is
+ * ready, so nothing downstream of this ever renders mid-flight.
+ */
+type IdentityBand = { bannerUrl: string | null; accent: AccentSurface | null }
+
+function identityBand(state: DiscordChromeState): IdentityBand | null {
+  if (state.status !== 'ready') return null
+  const { bannerUrl, accent } = state.chrome
+  if (!bannerUrl && !accent) return null
+  return { bannerUrl, accent }
+}
+
+/**
  * The banner strip across the top of the identity card.
  *
  * WHAT IT IS: the player's own Discord banner image, blurred, over their accent
@@ -671,26 +849,11 @@ function IncidentList({
  * with a banner at even a quarter of the mix, a mid-tone accent that measures
  * 4.50:1 on its own drops to 3.09:1 against a white banner. So the band is
  * decorative and every word on this card sits on the card.
- *
- * RETURNS NULL IN THREE DIFFERENT NOTHINGS. No Discord id, Discord did not
- * answer, and an account with neither a banner nor an accent all produce no
- * band — the card simply starts at its content, exactly as it did before any of
- * this existed. Only the middle of those three is worth saying out loud, and
- * `DiscordNames` says it.
  */
-function IdentityBanner() {
-  const state = useDiscordChrome()
+function IdentityBanner({ band }: { band: IdentityBand | null }) {
+  if (!band) return null
 
-  // No Discord id: nothing is coming, so nothing is promised. The owner was
-  // explicit that a skeleton here would be a lie.
-  if (state.status === 'absent') return null
-
-  if (state.status === 'loading') {
-    return <Skeleton className="h-24 w-full rounded-none" />
-  }
-
-  const { bannerUrl, accent } = state.chrome
-  if (!bannerUrl && !accent) return null
+  const { bannerUrl, accent } = band
 
   return (
     <div
@@ -712,54 +875,119 @@ function IdentityBanner() {
           className="size-full scale-110 object-cover blur-lg"
         />
       )}
-      {/* A downward fade into the card, so the band ends rather than stops. */}
+      {/* A downward fade into the card, so the band ends rather than stops.
+          IT STOPS SHORT OF THE AVATAR: the fade is a full-width strip and the
+          avatar sits on top of it, ringed in the card's own colour, so the two
+          never argue about which is in front. */}
       <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-card/70" />
     </div>
   )
 }
 
 /**
- * The face.
+ * How far the avatar is lifted, and it is arithmetic rather than taste.
  *
- * THREE STATES AND THEY ARE NOT INTERCHANGEABLE. A skeleton means a Discord id
- * exists and its picture is on the way; initials mean there is no Discord id at
- * all and never will be a picture; the generic Discord logo means we asked and
- * they have no avatar set, or nobody answered. The last of those is the one
- * worth a tooltip, because a coloured Discord logo looks enough like a chosen
- * avatar to be mistaken for one.
+ * The row below the banner opens with `pt-4` — 18px at this app's 18px root — so
+ * a flex item aligned to the start of that row begins 18px BELOW the boundary
+ * between the banner and the bar. `-mt-14` is 63px, which puts the top of the
+ * avatar 45px ABOVE the boundary: exactly half of the 90px (`size-20`) circle.
+ * That is the Discord profile convention the owner attached a screenshot of.
+ *
+ * `self-start` IS LOAD-BEARING, NOT TIDINESS. The row is `items-center`, under
+ * which a negative top margin resolves against the line's cross-size — so the
+ * overlap would silently change with how tall the name block happened to be
+ * that render. Pinned to the start of the line, the sum above is the whole
+ * story.
  */
-function Face({ name }: { name: string }) {
+const FACE_LIFT = '-mt-14 self-start'
+
+/** 90px, and the number the lift above is half of. Changing one changes both. */
+const FACE_SIZE = 'size-20'
+
+/**
+ * The ring that makes the avatar read as cut OUT of the banner rather than
+ * pasted on top of it: the colour of the bar it is straddling, which is the
+ * card. A token rather than white, so it tracks the theme instead of vanishing
+ * in the dark one.
+ */
+const FACE_RING = 'ring-[6px] ring-card'
+
+/**
+ * The face, sitting proud of the bar with the player's name in it.
+ *
+ * TWO STATES, NOT THREE. Initials mean there is no Discord id at all and there
+ * never will be a picture; a picture means Discord was asked. The third state —
+ * a skeleton, meaning the picture is on its way — has moved to the page level,
+ * because the owner now wants the whole page to wait rather than this one
+ * element. See `ProfileSkeleton`, which draws this circle at this size in this
+ * position so the swap does not move anything.
+ *
+ * THE GENERIC DISCORD LOGO IS STILL WORTH EXPLAINING, because a coloured
+ * Discord logo looks enough like a chosen avatar to be mistaken for one. It used
+ * to be explained in a native `title`, which docs/hover-text.md bans outright:
+ * that string could not be selected, focused or announced, and never appeared on
+ * a touch device at all. It is now the same conversion the placement badge in
+ * this file already carries — a Tooltip on an inert span, with the identical
+ * sentence in the DOM as `sr-only` so nothing lives on hover alone.
+ */
+function Face({ name, overlap }: { name: string; overlap: boolean }) {
   const state = useDiscordChrome()
 
-  if (state.status === 'loading') {
-    return <Skeleton className="size-14 shrink-0 rounded-xl" />
-  }
+  const frame = cn('shrink-0', overlap && FACE_LIFT)
 
   const initials = (
-    <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-lg font-semibold text-primary ring-1 ring-inset ring-primary/25">
-      {name.slice(0, 2).toUpperCase()}
+    <div className={frame}>
+      <div
+        className={cn(
+          FACE_SIZE,
+          FACE_RING,
+          'flex items-center justify-center rounded-full bg-primary/15 text-2xl font-semibold text-primary',
+        )}
+      >
+        {name.slice(0, 2).toUpperCase()}
+      </div>
     </div>
   )
 
-  if (state.status === 'absent') return initials
+  if (state.status !== 'ready') return initials
 
   const { avatarUrl, real, answered } = state.chrome
   if (!avatarUrl) return initials
 
-  return (
+  const picture = (
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src={avatarUrl}
       alt=""
-      title={
-        real
-          ? undefined
-          : answered
-            ? "Discord's default avatar — this player has not set a picture."
-            : "Discord's default avatar — Discord did not answer, so we do not know what they use."
-      }
-      className="size-14 shrink-0 rounded-xl object-cover ring-1 ring-inset ring-primary/25"
+      className={cn(
+        FACE_SIZE,
+        FACE_RING,
+        'rounded-full bg-card object-cover',
+      )}
     />
+  )
+
+  if (real) return <div className={frame}>{picture}</div>
+
+  const note = answered
+    ? 'Default Discord avatar — they have not set a picture.'
+    : 'Default Discord avatar — Discord did not answer.'
+
+  return (
+    <div className={frame}>
+      <Tooltip>
+        {/* `render` keeps this a plain block `<span>`. Left to itself
+            `TooltipTrigger` renders a `<button>`, which would put a focusable
+            control around a decorative image. */}
+        <TooltipTrigger render={<span className="block cursor-help" />}>
+          {picture}
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{note}</TooltipContent>
+      </Tooltip>
+      {/* The popup carries no `role` and no `aria-describedby` in Base UI, and
+          the trigger is inert, so the sentence also exists in the DOM. */}
+      <span className="sr-only">{note}</span>
+    </div>
   )
 }
 
@@ -780,76 +1008,521 @@ function FormerName({ change }: { change: DiscordNameChange }) {
 }
 
 /**
- * Who Discord says this is, and who it used to say.
+ * "formerly known as", for ONE of the two Discord names.
  *
- * TWO NAMES, BECAUSE DISCORD HAS TWO AND THEY MEAN DIFFERENT THINGS. The global
- * name is the display name — freely changed, and the one a human recognises.
- * The username is the @handle. A moderator matching a report to an account
- * needs the handle; a moderator recognising somebody needs the display name.
+ * ONE COMPONENT, TWO PLACES. `formerNames` records renames of both names and
+ * says which one moved, so the handle's history renders under the handle and the
+ * display name's under the display name — from this single implementation, so
+ * the two cannot drift into looking like different features. `field` is exactly
+ * `'username' | 'globalName'`, so partitioning the list between them is total:
+ * no recorded rename is dropped by being filed under the wrong name.
+ *
+ * TWO INLINE, THE REST REACHABLE. A player who renames often would otherwise
+ * push the identity card taller than the panels beside it, and the two most
+ * recent are the ones that answer "were they called something else when this was
+ * reported". `lib/players.ts` keeps up to twenty (DISCORD_NAME_HISTORY), so the
+ * overflow is real rather than theoretical.
+ *
+ * THE OVERFLOW IS NOT A `title` ATTRIBUTE ANY MORE. docs/hover-text.md bans it:
+ * a fact parked there cannot be selected, focused or announced, and never fires
+ * on touch. Tooltip on an inert span plus the identical string as `sr-only` is
+ * the conversion this file already uses for the placement badge.
+ */
+function FormerNames({ changes }: { changes: DiscordNameChange[] }) {
+  if (changes.length === 0) return null
+
+  const rest = changes.slice(2)
+  const overflow = rest
+    .map((c) => `${c.field === 'username' ? '@' : ''}${c.from}`)
+    .join(' · ')
+
+  return (
+    <span className="flex flex-wrap items-baseline gap-x-1.5">
+      <span className="text-muted-foreground/70">formerly</span>
+      {changes.slice(0, 2).map((c, i) => (
+        <FormerName key={`${c.field}-${c.at}-${i}`} change={c} />
+      ))}
+      {rest.length > 0 && (
+        <>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className="cursor-help underline decoration-dotted underline-offset-2" />
+              }
+            >
+              +{rest.length} more
+            </TooltipTrigger>
+            <TooltipContent side="top">{overflow}</TooltipContent>
+          </Tooltip>
+          <span className="sr-only">{overflow}</span>
+        </>
+      )}
+    </span>
+  )
+}
+
+/**
+ * "(last known)" — what is on screen is Ringmaster's stored copy of a name,
+ * because Discord did not answer this time.
+ *
+ * RENDERED BESIDE BOTH NAMES, from one component, because the two names now sit
+ * in two different panels and a moderator reading either one alone needs to know
+ * it might be stale. One implementation, two placements: they cannot disagree.
+ */
+function LastKnown() {
+  const note =
+    'Showing the name Ringmaster last recorded; Discord did not answer this time.'
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger render={<span className="cursor-help" />}>
+          (last known)
+        </TooltipTrigger>
+        <TooltipContent side="top">{note}</TooltipContent>
+      </Tooltip>
+      <span className="sr-only">{note}</span>
+    </>
+  )
+}
+
+/**
+ * The @handle, under the in-game name.
+ *
+ * TWO NAMES, TWO PLACES, AND THAT SPLIT IS THE OWNER'S: "Where it shows their
+ * discord username/nickname — their nickname should be in the identifiers table
+ * with descriptor."
+ *
+ * DISCORD HAS TWO NAMES AND THEY ARE NOT THE SAME KIND OF THING. `username` is
+ * the @handle: unique across Discord, changed rarely, and the string you type to
+ * find somebody. `global_name` is the display name — free text, changed on a
+ * whim, and the one a human recognises. Both used to sit on this line, side by
+ * side and unlabelled, which is precisely why they could not be told apart. The
+ * display name has moved into the Identifiers panel, labelled and described like
+ * every other identifier; the handle stays here, because "is this the right
+ * person" is answered by a handle far more often than by a license.
  *
  * "FORMERLY KNOWN AS" IS THE POINT OF STORING ANY OF THIS. It is the only thing
- * on this line that the live Discord call cannot produce — see
+ * on this card that the live Discord call cannot produce — see
  * recordDiscordIdentity in lib/players.ts — and it is there because renaming is
- * what a reported player does next.
+ * what a reported player does next. The history splits with the names: handle
+ * renames here, display-name renames beside the display name.
  */
 function DiscordNames() {
   const state = useDiscordChrome()
 
-  if (state.status === 'absent') return null
-
-  if (state.status === 'loading') {
-    return <Skeleton className="mt-1.5 h-3.5 w-56" />
-  }
+  if (state.status !== 'ready') return null
 
   const { answered, username, globalName, formerNames } = state.chrome
+  const former = formerNames.filter((c) => c.field === 'username')
 
   if (!answered && !username && !globalName && formerNames.length === 0) {
     return (
-      <p
-        className="mt-1.5 text-xs text-muted-foreground/70"
-        title="The page rendered without it rather than waiting. Nothing here is a statement about this player."
-      >
-        Discord did not answer.
+      // THE EXPLANATION IS THE SENTENCE, not a hover on it. Rule 2 of
+      // docs/hover-text.md: if the words fit next to the thing, put them there.
+      <p className="mt-1.5 text-xs text-muted-foreground/70">
+        Discord did not answer. The page rendered without it rather than waiting;
+        nothing here is a statement about this player.
       </p>
     )
   }
 
+  if (!username && former.length === 0) return null
+
   return (
     <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
-      {globalName && <span className="text-foreground/80">{globalName}</span>}
       {username && <span className="font-mono">@{username}</span>}
-      {!answered && (
-        <span title="Showing the names Ringmaster last recorded; Discord did not answer this time.">
-          (last known)
-        </span>
-      )}
+      {!answered && <LastKnown />}
+      <FormerNames changes={former} />
+    </div>
+  )
+}
+
+/**
+ * The label column of the identifiers table.
+ *
+ * WIDER THAN IT WAS (w-16 -> w-28) TO PAY FOR "DISPLAY NAME". Every label in
+ * this panel used to be one short word — license, discord, steam — and 72px was
+ * enough for all of them. "Display name" is twelve characters of uppercase at
+ * `tracking-wider`, which is about 109px, so at the old width it wrapped onto
+ * two lines under a one-line value. It is a shared constant rather than two
+ * copies of `w-28` for the obvious reason: a column with two widths is not a
+ * column.
+ */
+const ID_LABEL =
+  'w-28 shrink-0 text-xs uppercase tracking-wider text-muted-foreground'
+
+/**
+ * Every identifier we hold for this player, and what Discord calls them.
+ *
+ * THE DISPLAY NAME IS AN IDENTIFIER ROW NOW (owner, item 1). It sat unlabelled
+ * beside the @handle under the in-game name, where the two were indistinguishable
+ * — one of them is how you find an account and the other is what somebody
+ * decided to call themselves this week.
+ *
+ * AND IT GETS A DESCRIPTOR, which none of the other rows needs, because it is
+ * the only row in this panel you cannot key anything on. A license, a Steam id
+ * and a Discord snowflake are all durable handles on a person; a display name is
+ * free text the player edits at will. A row that sits in a table of identifiers
+ * looking as solid as the ones above it, and is not, would be worse than no row
+ * at all — so the descriptor says exactly that, and points at the @handle as the
+ * stable one.
+ */
+function IdentifiersPanel({
+  identifiers,
+}: {
+  identifiers: ProfileIdentifier[]
+}) {
+  const state = useDiscordChrome()
+  const chrome = state.status === 'ready' ? state.chrome : null
+
+  const displayName = chrome?.globalName ?? null
+  const former = (chrome?.formerNames ?? []).filter(
+    (c) => c.field === 'globalName',
+  )
+
+  /*
+   * WHEN THE ROW EXISTS AT ALL, and the three cases are not the same.
+   *
+   *   Discord answered            always a row. "They have not set one" is a
+   *                               fact Discord told us, and a row that silently
+   *                               vanishes says nothing at all — absence gets
+   *                               rendered as absence on this page, not as a
+   *                               gap somebody has to notice.
+   *   Discord did not answer, but
+   *   we have a stored name or a
+   *   rename history              a row, marked "(last known)".
+   *   Discord did not answer and
+   *   we have never seen a name    no row. The identity card already says
+   *                               Discord did not answer; repeating it as an
+   *                               empty labelled row is furniture.
+   */
+  const showDisplayName =
+    chrome !== null &&
+    (chrome.answered || displayName !== null || former.length > 0)
+
+  if (identifiers.length === 0 && !showDisplayName) return <Empty />
+
+  return (
+    <ul className="space-y-2">
       {/*
-        TWO INLINE, THE REST ON HOVER. A player who renames often would
-        otherwise push the whole card taller than the panels beside it, and the
-        two most recent are the ones that answer "were they called something
-        else when this was reported". The rest are still reachable and still
-        stored — see DISCORD_NAME_HISTORY in lib/players.ts for the cap that is
-        a real deletion rather than a display limit.
+        EVERY VALUE, NOT EVERY KIND. A player can present more than one
+        value for the same kind over time — a second Steam account, a
+        reissued license — and each of those is a separate row here.
+
+        The key is kind+value rather than kind, which it used to be: two
+        sightings of one kind collided, React kept the first, and the extra
+        value silently vanished from a page whose whole job is to show what
+        we know about somebody.
       */}
-      {formerNames.length > 0 && (
-        <span className="flex flex-wrap items-baseline gap-x-1.5">
-          <span className="text-muted-foreground/70">formerly</span>
-          {formerNames.slice(0, 2).map((c, i) => (
-            <FormerName key={`${c.field}-${c.at}-${i}`} change={c} />
-          ))}
-          {formerNames.length > 2 && (
-            <span
-              className="cursor-help underline decoration-dotted underline-offset-2"
-              title={formerNames
-                .slice(2)
-                .map((c) => `${c.field === 'username' ? '@' : ''}${c.from}`)
-                .join(' · ')}
-            >
-              +{formerNames.length - 2} more
-            </span>
-          )}
-        </span>
+      {identifiers.map((id) => (
+        <li key={`${id.kind}:${id.value}`} className="flex items-baseline gap-3">
+          <span className={ID_LABEL}>{id.kind}</span>
+          <code className="min-w-0 flex-1 truncate font-mono text-xs">
+            {id.value}
+          </code>
+        </li>
+      ))}
+
+      {showDisplayName && chrome && (
+        <li className="flex items-baseline gap-3 border-t border-border/60 pt-2">
+          <span className={ID_LABEL}>Display name</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
+              {displayName ? (
+                <span className="text-foreground/90">{displayName}</span>
+              ) : (
+                // "not set" and "not known" are different claims and the page
+                // must not make the first one on the second one's evidence.
+                <span className="text-muted-foreground/70">
+                  {chrome.answered ? 'not set' : 'not known'}
+                </span>
+              )}
+              {!chrome.answered && (
+                <span className="text-muted-foreground">
+                  <LastKnown />
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground/70">
+              What Discord shows for this account — free text they can change at
+              any time. The @handle beside their in-game name above is the one
+              that identifies the account.
+            </p>
+            {former.length > 0 && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                <FormerNames changes={former} />
+              </div>
+            )}
+          </div>
+        </li>
       )}
+    </ul>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+ * THE PAGE, WHILE IT IS WAITING.
+ *
+ * "While the colors/images are loading I want the entire profile page to show
+ * shadcn skeletons" — the owner, reversing an earlier instruction of his own.
+ * The page used to stream its body immediately and skeleton only the three
+ * Discord-shaped elements; it now shows nothing but skeletons until Discord's
+ * JSON AND its images have landed, then swaps the whole thing at one instant.
+ *
+ * THIS IS THE ONLY LOADING PATH. The per-element skeletons that used to sit on
+ * the face, the banner strip and the names are DELETED rather than left behind
+ * this — two representations of one wait, with nothing asserting they agree, is
+ * the failure this repo keeps shipping. Every `status === 'loading'` branch in
+ * this file is now this one.
+ *
+ * IT LIVES BESIDE `ProfileView` ON PURPOSE, in the same file and immediately
+ * above it, because it is a second drawing of that component's layout and the
+ * only thing keeping the two in step is that you cannot read one without seeing
+ * the other. Shapes are matched to the real content — same card order, same
+ * grid, same row counts, same avatar size and lift — so the page does not jump
+ * when it swaps.
+ *
+ * WHAT IS *NOT* SKELETONED: the back link. It is the way out of a page that is
+ * still loading, it comes from nowhere and cannot be wrong, and greying it out
+ * would take away the one control that works.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * A run of list rows, built to the real row's box rather than to a guess at it.
+ *
+ * The incident and audit rows are `flex items-start gap-3 border-t py-2.5` with
+ * a `size-6` icon and two lines of text, which measures 66px. This is the same
+ * box with grey bars in it, so five of them stack to the same height as five of
+ * those — which is the only reason a skeleton is worth drawing at all.
+ */
+function SkeletonRows({ n, width }: { n: number; width?: string }) {
+  return (
+    <ul>
+      {Array.from({ length: n }, (_, i) => (
+        <li
+          key={i}
+          className="flex items-start gap-3 border-t border-border/60 py-2.5"
+        >
+          <Skeleton className="mt-0.5 size-6 shrink-0 rounded-md" />
+          <div className="min-w-0 flex-1">
+            <Skeleton className={cn('h-5', width ?? 'w-2/3')} />
+            <Skeleton className="mt-0.5 h-4 w-1/3" />
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** `Pager`'s footprint: the rule above it and a row of numbered buttons. */
+function SkeletonPager() {
+  return (
+    <div className="mt-3 border-t border-border/60 pt-3">
+      <Skeleton className="h-8 w-64" />
+    </div>
+  )
+}
+
+/** `Section`, with grey bars where its header and its content will be. */
+function SkeletonSection({
+  children,
+  className,
+}: {
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <Card className={cn('surface-edge gap-0 overflow-hidden py-0', className)}>
+      {/* bg-card/60 rather than an accent: the accent colour is precisely what
+          has not arrived yet, and guessing at one would be the pop-in this
+          whole arrangement exists to prevent. */}
+      <header className="flex items-center gap-2 border-b border-border bg-card/60 px-4 py-2.5">
+        <Skeleton className="h-3.5 w-28" />
+        <Skeleton className="h-4 w-16 rounded" />
+      </header>
+      <div className="p-4">{children}</div>
+    </Card>
+  )
+}
+
+/** A grid of `Figure`s: a small label over a large number, twelve times. */
+function SkeletonFigures({ n, className }: { n: number; className: string }) {
+  return (
+    <div className={className}>
+      {Array.from({ length: n }, (_, i) => (
+        <div key={i} className="space-y-1.5">
+          <Skeleton className="h-4 w-16" />
+          <Skeleton className="h-7 w-20" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function ProfileSkeleton({ moderation }: { moderation: boolean }) {
+  return (
+    <div className="space-y-4" aria-busy="true">
+      {/* Announced once, because a wall of grey boxes says nothing out loud. */}
+      <p className="sr-only" role="status">
+        Loading this profile. Waiting for Discord.
+      </p>
+
+      <Link
+        href="/"
+        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+      >
+        <ArrowLeft className="size-3.5" />
+        Back to live players
+      </Link>
+
+      {/* IDENTITY. The band is always drawn here even though a player with no
+          banner and no accent will not have one — this is the state where we do
+          not yet know which, and a card that grows a 108px strip on arrival is
+          the jump the skeleton exists to prevent. */}
+      <Card className="surface-edge gap-0 overflow-hidden p-0">
+        <Skeleton className="h-24 w-full rounded-none" />
+        <div className="flex flex-wrap items-center gap-4 px-5 py-4">
+          {/* Same size, same lift, same ring as the real face — see FACE_LIFT. */}
+          <div className={cn('shrink-0', FACE_LIFT)}>
+            <Skeleton className={cn(FACE_SIZE, FACE_RING, 'rounded-full')} />
+          </div>
+
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Skeleton className="h-6 w-48" />
+              <Skeleton className="h-5 w-28 rounded-md" />
+            </div>
+            <Skeleton className="h-3.5 w-56" />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="flex gap-6">
+              <div className="space-y-1.5">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-4 w-28" />
+              </div>
+              <div className="space-y-1.5">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+            </div>
+            {moderation && (
+              <div className="flex gap-2">
+                <Skeleton className="h-9 w-20 rounded-md" />
+                <Skeleton className="h-9 w-20 rounded-md" />
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Identifiers: three value rows, then the display name with its
+            descriptor and its rename history under it. */}
+        <SkeletonSection>
+          <div className="space-y-2">
+            {Array.from({ length: 3 }, (_, i) => (
+              <div key={i} className="flex items-baseline gap-3">
+                <Skeleton className="h-4 w-24 shrink-0" />
+                <Skeleton className="h-4 min-w-0 flex-1" />
+              </div>
+            ))}
+            <div className="flex items-baseline gap-3 border-t border-border/60 pt-2">
+              <Skeleton className="h-4 w-24 shrink-0" />
+              <div className="min-w-0 flex-1 space-y-1.5">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-2/3" />
+                <Skeleton className="h-4 w-5/6" />
+              </div>
+            </div>
+          </div>
+        </SkeletonSection>
+
+        {/* Play record: twelve figures on the same responsive grid. */}
+        <SkeletonSection>
+          <SkeletonFigures
+            n={12}
+            className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3"
+          />
+        </SkeletonSection>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <SkeletonSection>
+          <SkeletonFigures n={2} className="grid grid-cols-2 gap-4" />
+          <div className="mt-4 space-y-1.5">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-6 w-40" />
+          </div>
+          <Skeleton className="mt-3 h-3.5 w-44" />
+        </SkeletonSection>
+
+        <SkeletonSection>
+          <SkeletonFigures n={2} className="grid grid-cols-2 gap-4" />
+        </SkeletonSection>
+      </div>
+
+      {/* Incidents: the tab strip, then five rows and a pager. */}
+      <SkeletonSection>
+        <div className="flex gap-2">
+          <Skeleton className="h-12 w-52 rounded-md" />
+          <Skeleton className="h-12 w-44 rounded-md" />
+        </div>
+        <div className="mt-3">
+          <SkeletonRows n={PROFILE_PER_PAGE} />
+        </div>
+        <SkeletonPager />
+      </SkeletonSection>
+
+      {/* Kicks and bans. */}
+      <SkeletonSection>
+        <SkeletonRows n={PROFILE_PER_PAGE} width="w-1/2" />
+        <SkeletonPager />
+      </SkeletonSection>
+
+      {/* Match history, including its new label row. The columns come from
+          MATCH_COLUMNS so the skeleton cannot drift from the table — except for
+          `earned`, whose real cell is shrink-to-fit around its text and would
+          collapse to nothing around a `w-full` bar. */}
+      <SkeletonSection>
+        <MatchTable>
+          <li className={cn(MATCH_LINE, 'pb-2')}>
+            {MATCH_COLUMNS.map((c) => (
+              <span
+                key={c.key}
+                className={cn(c.className, c.key === 'earned' && 'w-44')}
+              >
+                <Skeleton className="h-3 w-full" />
+              </span>
+            ))}
+          </li>
+          {Array.from({ length: PROFILE_PER_PAGE }, (_, i) => (
+            <li
+              key={i}
+              className={cn(MATCH_LINE, 'border-t border-border/60 py-2.5')}
+            >
+              {MATCH_COLUMNS.map((c) => (
+                <span
+                  key={c.key}
+                  className={cn(c.className, c.key === 'earned' && 'w-44')}
+                >
+                  <Skeleton className="h-5 w-full" />
+                  {/* The kills-and-damage cell is the one that runs to two
+                      lines on a busy match, which is what sets the real row's
+                      height. A one-line skeleton row here would be 24px short
+                      five times over. */}
+                  {c.key === 'fight' && (
+                    <Skeleton className="mt-1 h-5 w-2/3" />
+                  )}
+                </span>
+              ))}
+            </li>
+          ))}
+        </MatchTable>
+        <SkeletonPager />
+      </SkeletonSection>
     </div>
   )
 }
@@ -888,6 +1561,24 @@ export function ProfileView({
   /** Report categories in English. From `lib/incidents`, which is server-only. */
   categoryLabel?: Record<string, string>
 }) {
+  /*
+   * THE GATE (owner, item 3). One `ready` signal, one skeleton, one page.
+   *
+   * `DiscordChrome` already produces exactly the signal this needs: `loading`
+   * until Discord has answered AND every image it named has been decoded, with
+   * a five-second ceiling on each half so it cannot hang. Reading it here rather
+   * than building a second wait is the whole point — the alternative is two
+   * loading paths that agree until they do not.
+   *
+   * `absent` FALLS STRAIGHT THROUGH, and that is the owner's earlier instruction
+   * surviving this one intact: a player with no Discord id is not a player whose
+   * Discord data is loading, so there is no promise, no wait and NO SKELETON AT
+   * ALL. `DiscordChromeProvider` decides that from `promise === null`, on the
+   * server and the client identically, which is also what keeps this from being
+   * a hydration mismatch.
+   */
+  const chromeState = useDiscordChrome()
+
   const kd = p.stats && p.stats.deaths > 0
     ? (p.stats.kills / p.stats.deaths).toFixed(2)
     : '—'
@@ -895,6 +1586,14 @@ export function ProfileView({
   // #22 item 6 — see NOT_AN_ACTION. Kicks and bans lists what was DONE to this
   // player; a decision about a report is not one of those things.
   const moderationActions = p.actions.filter((a) => !NOT_AN_ACTION.has(a.action))
+
+  if (chromeState.status === 'loading') {
+    return <ProfileSkeleton moderation={moderation !== undefined} />
+  }
+
+  // Decided once and used twice — the band is drawn by IdentityBanner and the
+  // avatar's lift depends on there being one. See identityBand.
+  const band = identityBand(chromeState)
 
   return (
     <div className="space-y-4">
@@ -910,16 +1609,22 @@ export function ProfileView({
           the wrong person.
 
           THE CARD'S OWN PADDING IS GONE so the banner strip can be full bleed;
-          the content below it carries the padding instead. */}
-      <Card className="surface-edge animate-rise gap-0 overflow-hidden p-0">
-        <IdentityBanner />
+          the content below it carries the padding instead.
 
-        {/* items-center: the name sits on the avatar's midline rather than
-              hanging off its top edge. */}
+          `overflow-hidden` STAYS, and it is what keeps the avatar from breaking
+          the card's rounded corners now that it straddles the band. Nothing is
+          clipped by it: the lifted circle's top sits 45px below the top of the
+          108px band, well inside the card. */}
+      <Card className="surface-edge animate-rise gap-0 overflow-hidden p-0">
+        <IdentityBanner band={band} />
+
+        {/* items-center: the name sits below the avatar's midline, which is
+              where a Discord profile puts it. The avatar itself opts out with
+              `self-start` — see FACE_LIFT for why that is arithmetic. */}
         <div className="flex flex-wrap items-center gap-4 px-5 py-4">
-          {/* THE FACE. Skeleton, initials or a picture — see Face for why those
-              three are not the same state wearing different clothes. */}
-          <Face name={p.name} />
+          {/* THE FACE, straddling the band above it (owner, item 2). Initials or
+              a picture; the third state is the whole-page skeleton now. */}
+          <Face name={p.name} overlap={band !== null} />
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
@@ -1008,35 +1713,10 @@ export function ProfileView({
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Section title="Identifiers" provenance={<ProvenanceTag kind="identity" />}>
-          {/*
-            EVERY VALUE, NOT EVERY KIND. A player can present more than one
-            value for the same kind over time — a second Steam account, a
-            reissued license — and each of those is a separate row here.
-
-            The key is kind+value rather than kind, which it used to be: two
-            sightings of one kind collided, React kept the first, and the extra
-            value silently vanished from a page whose whole job is to show what
-            we know about somebody.
-          */}
-          {p.identifiers.length === 0 ? (
-            <Empty />
-          ) : (
-            <ul className="space-y-1.5">
-              {p.identifiers.map((id) => (
-                <li
-                  key={`${id.kind}:${id.value}`}
-                  className="flex items-baseline gap-3"
-                >
-                  <span className="w-16 shrink-0 text-xs uppercase tracking-wider text-muted-foreground">
-                    {id.kind}
-                  </span>
-                  <code className="min-w-0 flex-1 truncate font-mono text-xs">
-                    {id.value}
-                  </code>
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* The stored identifiers plus what Discord calls this account —
+              see IdentifiersPanel for why the display name belongs here and the
+              @handle does not. */}
+          <IdentifiersPanel identifiers={p.identifiers} />
         </Section>
 
         <Section
@@ -1382,11 +2062,16 @@ export function ProfileView({
         ) : (
           <Paged items={p.matches} perPage={PROFILE_PER_PAGE} label="Match history pages">
             {(slice) => (
-              <ul className="space-y-0">
+              <MatchTable>
+                {/* THE COLUMN LABELS (owner, item 4). Inside the list rather
+                    than above it, so the rule under the header is the first
+                    row's own top border and there is no second border to keep
+                    in step with it. */}
+                <MatchColumnLabels />
                 {slice.map((m) => (
                   <MatchRow key={`${m.endedAt}-${m.matchId}`} m={m} />
                 ))}
-              </ul>
+              </MatchTable>
             )}
           </Paged>
         )}

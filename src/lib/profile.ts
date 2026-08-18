@@ -208,9 +208,17 @@ export interface Profile {
    * `avatarUrl` USED TO BE HERE and is gone rather than unused.
    *
    * It was resolved on the server, awaited inline, and baked into this object —
-   * which is exactly what made the whole page wait on Discord. Everything
+   * which held the page's FIRST BYTE for as long as Discord took. Everything
    * Discord-shaped now arrives separately as a `DiscordChrome`, resolved behind
-   * its own Suspense boundary, so a slow call costs the face and nothing else.
+   * its own Suspense boundary, so the response starts immediately and the
+   * Discord chunk lands in it later.
+   *
+   * THAT IS ABOUT THE RESPONSE, NOT ABOUT WHAT IS ON SCREEN. This comment used to
+   * end "so a slow call costs the face and nothing else", which stopped being
+   * true when the owner asked for the whole profile to sit behind skeletons until
+   * Discord is ready. A slow call now costs the page — it just costs it as a
+   * loading page rather than as a blank tab. See components/ProfileView.
+   *
    * Leaving a second avatar field here would have given the page two places to
    * look for one picture.
    */

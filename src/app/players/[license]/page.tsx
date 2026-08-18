@@ -37,8 +37,18 @@ import { liveView } from '@/lib/state'
  *
  * THE DISCORD HALF IS THE ONLY THING NOT AWAITED HERE, and the only thing on
  * this page that can be slow for a reason outside this system. It is handed to
- * the client as a promise and resolved behind a Suspense boundary, so a Discord
- * outage costs a face and never a page. See `discordChrome` below.
+ * the client as a promise and resolved behind a Suspense boundary. See
+ * `discordChrome` below.
+ *
+ * WHAT THAT BUYS HAS CHANGED, and the sentence that used to be here — "a Discord
+ * outage costs a face and never a page" — is no longer true. On the owner's
+ * instruction the VIEW now shows a full-page skeleton until Discord's data and
+ * images have both landed, so a slow Discord costs the whole page for as long as
+ * it is slow. Not awaiting it here still matters, and for a different reason: the
+ * response's first byte does not wait five seconds, so the reader gets a page
+ * that is visibly loading instead of a browser that is visibly hanging. Both
+ * halves of the wait are capped — DISCORD_TIMEOUT_MS in lib/discord.ts, then
+ * IMAGE_TIMEOUT_MS in components/DiscordChrome.
  *
  * MATCH HISTORY IS REAL AS OF #153, and it brought a distinction with it that
  * did not exist while the list was permanently empty: an empty list no longer
@@ -110,10 +120,17 @@ export default async function PlayerProfilePage({
    * screen the entire time.
    *
    * So the promise goes to the client instead. React streams it through the
-   * Suspense boundary inside DiscordChromeProvider, which means the identifiers,
-   * the play record, the incident tabs, the match history and the kick and ban
-   * buttons are all interactive while Discord is still thinking. If it never
-   * answers, the page keeps everything it already had and loses only the face.
+   * Suspense boundary inside DiscordChromeProvider, which keeps the RSC response
+   * flowing: the shell and the skeleton are flushed at once and the Discord chunk
+   * lands later, in the same response. Measured on /preview/profile?discord=slow
+   * — first paint at 235ms, chrome at 4.06s, one document.
+   *
+   * IT NO LONGER MEANS THE PAGE IS USABLE MEANWHILE. It used to: the identifiers,
+   * the play record and the moderation buttons all rendered while Discord was
+   * still thinking. The owner has since asked for the whole page to wait behind
+   * skeletons, so what streaming buys now is a page that is visibly loading
+   * rather than a request that appears to hang. ProfileView owns that decision;
+   * this file owns only the promise.
    *
    * NULL WHEN THERE IS NO DISCORD ID, and null is load-bearing rather than
    * merely falsy: the provider renders no skeleton and waits for nothing in that

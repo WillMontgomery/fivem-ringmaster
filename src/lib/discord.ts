@@ -61,8 +61,15 @@ import type { DiscordChrome } from './profile'
  * PAST THIS THE PAGE RENDERS WITHOUT THE STYLING rather than erroring or
  * hanging. Five seconds is long by the standards of a page load and short by
  * the standards of somebody deciding whether to ban a player, which is the
- * right way round: the face is the least important thing on this page and the
- * only one that can be slow.
+ * right way round.
+ *
+ * IT IS NOW THE CEILING ON THE WHOLE PAGE, not just on the face. The profile
+ * waits behind skeletons until this resolves (the owner's instruction — see
+ * components/ProfileView), so a timeout that failed to fire would be a page that
+ * never arrives rather than a face that never arrives. A second, separate
+ * ceiling covers the images afterwards: IMAGE_TIMEOUT_MS in
+ * components/DiscordChrome. Both are hard, and a profile is drawable within the
+ * sum of them whatever Discord does.
  */
 export const DISCORD_TIMEOUT_MS = 5_000
 

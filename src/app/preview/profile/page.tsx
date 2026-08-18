@@ -45,8 +45,9 @@ import { thresholdFor } from '@/lib/xp'
  *   ?incidents=  0, 1, 5, 6 and 43 rows, for the tabs and the page boundary
  *   ?xp=         the reported truncation value, and the curve's worst case
  *   ?mod=        the top bar's moderation buttons, in each of their shapes
- *   ?discord=    the Discord chrome: absent, loading, timed out, full, and the
- *                two accent colours that break a naive implementation
+ *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
+ *                accent colours that break a naive implementation, and an
+ *                account with no display name
  *
  * THE DISCORD AXIS IS THE ONE THAT CANNOT BE REACHED ANY OTHER WAY. Every other
  * state on this page needs a live session and an AWS credential; the Discord
@@ -55,6 +56,22 @@ import { thresholdFor } from '@/lib/xp'
  * and `?discord=black` are the two accent colours that make an unclamped
  * implementation illegible, and neither of them can be produced by looking at a
  * real profile unless somebody happens to have chosen one.
+ *
+ * IT IS ALSO THE AXIS THAT NOW MOVES THE WHOLE PAGE. Since the owner asked for
+ * "the entire profile page to show shadcn skeletons" while Discord is loading,
+ * `?discord=` is no longer a switch on three elements — it chooses between the
+ * full-page skeleton and the full page. The three cases that matter for that:
+ *
+ *   ?discord=loading   the skeleton, held still, so it can be read rather than
+ *                      glimpsed. Flip between this and `full` to check that
+ *                      nothing jumps when the real content lands.
+ *   ?discord=slow      four seconds of the real machinery, end to end.
+ *   ?discord=none      NO SKELETON AT ALL. The fast path the owner was explicit
+ *                      about: no Discord id means nothing is coming, so nothing
+ *                      is promised and the page renders at once.
+ *
+ * The toggle strip is outside `ProfileView`, so it survives the skeleton and you
+ * can still switch axes while the page below is grey.
  *
  * THE FIXTURE LIVES HERE, NOT IN lib/. src/lib/profile.ts deleted its
  * demoProfile() on the grounds that a fixture producing a plausible Profile is
@@ -516,7 +533,11 @@ const DISCORD_CASES = {
   none: { label: 'no discord id', make: () => null },
 
   /*
-   * THE SKELETON, HELD INDEFINITELY, so it can be read rather than glimpsed.
+   * THE WHOLE-PAGE SKELETON, HELD INDEFINITELY, so it can be read rather than
+   * glimpsed. Every panel — identity, identifiers, play record, progression,
+   * sessions, incidents, kicks and bans, match history — at roughly the shape of
+   * the real content. The way to check that shape is to flip between this and
+   * `full` and watch for anything that moves.
    *
    * This one does not go through a promise at all — the page pins the context
    * state directly. See the comment at the render for why every attempt to do
@@ -526,9 +547,12 @@ const DISCORD_CASES = {
   loading: { label: 'loading', make: () => null },
 
   /*
-   * THE FIVE SECONDS ELAPSING, then the reveal. The one case that shows the
-   * behaviour the owner asked for end to end: skeleton, images decoded off
-   * screen, everything Discord-shaped appearing at one instant.
+   * THE WAIT ELAPSING, then the reveal. The one case that shows the behaviour
+   * the owner asked for end to end: full-page skeleton, images decoded off
+   * screen, the entire profile appearing at one instant.
+   *
+   * FOUR SECONDS, NOT FIVE, so the reveal happens rather than the timeout — five
+   * would race DISCORD_TIMEOUT_MS and turn this into a second copy of `timeout`.
    */
   slow: {
     label: 'slow then full',
@@ -570,11 +594,31 @@ const DISCORD_CASES = {
   white: { label: 'accent #ffffff', make: async () => chrome({ accent: accentSurface('#ffffff') }) },
   black: { label: 'accent #000000', make: async () => chrome({ accent: accentSurface('#000000') }) },
 
-  /* No accent and no banner: an ordinary Discord account. The card has a face
-     and a handle and no colour, which is what most players will look like. */
+  /*
+   * No accent and no banner: an ordinary Discord account. The card has a face
+   * and a handle and no colour, which is what most players will look like.
+   *
+   * IT IS ALSO THE NO-BAND CASE, which the avatar has to survive. With neither a
+   * banner nor an accent there is no strip across the top of the identity card,
+   * so there is nothing for the avatar to straddle and it must NOT be lifted —
+   * a lifted circle here hangs off the top of the card. `full` and `plain` are
+   * the pair to look at together.
+   */
   plain: {
     label: 'no accent',
     make: async () => chrome({ accent: null, bannerUrl: null, formerNames: [] }),
+  },
+
+  /*
+   * AN ACCOUNT WITH NO DISPLAY NAME. Discord allows `global_name` to be cleared,
+   * and the client then shows the @handle in its place — so the identifiers
+   * panel has a labelled row with nothing in it. It says "not set" rather than
+   * rendering an empty row or silently disappearing, and this is the only way to
+   * see which.
+   */
+  noname: {
+    label: 'no display name',
+    make: async () => chrome({ globalName: null, formerNames: [] }),
   },
 } satisfies Record<string, { label: string; make: () => Promise<DiscordChrome> | null }>
 
@@ -586,13 +630,35 @@ function fixture(
   xp: XpKey,
   incidents: IncidentKey,
   mod: ModKey,
+  discord: DiscordKey,
 ): Profile {
   const counts = INCIDENT_CASES[incidents]
   return {
     license: LICENSE,
     name: 'Preview Player',
+    /*
+     * THE DISCORD SNOWFLAKE IS A STORED IDENTIFIER AND THE DISPLAY NAME IS NOT,
+     * and the identifiers panel now shows both — which is the whole point of the
+     * owner's first item. The id is durable and keys the registry row; the name
+     * under it is free text the player edits at will. They are only tellable
+     * apart here if both are on screen at once, so the fixture carries both.
+     *
+     * IT TRACKS THE DISCORD AXIS. `?discord=none` means this player has never
+     * linked an account, so a `discord` identifier row would contradict the
+     * empty chrome sitting beside it.
+     */
     identifiers: [
       { kind: 'license', value: 'preview000000000000000000000000000', firstSeen: BASE - 400 * HOUR },
+      ...(discord === 'none'
+        ? []
+        : [
+            {
+              kind: 'discord',
+              value: PREVIEW_DISCORD_ID,
+              firstSeen: BASE - 380 * HOUR,
+            },
+          ]),
+      { kind: 'steam', value: '11000010fd4b9b2', firstSeen: BASE - 380 * HOUR },
     ],
     names: [{ name: 'Preview Player', firstSeen: BASE - 400 * HOUR, lastSeen: BASE }],
     firstSeen: BASE - 400 * HOUR,
@@ -760,7 +826,7 @@ async function Preview({
 
   const params = { state, incidents, xp, mod, discord }
   const { matches, stats } = MATCH_CASES[state]
-  const p = fixture(matches, stats, xp, incidents, mod)
+  const p = fixture(matches, stats, xp, incidents, mod, discord)
   const now = BASE + 5 * 60_000
 
   // Built here and NOT awaited, exactly as the real page builds it — awaiting it
@@ -828,6 +894,12 @@ async function Preview({
         worth stating: `?discord=loading` exercises what the loading state LOOKS
         like and not the machinery that reaches it. `slow` exercises the
         machinery.
+
+        THAT DISTINCTION MATTERS MORE NOW THAN IT DID, because the loading state
+        is the entire page rather than three elements. `loading` is where you read
+        the skeleton; `slow` is where you check that it actually ends, that the
+        images were decoded before it did, and that the whole page arrives at
+        once rather than in two waves.
       */}
       {discord === 'loading' ? (
         <DiscordChromeStateProvider state={{ status: 'loading' }}>
