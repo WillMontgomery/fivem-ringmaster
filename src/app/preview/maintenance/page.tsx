@@ -4,6 +4,7 @@ import { AppShell } from '@/components/AppShell'
 import { MaintenancePanel } from '@/components/MaintenancePanel'
 import { DEMO_USER } from '@/lib/demo'
 import { AUTO_AFTER_MS, type MaintenanceWindow } from '@/lib/maintenance'
+import type { RefUpdate } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 
 /**
@@ -19,12 +20,20 @@ import { cn } from '@/lib/utils'
  * renders nothing, and they both passed on this one.
  *
  * `?state=` picks the case:
- *   parked         on `dev`, no window — the state #146 was filed about
- *   parked-live    on `dev`, a plain refresh scheduled and draining
+ *   parked         on `dev`, host has not said how far behind `dev` it is
+ *   parked-behind  on `dev`, THREE NEW COMMITS ON `dev` — the discovered update
+ *   parked-level   on `dev`, level with it — nothing new, button still offered
+ *   parked-live    on `dev`, a plain update scheduled and draining
  *   parked-switch  on `dev`, a window that switches to another branch
  *   main-update    on main, three commits behind — the ordinary case
  *   main-current   on main, nothing to deploy
  *   unknown        the host has not said which ref it is on
+ *
+ * THE THREE PARKED SHAPES ARE THE POINT OF THE NEW ONES. "Behind its branch",
+ * "level with its branch" and "we have not been told" are three different
+ * sentences on the same card, and only the first is an update waiting. They are
+ * indistinguishable in a type check and each needs a live game box in a
+ * particular state to see, which is the same argument that produced this file.
  *
  * The panel is passed `frozen` so it holds the fixture instead of polling the
  * real console out from under it. See the prop's own comment.
@@ -75,25 +84,81 @@ const DRAINING: MaintenanceWindow = {
 interface View {
   /** What the host says it is running. `null` is a host that has not answered. */
   deployedRef: string | null
+  /**
+   * How far behind its own branch the box is. `null` is "not known", which is
+   * a state in its own right and NOT the same as zero — see the panel's prop.
+   */
+  refUpdate: RefUpdate | null
   window: MaintenanceWindow | null
   players: number
 }
 
+/**
+ * A reading of the parked branch, as the telemetry poller would hold one.
+ *
+ * The shas are fixtures and deliberately look like shas: this object is what a
+ * `branches` answer collapses to, and a reviewer comparing this harness against
+ * the real page should be able to tell at a glance that nothing here was
+ * invented in a different shape from the real thing.
+ */
+const refAt = (ref: string, behind: number): RefUpdate => ({
+  ref,
+  behind,
+  tipSha: '9c1e77a4b02d5f38e6ab41cc7d90e2f5138ba604',
+  deployedSha: '4f2b9c1de8a7365019bd4ac2e5f80917bb3c6d24',
+  stale: false,
+  at: NOW - 30_000,
+})
+
 const views: Record<string, View> = {
   /**
-   * THE BUG STATE. Parked on `dev`, nothing scheduled, `updateAvailable` held
+   * THE BUG STATE, AND STILL A REACHABLE ONE. Parked on `dev` with no reading
+   * of the branch yet — a console that has just booted, a host that is not
+   * answering, or a branch deleted from the remote. `updateAvailable` is held
    * at zero by the driver because distance-from-main is not what a parked box
-   * is tracking. Before the fix this rendered the off-main banner and then
-   * nothing at all — no schedule control anywhere on the page.
+   * is tracking. Before #146 this rendered the off-main banner and then nothing
+   * at all; it must now render the card, the button, and no commit count.
    */
-  parked: { deployedRef: 'dev', window: BASE, players: 7 },
+  parked: { deployedRef: 'dev', refUpdate: null, window: BASE, players: 7 },
 
-  /** A plain refresh of the parked branch, mid-drain. No `targetRef`: not a switch. */
-  'parked-live': { deployedRef: 'dev', window: DRAINING, players: 3 },
+  /**
+   * THE STATE THIS FEATURE EXISTS FOR. Somebody pushed three commits to the
+   * branch the live server is running, and the console found them without being
+   * asked. Note `updateAvailable` is still zero: the distance from main is
+   * untouched and this number is a different one, which is why the badge here
+   * has to name `dev` and the main card's has to name main.
+   */
+  'parked-behind': {
+    deployedRef: 'dev',
+    refUpdate: refAt('dev', 3),
+    window: BASE,
+    players: 7,
+  },
+
+  /**
+   * Parked and level with the branch. The card and its button stay — a deploy
+   * here still re-syncs resources — but the page must not imply an update is
+   * waiting, and must not be confused with the `parked` shape above.
+   */
+  'parked-level': {
+    deployedRef: 'dev',
+    refUpdate: refAt('dev', 0),
+    window: BASE,
+    players: 7,
+  },
+
+  /** A plain update of the parked branch, mid-drain. No `targetRef`: not a switch. */
+  'parked-live': {
+    deployedRef: 'dev',
+    refUpdate: refAt('dev', 3),
+    window: DRAINING,
+    players: 3,
+  },
 
   /** A branch switch, which is the pinned-sha path and reads differently. */
   'parked-switch': {
     deployedRef: 'dev',
+    refUpdate: refAt('dev', 3),
     window: {
       ...DRAINING,
       targetRef: 'feature/loot-v2',
@@ -105,6 +170,7 @@ const views: Record<string, View> = {
   /** The ordinary case: on main, behind, with the 72-hour clock running. */
   'main-update': {
     deployedRef: 'main',
+    refUpdate: null,
     window: {
       ...BASE,
       updateAvailable: 3,
@@ -114,7 +180,12 @@ const views: Record<string, View> = {
   },
 
   /** On main, level with it — the empty state. */
-  'main-current': { deployedRef: 'main', window: BASE, players: 12 },
+  'main-current': {
+    deployedRef: 'main',
+    refUpdate: null,
+    window: BASE,
+    players: 12,
+  },
 
   /**
    * A dispatcher too old to report its ref. Deliberately in the set: "unknown"
@@ -124,6 +195,7 @@ const views: Record<string, View> = {
    */
   unknown: {
     deployedRef: null,
+    refUpdate: null,
     window: {
       ...BASE,
       updateAvailable: 3,
@@ -195,14 +267,25 @@ async function Preview({
           initialPlayers={view.players}
           canRun
           initialDeployedRef={view.deployedRef}
+          initialRefUpdate={view.refUpdate}
           frozen
         />
 
+        {/*
+          THE FOOTER STATES BOTH DISTANCES SEPARATELY, because the whole failure
+          mode this harness is here to catch is the two being read as one. If
+          the card above ever shows a count that matches neither line here, that
+          is the bug.
+        */}
         <p className="mt-8 border-t border-border pt-4 text-xs text-muted-foreground/60">
           Design harness — fixtures only, nothing is read from a game host and
           the panel does not poll. Deployed ref{' '}
           <code className="font-mono">{view.deployedRef ?? '(not reported)'}</code>
-          , {view.window?.updateAvailable ?? 0} behind main
+          , {view.window?.updateAvailable ?? 0} behind main, behind its own
+          branch{' '}
+          {view.refUpdate
+            ? `${view.refUpdate.behind} (${view.refUpdate.ref})`
+            : '(not known)'}
           {deadline ? ', automatic deadline set' : ', no automatic deadline'}.
           Not reachable in production.
         </p>

@@ -33,13 +33,20 @@ export default async function MaintenancePage() {
 
   /**
    * Read AFTER `ensureDriver()`, which starts the telemetry poller. On a
-   * console that has just booted this is still null on the first render and the
-   * panel's own five-second poll fills it in — which is why the panel treats
-   * null as "the host has not said" rather than as "main". A page that guessed
-   * `main` for one render would flash the ordinary update card over a parked
-   * server, which is the one lie this page must not tell.
+   * console that has just booted these are still null on the first render and
+   * the panel's own five-second poll fills them in — which is why the panel
+   * treats null as "the host has not said" rather than as "main". A page that
+   * guessed `main` for one render would flash the ordinary update card over a
+   * parked server, which is the one lie this page must not tell.
+   *
+   * `refUpdate` is null for longer than `deployedRef` is, and that is expected:
+   * it comes from a `branches` call the poller makes on a two-minute cadence
+   * rather than from the fifteen-second `status`. The panel renders "we do not
+   * know yet" for it, which is true, instead of a zero that would read as "your
+   * branch has not moved".
    */
-  const deployedRef = hostView().status?.deployedRef ?? null
+  const { status, refUpdate } = hostView()
+  const deployedRef = status?.deployedRef ?? null
 
   return (
     <AppShell
@@ -67,6 +74,7 @@ export default async function MaintenancePage() {
           initialPlayers={view.counts.connected}
           canRun={canRun}
           initialDeployedRef={deployedRef}
+          initialRefUpdate={refUpdate}
         />
       </div>
     </AppShell>

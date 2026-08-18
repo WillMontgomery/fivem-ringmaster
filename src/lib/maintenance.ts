@@ -108,8 +108,8 @@ export interface MaintenanceWindow {
 
   /**
    * The branch this window will put on the box, and the exact commit it was
-   * chosen at. Null on an ordinary window, which refreshes whatever ref the
-   * host is already on.
+   * chosen at. Null on an ordinary window, which deploys the current tip of
+   * whatever ref the host is already on.
    *
    * BOTH, OR NEITHER, AND THE SHA IS THE LOAD-BEARING HALF. Hours pass between
    * an admin picking a branch and the last match ending, and anyone with push

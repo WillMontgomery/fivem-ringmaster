@@ -298,6 +298,91 @@ export function listBranches(): Promise<HostBranches> {
 }
 
 /**
+ * HAS THE BRANCH THE BOX IS PARKED ON MOVED SINCE IT DEPLOYED?
+ *
+ * A DIFFERENT NUMBER FROM `behindMain`, AND THE TWO MUST NEVER BE CONFUSED.
+ * `status.behindMain` is `HEAD..origin/main` — the distance from reviewed code,
+ * which off main is large, permanent, and describes an update nobody is waiting
+ * for. This is `HEAD..origin/<the ref HEAD is on>` — the distance from the tip
+ * of the branch somebody is actively pushing to, which is exactly the update
+ * they ARE waiting for. Anything that renders either one has to name which, or
+ * "3 commits behind" means two incompatible things on the same page.
+ *
+ * IT IS NOT A NEW MEASUREMENT. The `branches` verb already computes it: every
+ * row's `ahead`/`behind` is measured against the DEPLOYED SHA rather than
+ * against main (see `do_branches` in the game repo's `tools/dispatch.sh`), so
+ * the row whose name equals `deployedRef` carries, in `ahead`, the count of
+ * commits on that branch's tip that the served clone does not have. This
+ * function is the one place that reading is spelled out, so nothing else has to
+ * remember that "ahead of what is deployed" and "how far behind the box is" are
+ * the same number seen from opposite ends.
+ *
+ * WHY NOT FROM `status`: the `status` verb reports `HEAD`, `deployedRef` and
+ * `behindMain` and nothing about the parked branch's tip, and its background
+ * fetch is `git fetch origin main` — main only. So `origin/<branch>` on the
+ * served clone is refreshed by a deploy or by this verb, and by nothing else.
+ * There is no arithmetic on the `status` payload that produces this number; a
+ * dispatcher change would be needed to get it for free. See docs and the note
+ * on `telemetry.pollDeployedRef` for the cadence that pays for it instead.
+ *
+ * NULL IS "WE DO NOT KNOW", NEVER "ZERO". The branch may have been deleted on
+ * the remote, HEAD may be detached, the box may not have answered yet. Callers
+ * must render nothing in that case rather than claiming the box is current —
+ * silence is honest, a confident zero is not.
+ */
+export interface RefUpdate {
+  /** The branch the served clone is on. Never `main`; see below. */
+  ref: string
+  /** Commits on `origin/<ref>` that the served clone does not have. */
+  behind: number
+  /** The tip `behind` was measured against, 40-hex. */
+  tipSha: string
+  /** The deployed commit it was measured from, 40-hex. */
+  deployedSha: string
+  /**
+   * The host's own fetch did not finish inside its budget and it answered from
+   * the refs already on disk, so `behind` may undercount. Carried rather than
+   * dropped for the same reason the branch picker says it out loud.
+   */
+  stale: boolean
+  /** When the console received this reading, epoch ms. */
+  at: number
+}
+
+/**
+ * Pull {@link RefUpdate} out of a `branches` answer.
+ *
+ * MAIN IS DELIBERATELY EXCLUDED, even though the arithmetic would work there
+ * too. On main `behindMain` is already the answer, it is refreshed on every
+ * fifteen-second `status` poll for free, and it is what the badge, the watcher,
+ * the Host page and the game-side nudge have always read. A second number
+ * measuring the same distance by a different route would eventually disagree
+ * with the first — after a `branches` fetch that timed out, say — and there is
+ * no version of "two different commit counts for main" that helps anybody.
+ */
+export function refUpdateFrom(
+  b: HostBranches,
+  at = Date.now(),
+): RefUpdate | null {
+  const ref = b.deployedRef
+  if (!ref || ref === 'main') return null
+
+  const row = b.branches.find((x) => x.name === ref)
+  if (!row) return null
+
+  return {
+    ref,
+    // `ahead` on this row is "commits this branch has that the deployed sha
+    // does not", which is precisely how far the box is behind its own branch.
+    behind: row.ahead,
+    tipSha: row.sha,
+    deployedSha: b.deployedSha,
+    stale: b.stale,
+    at,
+  }
+}
+
+/**
  * Pin the ref the game host's NEXT deploy will check out. Does not deploy.
  *
  * THE SHA IS THE POINT, not the name. Hours pass between an admin choosing a

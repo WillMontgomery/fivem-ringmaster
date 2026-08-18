@@ -1,4 +1,13 @@
-import { runVerb, sshConfigured, type HostStatus, type HostTelemetry } from './ssh'
+import {
+  isParkedOffMain,
+  listBranches,
+  refUpdateFrom,
+  runVerb,
+  sshConfigured,
+  type HostStatus,
+  type HostTelemetry,
+  type RefUpdate,
+} from './ssh'
 
 /**
  * Host telemetry, polled and held in a rolling window.
@@ -30,11 +39,43 @@ interface TelState {
   lastError: string | null
   polling: boolean
   timer: ReturnType<typeof setInterval> | null
+
+  /** How far the box is behind its own branch. Null on main and when unknown. */
+  refUpdate: RefUpdate | null
+  /** `<ref>@<deployed sha>` of the last attempt, whether or not it succeeded. */
+  refKey: string
+  /** When that attempt started, so a failing host is throttled too. */
+  refPolledAt: number
+  /** One `branches` call at a time; they are slow and they fetch. */
+  refBusy: boolean
 }
 
 /** ~30 min at one sample per 15s. Enough to see a trend, cheap to hold. */
 const WINDOW = 120
 const POLL_MS = 15_000
+
+/**
+ * How often the parked branch's own tip is re-read. NOT the poll interval.
+ *
+ * TWO MINUTES IS A COST DECISION, and the cost is on the game box rather than
+ * here. `status` and `telemetry` read files and run `rev-list` against refs
+ * already on disk; `branches` runs a real `git fetch --prune origin` against
+ * GitHub with a four-second timeout, which is why the branch picker loads it on
+ * demand and nothing in this console has ever put it on a timer. Two minutes is
+ * roughly the cadence the box already fetches at anyway — `do_status` kicks off
+ * a detached `git fetch origin main` whenever its cached ref is over a minute
+ * old — so this adds work of the same order, not a new class of it.
+ *
+ * WHY A TIMER AT ALL, given that rule. The owner's requirement is that a commit
+ * pushed to the parked branch is DISCOVERED, not merely discoverable: an
+ * operator who has to open the branch picker to find out that the branch they
+ * are testing has moved has not been told anything, they have gone looking. A
+ * server-side timer is also strictly cheaper than the alternative that was
+ * available — polling from the page — because it is bounded by wall-clock time
+ * rather than by how many browser tabs are open, which is the exact reason
+ * `/api/host/branches` is `process`-scoped.
+ */
+const REF_POLL_MS = 120_000
 
 function create(): TelState {
   return {
@@ -44,6 +85,10 @@ function create(): TelState {
     lastError: null,
     polling: false,
     timer: null,
+    refUpdate: null,
+    refKey: '',
+    refPolledAt: 0,
+    refBusy: false,
   }
 }
 
@@ -70,6 +115,48 @@ function rateBetween(prev: HostTelemetry | undefined, cur: HostTelemetry): {
   }
 }
 
+/**
+ * Re-read how far the box is behind the branch it is parked on.
+ *
+ * DETACHED FROM THE SAMPLE PATH ON PURPOSE. This is a second SSH round trip
+ * that can eat most of its six-second budget on the box's `git fetch`; awaiting
+ * it inside `poll()` would make the CPU and memory graph lose samples whenever
+ * GitHub was slow, which is a real regression to buy a number that changes when
+ * somebody pushes. It runs beside the sample and lands whenever it lands.
+ *
+ * THE KEY IS THE THROTTLE, NOT A TIMESTAMP ALONE. Re-reading on a fixed
+ * interval would leave the count wrong for up to two minutes after the two
+ * moments it visibly matters — a deploy landing (the count should drop to zero
+ * as the restart finishes, not two minutes later) and a branch switch (the old
+ * branch's number must not sit under the new branch's name for a moment, which
+ * is precisely the mislabelling this whole change exists to avoid). Both move
+ * `deployedRef` or the deployed sha, so keying on the pair asks again
+ * immediately for exactly those, and throttles everything else.
+ *
+ * A FAILED READ KEEPS THE LAST ONE, same as a failed sample keeps the last
+ * graph. What it must not do is claim zero: `refUpdateFrom` returns null when
+ * the branch is gone from the remote, and null renders as nothing rather than
+ * as "you are up to date".
+ */
+async function pollDeployedRef(status: HostStatus): Promise<void> {
+  if (state.refBusy) return
+
+  const key = `${status.deployedRef ?? ''}@${status.sha ?? ''}`
+  const now = Date.now()
+  if (key === state.refKey && now - state.refPolledAt < REF_POLL_MS) return
+
+  state.refKey = key
+  state.refPolledAt = now
+  state.refBusy = true
+  try {
+    state.refUpdate = refUpdateFrom(await listBranches())
+  } catch {
+    /* keep the last reading; a dropped fetch is not a branch that moved */
+  } finally {
+    state.refBusy = false
+  }
+}
+
 async function poll(): Promise<void> {
   if (!sshConfigured()) return
 
@@ -85,6 +172,28 @@ async function poll(): Promise<void> {
     state.status = status
     state.statusAt = Date.now()
     state.lastError = null
+
+    /**
+     * CLEARED SYNCHRONOUSLY THE MOMENT THE BOX IS BACK ON MAIN, and only
+     * refreshed in the background while it is not.
+     *
+     * The clearing half has to be immediate. `refUpdate` names a branch, and a
+     * reading left behind after a revert would put "2 commits behind dev" in
+     * the header of a console whose server is running main — a sentence that is
+     * both false and unreachable, since nothing would ever poll to correct it.
+     *
+     * `isParkedOffMain`, NOT `!isOnMain`, and lib/ssh states the rule: a host
+     * too old to report its ref folds in with main here, because everything
+     * this value feeds is something a human READS. Gate the automation
+     * pessimistically; gate the decoration on a stated fact.
+     */
+    if (isParkedOffMain(status)) {
+      void pollDeployedRef(status)
+    } else {
+      state.refUpdate = null
+      state.refKey = ''
+      state.refPolledAt = 0
+    }
 
     const prev = state.samples[state.samples.length - 1]
     state.samples.push({ ...tel, ...rateBetween(prev, tel) })
@@ -114,5 +223,12 @@ export function hostView() {
     statusAgeMs: state.statusAt ? Date.now() - state.statusAt : null,
     samples: state.samples,
     lastError: state.lastError,
+    /**
+     * SERVED FROM MEMORY LIKE EVERYTHING ELSE HERE. Reading this costs a local
+     * function call, not an SSH round trip, so a page may poll it as freely as
+     * it polls the rest of this object — which is the whole reason the `branches`
+     * call that produces it lives on the server timer rather than in a route.
+     */
+    refUpdate: state.refUpdate,
   }
 }

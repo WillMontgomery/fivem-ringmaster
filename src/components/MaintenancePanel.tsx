@@ -35,7 +35,7 @@ import {
 } from '@/components/ui/select'
 import { postJson } from '@/lib/api'
 import { AUTO_AFTER_MS, type MaintenanceWindow } from '@/lib/maintenance'
-import type { HostBranch } from '@/lib/ssh'
+import type { HostBranch, RefUpdate } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 
 /**
@@ -90,6 +90,7 @@ export function MaintenancePanel({
   initialPlayers,
   canRun,
   initialDeployedRef,
+  initialRefUpdate,
   frozen = false,
 }: {
   initial: MaintenanceWindow | null
@@ -105,6 +106,18 @@ export function MaintenancePanel({
    * `main` puts this page into its parked shape.
    */
   initialDeployedRef: string | null
+  /**
+   * How far the box is behind the branch it is parked on, or null.
+   *
+   * NULL IS "NOT KNOWN", AND IS NOT ZERO. On main there is no such number by
+   * design (`behindMain` is the one that means anything there); off main the
+   * poller may not have read it yet, the branch may be gone from the remote, or
+   * the host may be unreachable. Every one of those has to render as silence.
+   * Claiming "0 commits behind dev" on a box that simply has not been asked
+   * would be the same class of confident wrong answer as the distance-from-main
+   * number this exists to replace.
+   */
+  initialRefUpdate: RefUpdate | null
   /**
    * Hold the props as given and never poll. FOR THE DESIGN HARNESS ONLY.
    *
@@ -127,6 +140,7 @@ export function MaintenancePanel({
   const [players, setPlayers] = useState(initialPlayers)
   const [now, setNow] = useState(() => Date.now())
   const [deployedRef, setDeployedRef] = useState(initialDeployedRef)
+  const [refUpdate, setRefUpdate] = useState(initialRefUpdate)
 
   const [drainIn, setDrainIn] = useState('0')
   const [advanced, setAdvanced] = useState(false)
@@ -152,6 +166,21 @@ export function MaintenancePanel({
    * host that has not answered renders as it always has.
    */
   const parked = typeof deployedRef === 'string' && deployedRef !== 'main'
+
+  /**
+   * How many commits the parked branch has gained since this box deployed, or
+   * null for "we do not know".
+   *
+   * THE READING IS ONLY USED UNDER THE NAME IT WAS TAKEN FOR. The poller
+   * re-reads this on its own cadence, so between a switch landing and the next
+   * reading `deployedRef` already names the new branch while `refUpdate` still
+   * describes the old one. Pairing them would print the previous branch's count
+   * beside the current branch's name — which is precisely the confusion of two
+   * "behind" numbers this whole card is trying to end. A mismatch reads as
+   * unknown for one interval instead.
+   */
+  const refBehind =
+    parked && refUpdate && refUpdate.ref === deployedRef ? refUpdate.behind : null
 
   /**
    * Every time this panel DISPLAYS is in the reader's stated zone and says so.
@@ -261,15 +290,19 @@ export function MaintenancePanel({
       }
 
       /**
-       * Which ref the box is on, refreshed in the same beat.
+       * Which ref the box is on, and how far behind that ref it is, refreshed
+       * in the same beat.
        *
        * A SEPARATE, CHEAP READ. /api/host answers from the telemetry poller's
        * in-memory snapshot and makes no SSH call of its own, so this costs a
        * local round trip rather than a trip to the game box — unlike
        * /api/host/branches, which really does fetch and is therefore only
-       * loaded on demand.
+       * loaded on demand. `refUpdate` comes from a `branches` call, but one the
+       * SERVER made on its own two-minute timer; reading it here is free, and
+       * five browser tabs on this page cost the game box exactly as much as
+       * none do.
        *
-       * It matters here specifically because a deploy CHANGES this value: an
+       * It matters here specifically because a deploy CHANGES both values: an
        * admin who switches to a branch and watches the window through would
        * otherwise be looking at a page still describing the old ref, on the one
        * screen where that fact is the entire subject.
@@ -279,12 +312,14 @@ export function MaintenancePanel({
         if (hres.ok) {
           const hv = (await hres.json()) as {
             status?: { deployedRef?: string } | null
+            refUpdate?: RefUpdate | null
           }
           setDeployedRef(
             typeof hv.status?.deployedRef === 'string'
               ? hv.status.deployedRef
               : null,
           )
+          setRefUpdate(hv.refUpdate ?? null)
         }
       } catch {
         /* leave the last known ref; a dropped poll is not a branch change */
@@ -363,13 +398,13 @@ export function MaintenancePanel({
        * THE ORDINARY PATH NAMES THE REF TOO WHEN THERE IS ONE TO NAME. On main
        * "Maintenance scheduled." is the whole story; parked on a branch it is
        * the exact ambiguity #146 was about, because the same button means
-       * "refresh dev" there and the operator has no other confirmation of
+       * "update dev" there and the operator has no other confirmation of
        * which ref they just aimed a restart at.
        */
       const what = target
         ? `Switching to ${target.name} (${target.sha.slice(0, 8)}).`
         : parked
-          ? `Refreshing ${deployedRef}.`
+          ? `Updating ${deployedRef} to its newest commit.`
           : 'Maintenance scheduled.'
       toast.success(
         timed
@@ -501,12 +536,27 @@ export function MaintenancePanel({
             <code className="rounded bg-warn/15 px-1.5 py-0.5 font-mono text-xs">
               {deployedRef}
             </code>
-            . Every deploy from here refreshes that branch until somebody
-            switches back — nothing returns it to main on its own.
+            . Every deploy from here ships the newest commit on that branch
+            until somebody switches back — nothing returns it to main on its
+            own.
           </p>
+          {/*
+            THE RULE, IN THE OWNER'S OWN TERMS: still discovered, not installed.
+
+            This used to read "automatic updates are paused while it is parked",
+            which was true of installing and quietly wrong about finding —
+            nothing was looking at the parked branch at all, so a commit pushed
+            to the branch the live server was running was invisible here until
+            somebody opened the branch picker and went looking for it. The
+            console now watches the branch the box is on and says so; what stays
+            switched off is the part that deploys without being asked.
+          */}
           <p className="mt-1 text-xs text-muted-foreground">
-            Automatic updates are paused while it is parked, so an update
-            waiting behind this branch waits indefinitely.
+            New commits on{' '}
+            <code className="font-mono">{deployedRef}</code> are still found
+            automatically. Installing them is not — while the box is parked
+            nothing deploys unless somebody asks, and a main-branch update
+            waiting behind this one waits indefinitely.
           </p>
         </div>
 
@@ -622,23 +672,24 @@ export function MaintenancePanel({
                 </p>
               )}
               {/*
-                AND THE SAME LINE FOR A PLAIN REFRESH OF A PARKED BRANCH, which
+                AND THE SAME LINE FOR A PLAIN UPDATE OF A PARKED BRANCH, which
                 is the window with no `targetRef` at all. The banner above says
                 which branch the box is parked on; this says what this window is
                 going to do about it, and the two together are the whole answer
                 to "what am I watching". It deliberately does NOT show a sha —
                 there is none, and inventing one would misdescribe the action.
-                A refresh takes the tip at deploy time; only a switch is pinned.
+                An update takes the tip at deploy time; only a switch is pinned,
+                which is why this line says WHEN the commit is chosen.
               */}
               {!w.targetRef && parked && (
                 <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs">
                   <GitBranch className="size-3 text-warn" />
-                  <span className="text-muted-foreground">Will refresh</span>
+                  <span className="text-muted-foreground">Will update</span>
                   <code className="rounded bg-warn/15 px-1.5 py-0.5 font-mono text-warn">
                     {deployedRef}
                   </code>
                   <span className="text-muted-foreground">
-                    at its tip when the deploy runs
+                    to its newest commit when the deploy runs
                   </span>
                 </p>
               )}
@@ -775,9 +826,9 @@ export function MaintenancePanel({
                   </>
                 ) : (
                   <>
-                    refresh{' '}
-                    <code className="font-mono">{deployedRef ?? 'main'}</code>,
-                    sync resources, restart FXServer.
+                    update{' '}
+                    <code className="font-mono">{deployedRef ?? 'main'}</code> to
+                    its newest commit, sync resources, restart FXServer.
                   </>
                 )}
               </p>
@@ -826,7 +877,7 @@ export function MaintenancePanel({
    * second would have, because `behind` is the distance from MAIN and the
    * driver holds it at zero the whole time the server runs a branch. The
    * operator was left with the branch picker as the sole way to schedule
-   * anything, which means re-choosing a branch to do a plain refresh of the
+   * anything, which means re-choosing a branch to do a plain update of the
    * branch already on the box.
    *
    * The suppression was not arbitrary — the old comment here was right that
@@ -845,15 +896,25 @@ export function MaintenancePanel({
    * chose the branch, and refusing them the action does not keep the server on
    * main; it only makes them use the branch picker to get there.
    *
-   * NOTHING HERE PINS A SHA. A refresh is `scheduleWith(null)` — no
+   * NOTHING HERE PINS A SHA. An update is `scheduleWith(null)` — no
    * `targetRef`, no `targetSha` — which leaves `tools/deploy.sh` to resolve the
    * ref itself (pin file, then `symbolic-ref HEAD`) and take that branch's
    * current tip. That is the deliberate box-side behaviour a bare `deploy` has
-   * always had. Attaching the sha the branch had when it was switched to would
-   * quietly turn "ship what I just pushed" into "redeploy the commit from
-   * Tuesday", which is the opposite of the request, and the box would refuse it
-   * the moment the branch moved. Pinning belongs to the branch picker, where a
-   * human has read the commit they are choosing.
+   * always had, and it is the same code path on main. Attaching the sha the
+   * branch had when it was switched to would quietly turn "ship what I just
+   * pushed" into "redeploy the commit from Tuesday", which is the opposite of
+   * the request, and the box would refuse it the moment the branch moved.
+   * Pinning belongs to the branch picker, where a human has read the commit
+   * they are choosing.
+   *
+   * `refBehind` DOES NOT GATE THIS. Now that the console knows how far behind
+   * its own branch a parked box is, the tempting next step is to hide the card
+   * when that number is zero — and it would re-create #146 in a subtler form.
+   * The number can be unknown (host unreachable, branch deleted, a dispatcher
+   * that answered from stale refs), and every one of those would read as
+   * "nothing to do" while the operator is looking at a branch they just pushed
+   * to. A redeploy is also legitimately wanted at zero, to re-sync resources.
+   * The number changes what the card SAYS; it never removes the button.
    */
   const canSchedule = parked || behind > 0
 
@@ -874,27 +935,77 @@ export function MaintenancePanel({
                     to tell what an unlabelled "schedule an update" would do to a
                     box that is not on main. There is no reading of this card
                     that leaves which branch in doubt.
+
+                    AND THE BADGE NAMES THE REF THE COUNT IS MEASURED AGAINST.
+                    "3 commits behind" appears on this page in two completely
+                    different meanings — from main, and from the branch the box
+                    is parked on — and the bare form belongs to neither. Both
+                    sides of this ternary say which; a number without its ref is
+                    the one thing that must not appear here.
                   */}
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-medium">Refresh this branch</h2>
+                    <h2 className="text-sm font-medium">
+                      {refBehind ? 'Update available' : 'Update this branch'}
+                    </h2>
                     <Badge className="gap-1 border-0 bg-warn/10 text-xs uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
                       <GitBranch className="size-3" />
-                      {deployedRef}
+                      {refBehind
+                        ? `${refBehind} commit${refBehind === 1 ? '' : 's'} behind ${deployedRef}`
+                        : deployedRef}
                     </Badge>
                   </div>
+                  {/*
+                    THREE SENTENCES FOR THREE STATES, because "we have not
+                    looked" and "we looked and there is nothing" are not the
+                    same fact and the operator's next move differs. Only the
+                    first is an update waiting; the third is the honest shape of
+                    a host that has not answered yet, and it says what the
+                    button does rather than what the branch has done.
+                  */}
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Pulls the newest commit on{' '}
-                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
-                      {deployedRef}
-                    </code>{' '}
-                    and restarts. The same drain as any other window — the
-                    server empties first and nobody loses a match.
+                    {refBehind ? (
+                      <>
+                        There {refBehind === 1 ? 'is' : 'are'} {refBehind} new
+                        commit{refBehind === 1 ? '' : 's'} on{' '}
+                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                          {deployedRef}
+                        </code>{' '}
+                        that this server is not running. Deploying takes{' '}
+                        {refBehind === 1 ? 'it' : 'them'} and restarts — the same
+                        drain as any other window, so the server empties first
+                        and nobody loses a match.
+                      </>
+                    ) : refBehind === 0 ? (
+                      <>
+                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                          {deployedRef}
+                        </code>{' '}
+                        has not moved since this server deployed, so there is
+                        nothing new to take. Deploying anyway still drains and
+                        restarts — worth it to re-sync resources, not worth it
+                        for the code.
+                      </>
+                    ) : (
+                      <>
+                        Deploys the newest commit on{' '}
+                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                          {deployedRef}
+                        </code>{' '}
+                        and restarts. The same drain as any other window — the
+                        server empties first and nobody loses a match.
+                      </>
+                    )}
                   </p>
                   {/*
                     THE DISTINCTION FROM THE PICKER, SAID PLAINLY, because the
-                    two controls now sit on the same page and do different
-                    things with the same words. This one follows the branch;
-                    that one freezes a commit.
+                    two controls sit on the same page and do different things
+                    with the same word. Both are called "update"/"deploy" in
+                    ordinary speech; what separates them is WHICH COMMIT gets
+                    chosen and WHEN. This one follows the branch and resolves at
+                    deploy time; that one freezes a commit the operator has
+                    read. Naming them differently ("refresh" here, "deploy"
+                    there) implied two mechanisms where there is one action
+                    against two refs — so the difference is written out instead.
                   */}
                   <p className="mt-1 text-xs text-muted-foreground/70">
                     It stays on{' '}
@@ -914,7 +1025,7 @@ export function MaintenancePanel({
                     <h2 className="text-sm font-medium">Update available</h2>
                     <Badge className="gap-1 border-0 bg-info/10 text-xs uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
                       <ArrowUpCircle className="size-3" />
-                      {behind} commit{behind === 1 ? '' : 's'} behind
+                      {behind} commit{behind === 1 ? '' : 's'} behind main
                     </Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
@@ -931,10 +1042,22 @@ export function MaintenancePanel({
               )}
             </div>
 
+            {/*
+              ONE LABEL FOR BOTH REFS. This read "Schedule refresh" off main and
+              "Schedule update" on it, which taught the page that two different
+              things happen. They are the same thing: `royale-deploy` resolves
+              the ref the box is on — pin file, then `symbolic-ref HEAD` — and
+              deploys its tip, and it does that identically whether that ref is
+              main or `dev`. What varies is WHICH ref, and every surface around
+              this button already names it: the banner, the heading, the badge,
+              the sentence above, and the confirmation on the live window.
+              Varying the verb as well made the ref look like a consequence of
+              the verb rather than the only thing that differs.
+            */}
             {canRun && (
               <Button disabled={busy} onClick={schedule}>
                 {busy ? <Loader2 className="animate-spin" /> : <CalendarClock />}
-                {parked ? 'Schedule refresh' : 'Schedule update'}
+                Schedule update
               </Button>
             )}
           </div>
@@ -1198,6 +1321,17 @@ function BranchPicker({
               Read from the game host, newest commit first. Ahead and behind are
               measured against what is running now.
             </p>
+            {/*
+              THIS ONE IS STILL CALLED REFRESH, AND IT IS THE ONLY ONE.
+              Everywhere else on this page the word used to mean "deploy the tip
+              of the branch the box is on", which is an update and is now called
+              that. This button re-reads the LIST — it asks the game host to
+              `git fetch --prune` and redraws the rows above. It touches nothing
+              on the server, restarts nothing, and ends no matches. That is what
+              refresh means everywhere else in software, and renaming it to
+              match the deploy controls would put the console's most harmless
+              button and its most consequential one under the same verb.
+            */}
             <Button
               variant="ghost"
               size="sm"
@@ -1263,9 +1397,9 @@ function BranchPicker({
                  * remains offered because the two paths differ in the one way
                  * that matters: THIS ONE PINS THE SHA ON THE ROW YOU JUST READ,
                  * and the box refuses if the branch has moved by deploy time.
-                 * "Schedule refresh" follows the branch and takes whatever its
+                 * "Schedule update" follows the branch and takes whatever its
                  * tip is when the deploy fires. Pin when it matters which
-                 * commit; refresh when it matters that it is the newest.
+                 * commit; update when it matters that it is the newest.
                  *
                  * Only a branch that is both running and identical to what is
                  * deployed is disabled, because that deploy would restart every
@@ -1373,7 +1507,7 @@ function MaintenanceExplainer() {
   const steps = [
     {
       title: 'An update appears',
-      body: 'Ringmaster asks the game host every 15 seconds whether it is behind main, and the host re-checks GitHub at most once a minute — so a new commit shows up here within about a minute of being merged. It then badges it, and tells any admin in game so somebody schedules it.',
+      body: 'Ringmaster asks the game host every 15 seconds whether it is behind main, and the host re-checks GitHub at most once a minute — so a new commit shows up here within about a minute of being merged. It then badges it, and tells any admin in game so somebody schedules it. On a server parked on a branch the same question is asked about that branch instead, on a two-minute cadence, because the update anybody is waiting for there is the one on the branch they are pushing to.',
     },
     {
       title: 'You schedule it',
@@ -1448,13 +1582,14 @@ function MaintenanceExplainer() {
         </p>
         <p>
           <span className="font-medium text-foreground">
-            While the server is on a branch, only the AUTOMATIC update pauses.
+            While the server is on a branch, only the AUTOMATIC install pauses.
           </span>{' '}
-          You can still schedule one yourself, and it refreshes the branch the
-          server is on rather than putting main back — the same drain, the same
-          waiting for the server to empty. The 72-hour automation is what stays
-          off, because nothing should deploy main over a branch somebody is
-          testing on while they are not looking.
+          New commits on that branch are still found on their own and shown
+          here. You schedule the deploy yourself, and it takes the newest commit
+          on the branch the server is on rather than putting main back — the
+          same drain, the same waiting for the server to empty. The 72-hour
+          automation is what stays off, because nothing should deploy over a
+          branch somebody is testing on while they are not looking.
         </p>
       </div>
     </Card>

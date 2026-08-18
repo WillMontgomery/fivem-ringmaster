@@ -153,13 +153,26 @@ export async function POST(req: Request): Promise<Response> {
      * guard read "there is nothing to deploy" at an operator who had just
      * pushed a commit to the branch the live server was running, and refused
      * the one action that would have shipped it. The distance from main simply
-     * does not describe whether a parked branch has moved, and there is no
-     * cheap number here that does; the honest answer is to let the human who
-     * pushed the commit decide, which is what a manual deploy has always meant.
+     * does not describe whether a parked branch has moved.
+     *
+     * THERE IS NOW A NUMBER THAT DOES, AND IT DELIBERATELY DOES NOT GATE THIS.
+     * `hostView().refUpdate` carries how far the box is behind the tip of the
+     * branch it is on, read off the `branches` verb on the poller's own slow
+     * cadence (lib/telemetry). It is what the page SAYS, and it must not become
+     * what this route ENFORCES: it is null whenever the host has not answered,
+     * whenever the branch has been deleted from the remote, and for the first
+     * couple of minutes after the console boots — and refusing a deploy on the
+     * strength of a number we may simply not have yet would re-create #146 with
+     * a better excuse. Zero is also a legitimate reason to deploy, to re-sync
+     * resources. The human who pushed the commit decides, which is what a
+     * manual deploy has always meant.
      *
      * The automatic path is NOT relaxed by any of this. It lives in the driver
      * behind `onMain && behind > 0` and stays exactly where it is: the rule is
      * that automatic updates require main, not that deploying requires main.
+     * Nothing derived from `refUpdate` is written to the maintenance row, so
+     * `behind` above is still `updateAvailable` and still means distance from
+     * main and nothing else.
      */
     if (behind <= 0 && !input.targetRef && !parked) {
       throw new ActionError(
@@ -247,17 +260,25 @@ export async function POST(req: Request): Promise<Response> {
           targetRef: input.targetRef ?? null,
           targetSha: input.targetSha ?? null,
           /**
-           * WHICH REF A PLAIN REFRESH WAS AIMED AT, for the windows that carry
-           * no `targetRef` at all.
+           * WHICH REF AN UNPINNED UPDATE WAS AIMED AT, for the windows that
+           * carry no `targetRef` at all.
            *
            * Null on main, where it would only ever repeat itself. Off main it
-           * is the whole answer to "what did that restart ship", because a
-           * refresh of a parked branch is now a thing an admin can schedule and
+           * is the whole answer to "what did that restart ship", because an
+           * update of a parked branch is a thing an admin can schedule and
            * `targetRef` is deliberately null for it — that field means "switch
-           * the box to this", and writing the current ref into it would turn a
-           * refresh into a pinned switch on the driver's side.
+           * the box to this", and writing the current ref into it would turn an
+           * update into a pinned switch on the driver's side.
            *
-           * SEPARATELY, IT IS NOT A SHA AND MUST NOT BE READ AS ONE. A refresh
+           * THE KEY IS STILL SPELLED `refreshingRef` THOUGH THE UI NO LONGER
+           * SAYS "REFRESH", and that is on purpose. It is an audit detail key,
+           * not a label: rows carrying it are already in the log, the driver
+           * writes the identical key on the deploy row (lib/maintenanceDriver),
+           * and renaming it here alone would split one field into two that no
+           * query joins. Audit keys are data whose value is that they do not
+           * move; the word an operator reads is on the page.
+           *
+           * SEPARATELY, IT IS NOT A SHA AND MUST NOT BE READ AS ONE. An update
            * takes the branch's tip whenever the deploy fires, which may be a
            * commit that did not exist when this row was written. It records the
            * ref that was intended, not the code that landed.
