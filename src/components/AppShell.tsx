@@ -13,15 +13,13 @@ import {
   Users,
 } from 'lucide-react'
 
-import { FeedStatus } from '@/components/FeedStatus'
 import { IdleGuard } from '@/components/IdleGuard'
 import { OffMainBanner } from '@/components/OffMainBanner'
 import { PlayerSearchTrigger } from '@/components/PlayerSearch'
 import { PrefsDialog } from '@/components/PrefsDialog'
+import { ServerChips } from '@/components/ServerChips'
 import { ThemeToggle } from '@/components/ThemeToggle'
-import { UpdateBadge } from '@/components/UpdateBadge'
 import { UpdateWatcher } from '@/components/UpdateWatcher'
-import { Badge } from '@/components/ui/badge'
 import {
   Sidebar,
   SidebarContent,
@@ -48,9 +46,11 @@ import {
 import { DEMO_BADGES } from '@/lib/demo'
 import { activityDeadline, hasSessionCookie } from '@/lib/activity'
 import * as maint from '@/lib/maintenance'
+import { ensureDriver } from '@/lib/maintenanceDriver'
 import { readPrefs } from '@/lib/prefs'
 import { currentAdmin } from '@/lib/session'
 import { isParkedOffMain } from '@/lib/ssh'
+import { liveView } from '@/lib/state'
 import { ensurePolling, hostView } from '@/lib/telemetry'
 import { cn } from '@/lib/utils'
 
@@ -84,8 +84,8 @@ import { cn } from '@/lib/utils'
 export interface NavBadges {
   /** Incidents nobody has looked at. The number that should make you click. */
   incidents?: number
-  /** A maintenance window scheduled or draining right now. */
-  maintenance?: 'scheduled' | 'draining' | null
+  /** A maintenance window scheduled, draining, or deploying right now. */
+  maintenance?: 'scheduled' | 'draining' | 'updating' | null
 }
 
 /** What the nav is allowed to know about the world when deciding what to show. */
@@ -133,7 +133,25 @@ function IncidentBadge({ n }: { n: number }) {
   )
 }
 
-function MaintenanceBadge({ state }: { state: 'scheduled' | 'draining' }) {
+/**
+ * The maintenance state, beside the nav item it belongs to.
+ *
+ * THE BARE STATE WORD, and here it always was — this badge sits inside the
+ * "Maintenance" nav row, so prefixing it would have read "Maintenance
+ * maintenance draining". The header chip has now been cut to match (it said
+ * "Maintenance draining"), which is what makes the two agree word for word
+ * rather than merely in meaning.
+ *
+ * `updating` PULSES LIKE `draining` DOES. The dot marks the states where
+ * something is happening to the server right now as opposed to being planned
+ * for later, and a deploy in progress is the strongest case of that there is.
+ */
+function MaintenanceBadge({
+  state,
+}: {
+  state: 'scheduled' | 'draining' | 'updating'
+}) {
+  const active = state === 'draining' || state === 'updating'
   return (
     <span
       className={cn(
@@ -143,8 +161,13 @@ function MaintenanceBadge({ state }: { state: 'scheduled' | 'draining' }) {
           : 'bg-info/15 text-info ring-info/30',
       )}
     >
-      {state === 'draining' && (
-        <span className="size-1.5 animate-pulse rounded-full bg-warn" />
+      {active && (
+        <span
+          className={cn(
+            'size-1.5 animate-pulse rounded-full',
+            state === 'draining' ? 'bg-warn' : 'bg-info',
+          )}
+        />
       )}
       {state}
     </span>
@@ -317,6 +340,28 @@ export async function AppShell({
       .then((w) => ({ maintenance: maint.badgeState(w) }))
       .catch(() => ({})))
 
+  /**
+   * THE FEED READING FOR THE HEADER CHIP, RESOLVED HERE RATHER THAN PASSED IN.
+   *
+   * Exactly the argument the badges above were moved for, and it had produced
+   * exactly the same three wrongs. `feed` was a per-page prop, seven of the
+   * eleven real pages passed it, and on the other four — Audit log, Live config,
+   * Kick & ban, Settings — the Live chip was simply absent. Not stale, not
+   * greyed: gone, on a quarter of the console, for no reason a reader could
+   * infer. "Is the data arriving" is a fact about the server and is true of
+   * every page drawn from it.
+   *
+   * `liveView` IS AN IN-MEMORY READ, so resolving it here costs nothing and the
+   * pages that already pass `feed` are not doing a second lookup worth saving —
+   * they keep the prop only because the preview harness needs it to hand over a
+   * fixture and, crucially, to turn POLLING OFF. That is why `live` defaults to
+   * true here and is only false when a caller says so: a harness must not fetch
+   * real state over the top of its own fixture.
+   */
+  const chipFeed = feed
+    ? { lastPushAt: feed.lastPushAt, now: feed.now, live: feed.live ?? false }
+    : { ...liveView(Date.now()), now: Date.now(), live: true }
+
   const jar = await cookies()
   const prefs = readPrefs(jar)
 
@@ -336,6 +381,20 @@ export async function AppShell({
    * poller for the process rather than one per page.
    */
   ensurePolling()
+  /**
+   * AND THE MAINTENANCE DRIVER, FOR THE SAME REASON THE POLLER IS HERE.
+   *
+   * The header's chips have to know whether a deploy is running on every page,
+   * and they learn it from `maintenanceView()` — which is the driver's own cache
+   * and is empty until the driver has ticked. Started only by /maintenance and
+   * its routes, that cache stayed cold for anybody who never opened that page,
+   * so the "Updating" chip would not have appeared where it matters most: on the
+   * Live players board, which is exactly where somebody is sitting when the
+   * server goes quiet. `ensureDriver` is idempotent and already calls
+   * `ensurePolling` itself; the pairing is left explicit because the two answer
+   * different questions.
+   */
+  ensureDriver()
   const host = hostView().status
 
   /**
@@ -584,56 +643,22 @@ export async function AppShell({
 
             The search keeps its min-w-0: that one SHOULD give way.
           */}
+          {/*
+            ONE COMPONENT, RENDERED UNCONDITIONALLY. The three status chips used
+            to be spelled out here, each with its own visibility test — and the
+            feed one was behind `{feed && …}`, which four real pages never
+            satisfied. They describe the SERVER, so they belong on every page
+            that shows the shell, and the decision about which of them to show
+            during a deploy belongs to the cluster rather than to three
+            components that cannot see each other. See `ServerChips`.
+          */}
           <div className="flex items-center justify-end gap-2">
-            {feed && (
-              <FeedStatus
-                lastPushAt={feed.lastPushAt}
-                bootEpoch={feed.bootEpoch}
-                now={feed.now}
-                live={feed.live}
-              />
-            )}
-            <UpdateBadge />
-            {b.maintenance && (
-              /*
-                THE WIDEST THING IN THE HEADER at ~200px uppercased, and the one
-                that made the old overlap reachable. Below `xl` it keeps the icon
-                and drops the words.
-
-                THE FALLBACK USED TO BE A `title` ATTRIBUTE, AND IT WAS BACKWARDS.
-                The words are hidden precisely at the narrow widths -- and narrow
-                overwhelmingly means touch, where a `title` never fires at all.
-                It was also sitting on an inert `<span>` (`Badge` renders one via
-                `useRender`), so it was unreachable by keyboard and silent to a
-                screen reader at every width. The mechanism was excluded by
-                exactly the condition that triggered it.
-
-                SO THE WORDS NEVER LEAVE THE DOM; they only stop being painted.
-                `sr-only` is `position: absolute` and out of flow, so the Badge's
-                `h-5 overflow-hidden` is unaffected below `xl` -- and because
-                `not-sr-only` restores `white-space: normal`, the nowrap has to be
-                put back explicitly at `xl`.
-
-                Sighted mouse users between 768px and 1280px lose nothing worth a
-                portal: `MaintenanceBadge` in the sidebar shows the state in words
-                down to 768px, and below that the sidebar is a Sheet, where the
-                hover never fired either.
-              */
-              <Badge
-                variant="outline"
-                className={cn(
-                  'gap-1.5 border-0 text-xs font-medium uppercase tracking-wider ring-1 ring-inset',
-                  b.maintenance === 'draining'
-                    ? 'bg-warn/10 text-warn ring-warn/30'
-                    : 'bg-info/10 text-info ring-info/30',
-                )}
-              >
-                <CalendarClock className="size-3" />
-                <span className="sr-only xl:not-sr-only xl:whitespace-nowrap">
-                  Maintenance {b.maintenance}
-                </span>
-              </Badge>
-            )}
+            <ServerChips
+              lastPushAt={chipFeed.lastPushAt}
+              now={chipFeed.now}
+              live={chipFeed.live}
+              initialBadge={b.maintenance ?? null}
+            />
             <ThemeToggle />
           </div>
         </header>

@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { auth } from '@/auth'
 import { isIdle } from '@/lib/activity'
 import { IDLE_ERROR_CODE } from '@/lib/idle'
+import { maintenanceView } from '@/lib/maintenanceDriver'
 import { liveView } from '@/lib/state'
 
 /**
@@ -40,5 +41,35 @@ export async function GET(): Promise<Response> {
   }
 
   const now = Date.now()
-  return Response.json({ view: liveView(now), now })
+
+  /**
+   * THE MAINTENANCE PHASE RIDES THIS POLL RATHER THAN GETTING ITS OWN.
+   *
+   * The header chips need two facts to decide whether the server's silence is
+   * explained: how old the feed is, and whether a deploy is running. The first
+   * is already here on a two-second cadence. Giving the second its own poller
+   * would double the console's request rate to learn a value that changes a
+   * handful of times a week — and worse, the two would then be sampled at
+   * different moments, so the chip could compare a fresh `lastPushAt` against a
+   * stale `completedAt` and flip the wrong way at exactly the transition it
+   * exists to get right. One payload, one instant, one decision.
+   *
+   * IT COSTS NO DATABASE READ. `maintenanceView` hands out what the driver last
+   * read on its own fifteen-second tick — the same in-memory pattern as
+   * `hostView` — so this is a property access, not a GetItem per poll per
+   * console.
+   */
+  const m = maintenanceView(now)
+
+  return Response.json({
+    view: liveView(now),
+    now,
+    maintenance: {
+      state: m.window?.state ?? null,
+      completedAt: m.window?.completedAt ?? null,
+      badge: m.badge,
+      /** 0 = the driver has never read the row. Absence, not "no window". */
+      at: m.at,
+    },
+  })
 }

@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  ArrowRight,
   ArrowUpCircle,
   CalendarClock,
   ChevronDown,
@@ -18,7 +19,6 @@ import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import { LocalTime } from '@/components/LocalTime'
 import { useFormatInstant } from '@/components/PrefsProvider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -33,14 +33,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { postJson } from '@/lib/api'
+import { ago } from '@/lib/duration'
+import { commitUrl, compareUrl, shortSha } from '@/lib/github'
 import {
   AUTO_AFTER_MS,
+  behindMainNow,
   nothingToDeploy,
   refBehindNow,
+  updateTargetNow,
   type MaintenanceWindow,
 } from '@/lib/maintenance'
-import type { HostBranch, RefUpdate } from '@/lib/ssh'
+import type { HostBranch, RefUpdate, UpdateTarget } from '@/lib/ssh'
+import { machineInstant } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 /**
@@ -90,12 +100,103 @@ function localInput(ts: number): string {
   return new Date(ts - offsetAtTs * 60_000).toISOString().slice(0, 16)
 }
 
+/**
+ * One commit, linked to what it actually is.
+ *
+ * A BARE `<a>` STYLED HERE, NOT `Button render={<Link/>}` AND NOT `Link`. This
+ * goes to github.com, so `next/link` has nothing to prefetch and no client
+ * navigation to make; and Base UI's own installed docs
+ * (node_modules/@base-ui/react/docs/react/components/button.md, "Rendering links
+ * as buttons") rule out putting an anchor through `render` — `useButton` merges
+ * button semantics onto it and costs the reader the one thing an anchor tells
+ * them, which here is "this leaves the console".
+ *
+ * THE `sr-only` PREFIX IS THE WHOLE REASON THIS IS A COMPONENT. Two eight-hex
+ * strings side by side are told apart by POSITION, and position is exactly what
+ * a screen reader's link list throws away: "link, 4f2b9c1d — link, 9c1e77a4" is
+ * two identical-looking destinations and no way to tell which one is running.
+ * The label rides in the markup rather than in an `aria-label`, so it cannot
+ * replace the visible sha in the accessible name (WCAG 2.5.3) and so the fact
+ * survives being read aloud as well as being looked at.
+ */
+function CommitLink({ sha, label }: { sha: string; label: string }) {
+  return (
+    <a
+      href={commitUrl(sha)}
+      target="_blank"
+      rel="noreferrer"
+      className="rounded-sm font-mono underline decoration-dotted underline-offset-4 transition-colors hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+    >
+      <span className="sr-only">{label}, commit </span>
+      {shortSha(sha)}
+    </a>
+  )
+}
+
+/**
+ * WHAT THE SERVER IS ON, AND WHAT A DEPLOY WOULD PUT ON IT.
+ *
+ * THIS IS WHAT THE COMMIT COUNT BECAME, and the owner's reason for the trade is
+ * the whole design: "3 commits behind" does not tell anybody whether to deploy.
+ * It is a number that has to be believed, cannot be checked from the console,
+ * and — as #26 and the branch picker both found — is ambiguous about what it was
+ * measured from. Two shas are checkable in one click each, and the third link
+ * shows the diff between them, which is the actual question ("what am I about to
+ * ship") that the count was standing in for.
+ *
+ * IT NAMES THE REF, because this console has two different distances that both
+ * get called "behind" and a pair of commits inherits exactly the same ambiguity
+ * if it does not say which branch it is walking along.
+ *
+ * RENDERS ONLY WHEN BOTH ENDS ARE KNOWN. `updateTargetNow` withholds the pair
+ * for an unpaired reading and for `from === to`; there is no half of this worth
+ * showing, and an arrow with a guess on one end is worse than no arrow.
+ */
+function CommitPair({ target }: { target: UpdateTarget }) {
+  return (
+    <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      <CommitLink sha={target.fromSha} label="Running now" />
+      <ArrowRight className="size-3.5 shrink-0" aria-hidden />
+      <CommitLink sha={target.toSha} label="Deploying to" />
+      <span>
+        on <code className="font-mono text-foreground">{target.ref}</code>
+      </span>
+      <span aria-hidden>·</span>
+      <a
+        href={compareUrl(target.fromSha, target.toSha)}
+        target="_blank"
+        rel="noreferrer"
+        className="rounded-sm underline decoration-dotted underline-offset-4 transition-colors hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+      >
+        what changed
+      </a>
+      {/*
+        SAID OUT LOUD, LIKE THE BRANCH LIST SAYS IT. A stale reading means the
+        game box could not finish its fetch inside the SSH budget and answered
+        from the refs it already had, so the right-hand commit is the newest one
+        IT KNEW ABOUT and the branch may have moved past it since. That does not
+        make the pair useless — it is still two real commits and the diff between
+        them is still real — but a reader deciding whether to restart a live
+        server is entitled to know the target may be behind the truth.
+      */}
+      {target.stale && (
+        <span className="text-warn">
+          — the host answered from refs it already had, so the target may have
+          moved on
+        </span>
+      )}
+    </div>
+  )
+}
+
 export function MaintenancePanel({
   initial,
   initialPlayers,
   canRun,
   initialDeployedRef,
   initialRefUpdate,
+  initialBehindMain,
+  initialUpdateTarget,
   frozen = false,
 }: {
   initial: MaintenanceWindow | null
@@ -124,6 +225,28 @@ export function MaintenancePanel({
    */
   initialRefUpdate: RefUpdate | null
   /**
+   * How far behind main the box is, or null.
+   *
+   * NULL IS "NOT KNOWN", AND IS NOT ZERO — the same sentence as the prop above,
+   * which is the point: the two readings finally answer the same way. This
+   * arrived as `updateAvailable ?? 0` off the maintenance row until #26, and the
+   * coalesce made "the telemetry poller has not answered yet" indistinguishable
+   * from "level with main". Off main it is null as well, for a different reason:
+   * distance from main is not the question a parked box is being asked, and
+   * every surface that has ever printed it beside a branch name was a bug.
+   */
+  initialBehindMain: number | null
+  /**
+   * The two commits an update would move between, or null.
+   *
+   * THE COMMIT COUNT IS GONE AND THIS IS WHAT REPLACED IT. "3 commits behind"
+   * does not tell an operator whether to deploy; `4f2b9c1d → 9c1e77a4`, both
+   * linked to GitHub, lets them read what actually changed. Null until the
+   * two-minute `branches` reading lands, and null renders no arrow at all —
+   * there is no half of this pair worth showing on its own.
+   */
+  initialUpdateTarget: UpdateTarget | null
+  /**
    * Hold the props as given and never poll. FOR THE DESIGN HARNESS ONLY.
    *
    * This panel is the one preview target that refuses to sit still: it re-reads
@@ -146,6 +269,8 @@ export function MaintenancePanel({
   const [now, setNow] = useState(() => Date.now())
   const [deployedRef, setDeployedRef] = useState(initialDeployedRef)
   const [refUpdate, setRefUpdate] = useState(initialRefUpdate)
+  const [behindMain, setBehindMain] = useState(initialBehindMain)
+  const [updateTarget, setUpdateTarget] = useState(initialUpdateTarget)
 
   const [drainIn, setDrainIn] = useState('0')
   const [advanced, setAdvanced] = useState(false)
@@ -160,6 +285,16 @@ export function MaintenancePanel({
   // ------------------------------------------------------------- branches ---
   const [branchesOpen, setBranchesOpen] = useState(false)
   const [branches, setBranches] = useState<HostBranch[] | null>(null)
+  /**
+   * The commit the list's `ahead`/`behind` were counted from.
+   *
+   * KEPT RATHER THAN DISCARDED because the picker now states what its numbers
+   * are measured against, and "the commit running now" is a claim a reader
+   * should be able to check. It comes back in the same `branches` answer as the
+   * counts, so it is the sha those counts were actually taken from — not
+   * `status.sha`, which is a different round trip and could have moved.
+   */
+  const [branchesFromSha, setBranchesFromSha] = useState<string | null>(null)
   const [branchesStale, setBranchesStale] = useState(false)
   const [branchError, setBranchError] = useState<string | null>(null)
   const [loadingBranches, setLoadingBranches] = useState(false)
@@ -185,6 +320,31 @@ export function MaintenancePanel({
    * eventually describe a state its own button disagrees with.
    */
   const refBehind = refBehindNow(deployedRef, refUpdate)
+
+  /**
+   * The two commits a deploy would move between, on whichever ref the box is
+   * on, or null for "we cannot say".
+   *
+   * PAIRED IN lib/maintenance, NOT HERE, for exactly the reason `refBehind` is:
+   * a reading taken for another branch is not a reading, and an arrow whose two
+   * ends are the same commit is not an update. Both rules are stated once, in
+   * `updateTargetNow`, so the sentence in this card and the arrow under it
+   * cannot come to different conclusions about the same poll.
+   */
+  const target = updateTargetNow(deployedRef, updateTarget)
+
+  /**
+   * Is there a KNOWN update against main? Not "is main's card showing".
+   *
+   * THE PAIR TO `refBehind`, AND IT IS READ THE SAME WAY: truthy is a positive
+   * reading, and both zero and null are falsy — which is safe HERE and nowhere
+   * that decides an action, because the only thing this switches is which of two
+   * sentences to write. Zero never reaches these sentences at all (the card does
+   * not render), so falsy means "not yet known" by the time it is used. Anything
+   * gating a control must go through `nothingToDeploy` instead, where null and
+   * zero are told apart with `!== 0`.
+   */
+  const mainBehind = behindMain !== null && behindMain > 0
 
   /**
    * Every time this panel DISPLAYS is in the reader's stated zone and says so.
@@ -226,6 +386,15 @@ export function MaintenancePanel({
    *
    * The previous state is held in a ref so a re-render cannot re-fire a toast
    * that has already been shown.
+   *
+   * THE COMPLETION TOAST IS NOT HERE ANY MORE, and its absence is deliberate.
+   * It fired on `deploying -> complete`, which is the deploy VERB returning
+   * rather than FXServer answering — so it landed while the feed was still dead
+   * and the header still said the server was gone. It also only existed on this
+   * page, so an admin anywhere else was never told. It now lives in
+   * `lib/livePoll`, fires off the same reading that flips the header's Updating
+   * chip back to Live, and is module-scoped so a re-mounting header cannot say
+   * it twice. See `announceIfBackFromUpdate`.
    */
   useEffect(() => {
     // The harness renders a fixed state and nothing else may move it. Note the
@@ -258,8 +427,6 @@ export function MaintenancePanel({
             })
           } else if (nextState === 'deploying') {
             toast.info('The update is being deployed now.')
-          } else if (prev === 'deploying' && nextState === 'complete') {
-            toast.success('Server update completed. The server is back open.')
           } else if (nextState === 'cancelled') {
             toast.info(
               `${next?.cancelledByName ?? 'Someone'} cancelled the maintenance window.`,
@@ -315,8 +482,9 @@ export function MaintenancePanel({
         const hres = await fetch('/api/host', { cache: 'no-store' })
         if (hres.ok) {
           const hv = (await hres.json()) as {
-            status?: { deployedRef?: string } | null
+            status?: { deployedRef?: string; behindMain?: number } | null
             refUpdate?: RefUpdate | null
+            updateTarget?: UpdateTarget | null
           }
           setDeployedRef(
             typeof hv.status?.deployedRef === 'string'
@@ -324,6 +492,18 @@ export function MaintenancePanel({
               : null,
           )
           setRefUpdate(hv.refUpdate ?? null)
+          /**
+           * THROUGH `behindMainNow`, NOT `?? 0`, AND NOT A BARE FIELD READ.
+           * This poll is one of the four sites that used the coalesce, and it
+           * is the one that decides whether the scheduling card is on the page
+           * — so a `/api/host` answer that arrives with no `status` at all (an
+           * unconfigured channel, a poller that has not landed) has to leave
+           * this null and keep the card, rather than zero it and take the card
+           * away. One derivation, shared with the route that would accept the
+           * request.
+           */
+          setBehindMain(behindMainNow(hv.status))
+          setUpdateTarget(hv.updateTarget ?? null)
         }
       } catch {
         /* leave the last known ref; a dropped poll is not a branch change */
@@ -356,6 +536,7 @@ export function MaintenancePanel({
         error?: string
         stale?: boolean
         deployedRef?: string
+        deployedSha?: string
         branches?: HostBranch[]
       }
       try {
@@ -371,9 +552,13 @@ export function MaintenancePanel({
       }
       setBranches(d.branches ?? [])
       setBranchesStale(Boolean(d.stale))
+      setBranchesFromSha(
+        typeof d.deployedSha === 'string' && d.deployedSha ? d.deployedSha : null,
+      )
       if (typeof d.deployedRef === 'string') setDeployedRef(d.deployedRef)
     } catch (e) {
       setBranches(null)
+      setBranchesFromSha(null)
       setBranchError(e instanceof Error ? e.message : 'Could not read the branches.')
     } finally {
       setLoadingBranches(false)
@@ -852,20 +1037,23 @@ export function MaintenancePanel({
 
   // ------------------------------------------------------------ schedule ----
 
-  const behind = w?.updateAvailable ?? 0
-
   /**
    * The automatic deadline, and null whenever the automation cannot fire.
    *
-   * `behind` is pinned at zero by the driver while the box is parked, and the
-   * driver's own gate is `onMain && behind > 0` — so off main there is no
+   * `behindMain` is null while the box is parked and the driver's own gate is
+   * `onMain && behind !== null && behind > 0` — so off main there is no
    * automatic window coming, whatever timestamp happens to be left on the row.
    * Deriving the deadline from `updateFirstSeenAt` alone would put "this runs
    * automatically on Tuesday" and a hard cap on the deploy-time picker in front
    * of an operator on a parked box, for a window that will never run.
+   *
+   * AND NULL WHEN THE DISTANCE IS UNKNOWN, which the `> 0` gets for free and is
+   * worth stating anyway: a console that has not heard from the host must not
+   * promise an automatic deploy on Tuesday either. It says nothing until it
+   * knows, which is the whole rule this card was rewritten around.
    */
   const deadline =
-    !parked && behind > 0 && w?.updateFirstSeenAt
+    behindMain !== null && behindMain > 0 && w?.updateFirstSeenAt
       ? w.updateFirstSeenAt + AUTO_AFTER_MS
       : null
 
@@ -898,6 +1086,15 @@ export function MaintenancePanel({
    * in both, and `nothingToDeploy` compares `!== 0` rather than testing falsy
    * precisely so `null` cannot fall into the `0` branch.
    *
+   * AND THE MAIN SIDE IS NOW IN THAT SENTENCE TOO, which it was not when this
+   * card first learned to disappear. `behindMain` was `updateAvailable ?? 0`,
+   * so a console whose telemetry poller had not yet answered — every console,
+   * for the first seconds after a restart — computed a KNOWN zero and took its
+   * own scheduling box off the page. That is #146 with the control removed
+   * rather than greyed, arrived at from the other ref. `behindMainNow` returns
+   * null there and `!== 0` lets it through: `/preview/maintenance?state=unpolled`
+   * is that case, and the card and its button are live in it.
+   *
    * NOTHING HERE TOUCHES THE REF-CHANGE PATH, and that is what stops a level box
    * stranding anybody. Switching branch is a different action against a
    * different control: `BranchPicker` is its own Card below, rendered outside
@@ -908,7 +1105,7 @@ export function MaintenancePanel({
    * exempts it.
    */
   const noDeploy = nothingToDeploy({
-    behindMain: behind,
+    behindMain,
     deployedRef,
     refUpdate,
     changingRef: false,
@@ -977,12 +1174,15 @@ export function MaintenancePanel({
                     box that is not on main. There is no reading of this card
                     that leaves which branch in doubt.
 
-                    AND THE BADGE NAMES THE REF THE COUNT IS MEASURED AGAINST.
-                    "3 commits behind" appears on this page in two completely
-                    different meanings — from main, and from the branch the box
-                    is parked on — and the bare form belongs to neither. Both
-                    sides of this ternary say which; a number without its ref is
-                    the one thing that must not appear here.
+                    AND THE BADGE NAMES THE REF, WHICH IS ALL IT EVER HAD TO DO.
+                    It used to read "3 commits behind dev", and the count was
+                    there to disambiguate a distance that appears on this page in
+                    two completely different meanings — from main, and from the
+                    branch the box is parked on. The owner's answer to that is
+                    better than the count was: drop the number and show the two
+                    commits (below), which say which branch they walk along and
+                    can be opened and read. What is left in the badge is the ref,
+                    which is the half that was doing the disambiguating.
                   */}
                   <div className="flex items-center gap-2">
                     <h2 className="text-sm font-medium">
@@ -990,9 +1190,7 @@ export function MaintenancePanel({
                     </h2>
                     <Badge className="gap-1 border-0 bg-warn/10 text-xs uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
                       <GitBranch className="size-3" />
-                      {refBehind
-                        ? `${refBehind} commit${refBehind === 1 ? '' : 's'} behind ${deployedRef}`
-                        : deployedRef}
+                      {deployedRef}
                     </Badge>
                   </div>
                   {/*
@@ -1010,15 +1208,13 @@ export function MaintenancePanel({
                   <p className="mt-1 text-sm text-muted-foreground">
                     {refBehind ? (
                       <>
-                        There {refBehind === 1 ? 'is' : 'are'} {refBehind} new
-                        commit{refBehind === 1 ? '' : 's'} on{' '}
+                        There is code on{' '}
                         <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
                           {deployedRef}
                         </code>{' '}
-                        that this server is not running. Deploying takes{' '}
-                        {refBehind === 1 ? 'it' : 'them'} and restarts — the same
-                        drain as any other window, so the server empties first
-                        and nobody loses a match.
+                        that this server is not running. Deploying takes it and
+                        restarts — the same drain as any other window, so the
+                        server empties first and nobody loses a match.
                       </>
                     ) : (
                       <>
@@ -1056,16 +1252,58 @@ export function MaintenancePanel({
                 </>
               ) : (
                 <>
+                  {/*
+                    "UPDATE AVAILABLE", AND NOT HOW MANY. The owner: "we don't
+                    need it to show how many commits anything is behind — just
+                    'update available'". The badge carries `main` for the same
+                    reason the parked one carries the branch name: the ref is the
+                    fact a reader needs, and it is the half the count was
+                    smuggling in. What replaced the number is the pair of commits
+                    below, which is checkable where a number never was.
+
+                    AND IT ONLY SAYS "AVAILABLE" WHEN IT HAS BEEN TOLD SO. The
+                    owner's other sentence in #26 is "stop assuming an update is
+                    available before it's polled the first time", and this
+                    heading was the assumption: hard-coded, on a card that must
+                    still RENDER when the distance is unknown, so a console that
+                    had never heard from the game host announced an update it had
+                    no reading of. Those two requirements are not in conflict —
+                    offer the action, do not assert the state — and the parked
+                    side of this ternary has answered them that way since #146.
+                    This is the same pair of sentences: the second says what the
+                    BUTTON DOES rather than what main has done, because nothing
+                    is known about main.
+
+                    THE THIRD READING IS DELIBERATELY NOT HERE, exactly as it is
+                    not on the parked side. Known-level does not render this card
+                    at all, so a branch for it would be copy describing a state
+                    the component cannot reach.
+                  */}
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-medium">Update available</h2>
+                    <h2 className="text-sm font-medium">
+                      {mainBehind ? 'Update available' : 'Update this server'}
+                    </h2>
                     <Badge className="gap-1 border-0 bg-info/10 text-xs uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
                       <ArrowUpCircle className="size-3" />
-                      {behind} commit{behind === 1 ? '' : 's'} behind main
+                      main
                     </Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Schedule it and the server drains, then deploys once
-                    everyone has left. Nobody loses a match.
+                    {mainBehind ? (
+                      <>
+                        Schedule it and the server drains, then deploys once
+                        everyone has left. Nobody loses a match.
+                      </>
+                    ) : (
+                      <>
+                        Deploys the newest commit on{' '}
+                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                          main
+                        </code>{' '}
+                        and restarts. The same drain as any other window — the
+                        server empties first and nobody loses a match.
+                      </>
+                    )}
                   </p>
                   {deadline && (
                     <p className="mt-1 text-xs text-muted-foreground/70">
@@ -1075,6 +1313,24 @@ export function MaintenancePanel({
                   )}
                 </>
               )}
+
+              {/*
+                ONE COPY, OUTSIDE THE TERNARY, FOR BOTH REFS. The pair is the
+                same fact on main and on a branch — what is running, and what a
+                deploy would put there — and `updateTargetNow` has already
+                decided which ref it belongs to and whether it is safe to pair
+                with the name above it. Writing it into both arms would be two
+                copies of one sentence that must never disagree.
+
+                AND IT IS ALLOWED TO BE ABSENT. It rides the two-minute
+                `branches` cadence while the card itself is gated on the
+                fifteen-second `status` one, so for the first couple of minutes
+                after a console boots there is an update and no arrow yet. That
+                is the honest rendering: the card knows there is something to
+                deploy, and does not yet know which commit. It must not guess an
+                end of the arrow to fill the space.
+              */}
+              {target && <CommitPair target={target} />}
             </div>
 
             {/*
@@ -1252,6 +1508,8 @@ export function MaintenancePanel({
           error={branchError}
           loading={loadingBranches}
           deployedRef={deployedRef}
+          deployedSha={branchesFromSha}
+          now={now}
           picked={picked}
           onPick={setPicked}
           onRefresh={loadBranches}
@@ -1312,6 +1570,56 @@ export function MaintenancePanel({
 }
 
 /**
+ * When a branch tip was committed: "3h 12m ago", with the instant still there.
+ *
+ * RELATIVE ON THE FACE OF IT, ON THE OWNER'S INSTRUCTION — "the commit time
+ * should say how long ago, not the timestamp". Scanning ten branches, the
+ * question is which of them moved this afternoon, and an absolute datetime makes
+ * every reader do the subtraction themselves. `humanDuration` is the console's
+ * existing answer to that and is reused rather than reinvented, so these rows
+ * age in the same words as every other duration in the app.
+ *
+ * AND THE INSTANT IS NOT LOST, WHICH IS THE HALF THAT NEEDED CARE. Three copies,
+ * for three readers, per `docs/hover-text.md`:
+ *
+ *   - `<time dateTime>` for machines. That is what the attribute is for, and it
+ *     is where a machine value belongs instead of a tooltip (rule 6).
+ *   - `sr-only` text for a screen reader, IN THE MARKUP, because Base UI's
+ *     tooltip popup carries no `role="tooltip"` and no `aria-describedby` and is
+ *     therefore never announced. The DOM floor (rule 1) is not satisfied by the
+ *     popup existing.
+ *   - the `Tooltip` for a sighted mouse user, which is the only reader the popup
+ *     actually serves.
+ *
+ * NOT A NATIVE `title`. Banned outright on DOM elements — it cannot be selected,
+ * focused or announced, never fires on touch, and four were shipped past that
+ * rule recently.
+ *
+ * `render={<time … />}` AND NOT THE DEFAULT TRIGGER. `TooltipTrigger` renders a
+ * `<button>` unless told otherwise, and this sits inside the row's own
+ * `<button>` — a nested button, the exact defect `docs/hover-text.md` records
+ * from the last time somebody put a trigger inside a row. `<time>` is inline,
+ * carries the machine-readable attribute, and nests legally.
+ */
+function BranchTipTime({ at, now }: { at: number; now: number }) {
+  const { format } = useFormatInstant()
+  if (!at) return <span>—</span>
+
+  const instant = format(at)
+  return (
+    <>
+      <Tooltip>
+        <TooltipTrigger render={<time dateTime={machineInstant(at)} />}>
+          {ago(at, now)}
+        </TooltipTrigger>
+        <TooltipContent side="bottom">{instant}</TooltipContent>
+      </Tooltip>
+      <span className="sr-only"> — committed {instant}</span>
+    </>
+  )
+}
+
+/**
  * Pick a branch to put on the game host.
  *
  * A LIST, NOT A DROPDOWN, and that is decided by one requirement: branches that
@@ -1333,6 +1641,8 @@ function BranchPicker({
   error,
   loading,
   deployedRef,
+  deployedSha,
+  now,
   picked,
   onPick,
   onRefresh,
@@ -1346,6 +1656,14 @@ function BranchPicker({
   error: string | null
   loading: boolean
   deployedRef: string | null
+  /**
+   * The commit every row's `+`/`−` is counted from, as the host reported it
+   * alongside the list. Null on an older answer; the sentence degrades to naming
+   * the fact without linking it rather than dropping the fact.
+   */
+  deployedSha: string | null
+  /** The panel's ticking clock, so the rows age without their own timer. */
+  now: number
   picked: HostBranch | null
   onPick: (b: HostBranch) => void
   onRefresh: () => void
@@ -1379,9 +1697,40 @@ function BranchPicker({
       {open && (
         <div className="mt-4 space-y-3 border-t border-border pt-4">
           <div className="flex items-center justify-between gap-3">
+            {/*
+              THE ANSWER TO "MEASURED AGAINST WHAT", IN FULL, ONCE. Every row
+              also says `vs. running` on its own numbers — a number whose meaning
+              lives only in a sentence elsewhere on the page is the ambiguity #26
+              removed from the update banner — but the row has no space for the
+              whole answer, so it lives here and the row points at it.
+
+              IT IS THE DEPLOYED COMMIT, NOT MAIN, and the distinction is not
+              academic: on a box parked on `dev`, "67 behind" against main and
+              "67 behind" against the running commit are wildly different numbers
+              and only one of them describes what this list is offering. The game
+              host computes both against its deployed sha (`do_branches`), so the
+              sentence names that commit and links it — which makes the claim
+              checkable rather than merely stated.
+            */}
             <p className="text-xs text-muted-foreground">
-              Read from the game host, newest commit first. Ahead and behind are
-              measured against what is running now.
+              Read from the game host, newest commit first. The{' '}
+              <span className="text-live">+</span> and{' '}
+              <span className="text-danger">−</span> on each row are counted
+              against the commit running now
+              {deployedSha ? (
+                <>
+                  ,{' '}
+                  <a
+                    href={commitUrl(deployedSha)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-sm font-mono underline decoration-dotted underline-offset-4 transition-colors hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                  >
+                    {shortSha(deployedSha)}
+                  </a>
+                </>
+              ) : null}
+              , not against main.
             </p>
             {/*
               THIS ONE IS STILL CALLED REFRESH, AND IT IS THE ONLY ONE.
@@ -1470,14 +1819,39 @@ function BranchPicker({
                 const noChange = isCurrent && b.ahead === 0 && b.behind === 0
                 const isPicked = picked?.name === b.name
                 return (
-                  <li key={b.name}>
+                  /*
+                    THE SHA LINK IS A SIBLING OF THE ROW BUTTON, NOT A CHILD, AND
+                    THE DOM WILL NOT ALLOW ANYTHING ELSE. The owner asked for the
+                    commits to be hyperlinks and the row has always been one big
+                    `<button>`; an `<a>` inside a `<button>` is interactive
+                    content nested in interactive content, which the HTML parser
+                    reorders and which leaves the anchor unreachable by keyboard
+                    in some engines. `docs/hover-text.md` records the same trap in
+                    the opposite direction — a default `TooltipTrigger` renders a
+                    `<button>`, which nested one inside a row `<Link>`.
+
+                    SO THE BUTTON KEEPS THE ROW AND GIVES UP ITS TOP-RIGHT
+                    CORNER: `pr-24` reserves the space, and the anchor is
+                    positioned into it from the `<li>`. No `pointer-events-none`
+                    overlay — the alternative "stretched button" pattern would
+                    have to disable pointer events on all the row's content to
+                    let clicks through, and that also disables SELECTING it,
+                    which on a row whose whole purpose is a commit subject and a
+                    sha is a real loss.
+
+                    THE LINK STAYS LIVE ON A DISABLED ROW. A branch that cannot
+                    be deployed — `blockedBy`, or already running at this exact
+                    commit — is still one whose commit somebody wants to read;
+                    the button is what is refused, not the information.
+                  */
+                  <li key={b.name} className="relative">
                     <button
                       type="button"
                       disabled={!b.eligible || noChange}
                       aria-pressed={isPicked}
                       onClick={() => onPick(b)}
                       className={cn(
-                        'w-full rounded-lg border px-3 py-2 text-left transition-colors',
+                        'w-full rounded-lg border px-3 py-2 pr-24 text-left transition-colors',
                         isPicked
                           ? 'border-primary/50 bg-primary/10'
                           : 'border-border bg-card/40',
@@ -1488,23 +1862,62 @@ function BranchPicker({
                     >
                       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                         <span className="font-mono text-sm">{b.name}</span>
-                        <span className="font-mono text-xs text-muted-foreground/70">
-                          {b.sha.slice(0, 8)}
-                        </span>
                         {isCurrent && (
                           <Badge className="border-0 bg-live/10 text-xs uppercase tracking-wider text-live ring-1 ring-inset ring-live/30">
                             running now
                           </Badge>
                         )}
-                        <span className="text-xs tabular-nums text-muted-foreground">
-                          +{b.ahead} / −{b.behind}
+                        {/*
+                          GREEN AND RED FROM THE TOKENS, NEVER FROM A LITERAL.
+                          `text-live` and `text-danger` are the console's own
+                          operational colours — defined once in globals.css and
+                          redefined once for the dark theme — so these two
+                          numbers follow every future adjustment to what "good"
+                          and "bad" look like here, in both themes, without this
+                          file being touched. A hard-coded `text-green-500` would
+                          be the one pair of numbers in the console that did not.
+
+                          AND THE COLOUR IS NEVER THE ONLY CHANNEL. `+` and `−`
+                          carry the same distinction in glyphs, which is what
+                          makes this readable to a reader who cannot separate the
+                          two hues at all — colour is the fast path here, not the
+                          information.
+
+                          WHAT THEY ARE MEASURED AGAINST, ON THE ROW. The game
+                          host computes both against the DEPLOYED SHA, not
+                          against main (`do_branches` in the game repo, and see
+                          `HostBranch.ahead` in lib/ssh) — so `+4` is "four
+                          commits this branch has that the running server does
+                          not". That was stated once, above the list, and a
+                          number whose meaning lives in a sentence somewhere else
+                          on the page is exactly the ambiguity #26 just deleted
+                          from the update banner. It says it here too.
+                        */}
+                        <span className="text-xs tabular-nums text-muted-foreground/70">
+                          <span className="text-live">+{b.ahead}</span>{' '}
+                          <span className="text-danger">−{b.behind}</span>{' '}
+                          vs. running
                         </span>
                       </div>
-                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {/*
+                        THE SUBJECT IN BOLD, because it is the thing being read.
+                        The owner: "the commit name should be in bold". Everything
+                        else on this row — the branch, the counts, the age — is
+                        context for deciding whether THIS is the commit you meant.
+                        It was `text-muted-foreground`, one weight below the
+                        branch name, which put the only human-written string on
+                        the row at the bottom of its visual hierarchy.
+
+                        THE AUTHOR IS GONE, on the same instruction ("the author
+                        doesn't matter — we can remove that"). In a two-person
+                        project it is noise, and it was sharing a line with the
+                        timestamp, which is not.
+                      */}
+                      <p className="mt-1 truncate text-xs font-semibold text-foreground">
                         {b.subject}
                       </p>
                       <p className="mt-0.5 text-xs text-muted-foreground/60">
-                        {b.tipAuthor} · {b.tipAt ? <LocalTime ms={b.tipAt} /> : '—'}
+                        <BranchTipTime at={b.tipAt} now={now} />
                       </p>
                       {/*
                         THE REASON, VERBATIM, ON THE DISABLED ROW. This is the
@@ -1524,13 +1937,34 @@ function BranchPicker({
                           nothing to deploy.
                         </p>
                       )}
-                      {isCurrent && !noChange && b.eligible && (
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Running, but it has moved since. Pick it to deploy the
-                          new tip.
-                        </p>
-                      )}
+                      {/*
+                        "RUNNING, BUT IT HAS MOVED SINCE" IS GONE, and the owner
+                        is right that it was useless: the row already carries
+                        both halves of it. The `running now` badge says it is
+                        running; `+4 −67 vs. running` says it has moved, and says
+                        by how much, which the sentence did not. A line of prose
+                        restating two facts sitting an inch above it is the kind
+                        of copy that trains a reader to skip the row.
+                      */}
                     </button>
+                    {/*
+                      Positioned into the `pr-24` the button reserved. `top-2.5`
+                      lines its baseline up with the branch name on the first
+                      line; it is the last child so it stacks above the button
+                      without a z-index, and clicks on it open the commit rather
+                      than picking the row.
+                    */}
+                    <a
+                      href={commitUrl(b.sha)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="absolute top-2.5 right-3 rounded-sm font-mono text-xs text-muted-foreground/70 underline decoration-dotted underline-offset-4 transition-colors hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                    >
+                      <span className="sr-only">
+                        Tip of {b.name}, commit{' '}
+                      </span>
+                      {shortSha(b.sha)}
+                    </a>
                   </li>
                 )
               })}

@@ -14,6 +14,8 @@ import { useEffect, useState } from 'react'
 import { Sparkline } from '@/components/Sparkline'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { commitUrl } from '@/lib/github'
+import { behindMainNow, refBehindNow } from '@/lib/maintenance'
 import { cn } from '@/lib/utils'
 import type { hostView } from '@/lib/telemetry'
 
@@ -26,10 +28,6 @@ type View = ReturnType<typeof hostView>
  * on its own timer; this just reads the latest window, so the page stays
  * responsive even when the box across the country is slow to answer.
  */
-
-/** The game repo, for linking a running commit to what it actually is. */
-const REPO = 'https://github.com/WillMontgomery/fivem-br-gamemode'
-const commitUrl = (c: string) => `${REPO}/commit/${c}`
 
 function human(bytesPerSec: number): string {
   if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`
@@ -108,6 +106,18 @@ export function HostBoard({ initial }: { initial: View }) {
   const samples = view.samples
   const last = samples[samples.length - 1]
 
+  /**
+   * IS THERE AN UPDATE, AGAINST WHICHEVER REF THE BOX IS ON, AND IS THAT KNOWN?
+   *
+   * ONE OF THE TWO ANSWERS, NEVER BOTH, because exactly one of them applies:
+   * `behindMainNow` returns null off main and `refBehindNow` returns null on it.
+   * `??` picks whichever one is answering — which is not a fallback, it is the
+   * one reading that exists. Null out of both means nobody has measured yet, and
+   * that is a state this card must render as silence rather than as a verdict.
+   */
+  const update = behindMainNow(s) ?? refBehindNow(s?.deployedRef, view.refUpdate)
+  const updateRef = s?.deployedRef && s.deployedRef !== 'main' ? s.deployedRef : 'main'
+
   // How much wall-clock the window spans, for the graph axes.
   const spanSec =
     samples.length > 1 ? (last!.at - samples[0]!.at) / 1000 : 0
@@ -133,12 +143,34 @@ export function HostBoard({ initial }: { initial: View }) {
           </span>
         </StatCard>
 
+        {/*
+          THREE STATES, NOT TWO, AND THE THIRD IS THE ONE THIS CARD WAS GETTING
+          WRONG. It read `s.behindMain > 0 ? behind : "up to date"`, which makes
+          "up to date" the answer to every question that is not a positive
+          number — including a host parked on a branch, where `behindMain` is a
+          large permanent distance nobody is acting on, and including a
+          dispatcher too old to report the field at all. A green tick claiming
+          the server is current is a claim; the absence of one is not.
+
+          SO THE READING COMES FROM THE SHARED DERIVATIONS. `behindMainNow` on
+          main, `refBehindNow` off it — the same two functions the header chip,
+          the toast and the maintenance card use — and each returns null for "we
+          have not been told". Null renders the commit as a plain fact with no
+          verdict beside it, which is the honest third state.
+
+          AND NO COUNT, per #26. The badge said "3 behind" with nothing naming
+          what it was behind, on a card that is visible while the server is
+          parked on a branch — the exact ambiguity that got the number deleted
+          from the update banner. What is left says there is an update and names
+          the ref it is against; the two commits themselves are on the page this
+          links to.
+        */}
         <StatCard icon={GitCommitHorizontal} label="Commit">
           {!s ? (
             <span className="text-muted-foreground">—</span>
-          ) : s.behindMain > 0 ? (
-            // Behind main: the commit is a call to action, so it links to
-            // where the deploy happens rather than to what the commit is.
+          ) : update !== null && update > 0 ? (
+            // There is an update: the commit is a call to action, so it links
+            // to where the deploy happens rather than to what the commit is.
             <Link
               href="/maintenance"
               className="group inline-flex items-center gap-2 transition-colors hover:text-info"
@@ -146,13 +178,14 @@ export function HostBoard({ initial }: { initial: View }) {
               <code className="font-mono text-base">{s.commit}</code>
               <Badge className="gap-1 border-0 bg-info/10 text-xs font-semibold uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
                 <ArrowUpCircle className="size-3" />
-                {s.behindMain} behind
+                update on {updateRef}
               </Badge>
             </Link>
           ) : (
-            // Current: the commit is just a fact, linked to what it is.
+            // Current, or not yet known. Either way the commit is a fact and
+            // links to what it is; only a KNOWN zero earns the green tick.
             <a
-              href={commitUrl(s.commit)}
+              href={commitUrl(s.sha ?? s.commit)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-2 transition-colors hover:text-primary"
@@ -160,10 +193,12 @@ export function HostBoard({ initial }: { initial: View }) {
               <code className="font-mono text-base underline decoration-dotted underline-offset-4">
                 {s.commit}
               </code>
-              <span className="inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-live">
-                <Check className="size-3" />
-                up to date
-              </span>
+              {update === 0 && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-live">
+                  <Check className="size-3" />
+                  up to date
+                </span>
+              )}
             </a>
           )}
         </StatCard>

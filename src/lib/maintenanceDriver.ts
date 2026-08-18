@@ -30,6 +30,70 @@ const TICK_MS = 15_000
 const globalForDriver = globalThis as unknown as {
   ringMaintTimer?: ReturnType<typeof setInterval>
   ringMaintBusy?: boolean
+  /** The last window this driver read. See {@link maintenanceView}. */
+  ringMaintWindow?: maint.MaintenanceWindow | null
+  /** When it read it, so a caller can tell a cold cache from an empty row. */
+  ringMaintAt?: number
+}
+
+/**
+ * The window, from memory, for anything that needs it on a fast cadence.
+ *
+ * THE SAME SHAPE AND THE SAME REASON AS `hostView()`. The header's chips have to
+ * know whether a deploy is running, on every page, without each of them opening
+ * its own poller against DynamoDB — and this driver is ALREADY reading that row
+ * every fifteen seconds to decide whether to advance the state machine. Handing
+ * out what it just read costs a property access; a second reader would cost a
+ * GetItem per console per tick to learn a value that is already in memory.
+ *
+ * FIFTEEN SECONDS IS THE RESOLUTION, AND IT IS THE RIGHT ONE FOR WHAT IT
+ * ANSWERS. Learning that a deploy has STARTED is minute-scale — the deploy takes
+ * tens of seconds and nobody is watching the millisecond it begins. The
+ * transition that has to feel immediate is the other one, the server coming back,
+ * and that is not decided here: it is `lastPushAt` off the two-second live poll,
+ * compared against `completedAt` from this cache. Slow fact, fast fact, and the
+ * user-visible flip rides the fast one.
+ *
+ * NULL FOR A COLD CACHE AND NULL FOR AN EMPTY ROW, deliberately not
+ * distinguished by the window itself — `at` is what tells them apart, and every
+ * consumer treats both as "no window", which is the safe direction: a chip that
+ * has not learned about a deploy shows the ordinary health chips rather than
+ * hiding them. See lib/serverPhase.
+ */
+export function maintenanceView(now = Date.now()): {
+  window: maint.MaintenanceWindow | null
+  badge: ReturnType<typeof maint.badgeState>
+  /** When the driver last read the row. 0 means it never has. */
+  at: number
+} {
+  const w = globalForDriver.ringMaintWindow ?? null
+  return { window: w, badge: maint.badgeState(w, now), at: globalForDriver.ringMaintAt ?? 0 }
+}
+
+/** Record what the driver just read, so `maintenanceView` can hand it out. */
+function remember<T extends maint.MaintenanceWindow | null>(w: T): T {
+  globalForDriver.ringMaintWindow = w
+  globalForDriver.ringMaintAt = Date.now()
+  return w
+}
+
+/**
+ * Re-read the row into the cache after this driver has just changed it.
+ *
+ * ONE GetItem PER TRANSITION, WHICH IS A HANDFUL PER WINDOW. The alternative —
+ * waiting for the next tick — leaves the cache up to fifteen seconds behind the
+ * two transitions that are the entire reason the cache exists, and the deploy
+ * step is a long `await` that can push the next tick out well past that. The
+ * other alternative, patching the cached object with the state we believe we
+ * just wrote, is a second copy of the state machine that would silently diverge
+ * the first time a conditional write lost a race. Re-reading is the version that
+ * cannot be wrong.
+ */
+async function refresh(): Promise<void> {
+  await maint
+    .current()
+    .then(remember)
+    .catch(() => {})
 }
 
 /**
@@ -96,7 +160,7 @@ export async function tick(): Promise<void> {
   globalForDriver.ringMaintBusy = true
 
   try {
-    let w = await maint.current()
+    let w = remember(await maint.current())
     const now = Date.now()
 
     /**
@@ -146,9 +210,29 @@ export async function tick(): Promise<void> {
      * box to answer, and the only way out would be an SSH session and a
      * hand-typed `systemctl start royale-deploy`. Suppress on a stated fact;
      * leave an unanswering host behaving exactly as it did before.
+     *
+     * NULL IS "THE HOST HAS NOT ANSWERED", AND IT WRITES NOTHING AT ALL. This
+     * was `status?.behindMain ?? 0`, and the coalesce was a real bug rather than
+     * a tidiness complaint. `ensureDriver` starts this tick and the telemetry
+     * poller in the same breath, and the poller's first answer is an SSH round
+     * trip away — so the first tick after EVERY console restart ran with a null
+     * status, called `noteUpdateAvailable(0)`, and that call clears BOTH
+     * `updateAvailable` and `updateFirstSeenAt`. The second is the start of the
+     * 72-hour clock, so a console restarted daily reset the deadline daily and
+     * the automatic window could never arrive. `behindMainNow` returns null
+     * instead, and null means we skip the write and leave the row exactly as the
+     * last tick that actually knew something left it.
+     *
+     * THE ZERO WHILE PARKED IS STILL WRITTEN, and has to be. `behindMainNow`
+     * answers null off main as well — for a different reason, "that question
+     * does not apply" rather than "we have not asked" — so the deliberate pin
+     * cannot come from it. The ternary supplies it, which keeps the two rules
+     * visible as two rules.
      */
-    const behind = isParkedOffMain(status) ? 0 : (status?.behindMain ?? 0)
-    await maint.noteUpdateAvailable(behind).catch(() => {})
+    const behind = isParkedOffMain(status) ? 0 : maint.behindMainNow(status)
+    if (behind !== null) {
+      await maint.noteUpdateAvailable(behind).catch(() => {})
+    }
 
     /**
      * The automation. An update nobody schedules is the normal outcome of a
@@ -165,8 +249,13 @@ export async function tick(): Promise<void> {
      *
      * Re-read after noteUpdateAvailable so `updateFirstSeenAt` is the value
      * just written rather than the one from before this tick.
+     *
+     * `behind !== null` IS THE SAME FAIL-QUIET DIRECTION EVERY OTHER GATE HERE
+     * TAKES. A tick that does not know how far behind main the box is does not
+     * schedule a deploy on the strength of not knowing; it waits for the poller,
+     * which is fifteen seconds away.
      */
-    if (!maint.isLive(w) && onMain && behind > 0) {
+    if (!maint.isLive(w) && onMain && behind !== null && behind > 0) {
       const fresh = await maint.current()
       const deadline = maint.autoDeadline(fresh?.updateFirstSeenAt)
       if (deadline !== null && now >= deadline) {
@@ -188,7 +277,7 @@ export async function tick(): Promise<void> {
             })
           })
           .catch(() => {})
-        w = await maint.current()
+        w = remember(await maint.current())
       }
     }
 
@@ -197,6 +286,7 @@ export async function tick(): Promise<void> {
     // scheduled -> draining, once the clock passes.
     if (w.state === 'scheduled' && now >= w.drainStartsAt) {
       await maint.markDraining().catch(() => {})
+      await refresh()
       await audit.begin({
         action: 'maintenance.drain',
         actor: {
@@ -233,6 +323,14 @@ export async function tick(): Promise<void> {
     if (!emptied && !timeUp) return
 
     await maint.markDeploying().catch(() => {})
+    /**
+     * BEFORE THE DEPLOY, NOT AFTER IT, AND THAT ORDERING IS THE POINT. The
+     * `runDeploy` below is the long await — an SSH round trip that restarts the
+     * game server — and it is exactly the window in which the feed goes quiet.
+     * Publishing `deploying` first is what lets the header say "Updating"
+     * DURING the outage rather than explaining it once it is over.
+     */
+    await refresh()
 
     const actor = {
       license: w.createdBy,
@@ -273,6 +371,14 @@ export async function tick(): Promise<void> {
     const res = await runDeploy(w)
     await audit.resolve(ts, res.ok ? 'ok' : 'failed', res.error ?? null)
     await maint.markComplete(res.error ?? null).catch(() => {})
+    /**
+     * `completedAt` IS THE CLOCK THE "IS IT BACK YET" TEST RUNS AGAINST, so it
+     * has to reach the cache immediately rather than on the next tick. Until it
+     * does, `updateInProgress` sees a window still marked `deploying` and keeps
+     * saying Updating — which is the safe direction, but it would also delay the
+     * completion toast by up to a tick for no reason.
+     */
+    await refresh()
   } catch (e) {
     console.error('[maintenance] tick failed', e)
   } finally {

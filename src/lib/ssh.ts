@@ -383,6 +383,73 @@ export function refUpdateFrom(
 }
 
 /**
+ * WHICH COMMIT THE BOX IS ON, AND WHICH ONE A DEPLOY WOULD PUT ON IT.
+ *
+ * TWO SHAS AND NO COUNT, AND THE ABSENCE OF THE COUNT IS THE WHOLE DESIGN.
+ * `refUpdateFrom` above refuses to answer for `main` on the grounds that
+ * `behindMain` already measures that distance for free on the fifteen-second
+ * `status` poll, and "two different commit counts for main" is a thing no
+ * console should ever show. That objection is about a NUMBER. This carries no
+ * number, so there is nothing for `behindMain` to disagree with — which is why
+ * this one covers main and the parked case identically, from the same answer,
+ * with one derivation.
+ *
+ * IT EXISTS BECAUSE A COUNT IS NOT CHECKABLE AND A SHA IS. "3 commits behind"
+ * does not tell an operator whether to deploy; `4f2b9c1d → 9c1e77a4`, both
+ * linked, lets them read what actually changed. Replacing the count meant
+ * finding the target commit's identity, and `status` does not report it: the
+ * dispatcher answers `HEAD`, `deployedRef` and `behindMain` and nothing about
+ * the tip it is behind. The `branches` verb already resolves every remote tip,
+ * so the sha is a field we were throwing away rather than a new question.
+ *
+ * `fromSha` IS THE HOST'S OWN `deployedSha`, NOT `status.sha`. They are the
+ * same commit whenever both are fresh, but they come from two round trips on
+ * two cadences, and pairing a `from` off one with a `to` off the other would
+ * eventually render an arrow between two commits that were never adjacent. Both
+ * ends come out of the one answer or neither does.
+ *
+ * NULL IS "WE DO NOT KNOW", exactly as it is above: no ref, no matching row,
+ * or a branch the remote no longer has. A caller that cannot tell the operator
+ * which two commits are involved must say nothing rather than guess one.
+ */
+export interface UpdateTarget {
+  /** The ref the box is on. `main` INCLUDED, unlike {@link RefUpdate}. */
+  ref: string
+  /** The commit the served clone is on, 40-hex. */
+  fromSha: string
+  /** The tip of `ref` that a deploy would move it to, 40-hex. */
+  toSha: string
+  /**
+   * The host answered from refs already on disk. `toSha` may therefore be an
+   * OLD tip rather than the current one — carried so a reader is told the
+   * arrow's right-hand side is only as fresh as the last successful fetch.
+   */
+  stale: boolean
+  /** When the console received this reading, epoch ms. */
+  at: number
+}
+
+/** Pull {@link UpdateTarget} out of a `branches` answer. */
+export function updateTargetFrom(
+  b: HostBranches,
+  at = Date.now(),
+): UpdateTarget | null {
+  const ref = b.deployedRef
+  if (!ref) return null
+
+  const row = b.branches.find((x) => x.name === ref)
+  if (!row || !b.deployedSha) return null
+
+  return {
+    ref,
+    fromSha: b.deployedSha,
+    toSha: row.sha,
+    stale: b.stale,
+    at,
+  }
+}
+
+/**
  * Pin the ref the game host's NEXT deploy will check out. Does not deploy.
  *
  * THE SHA IS THE POINT, not the name. Hours pass between an admin choosing a

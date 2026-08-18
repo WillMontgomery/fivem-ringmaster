@@ -3,6 +3,7 @@ import Link from 'next/link'
 
 import { LocalTime } from '@/components/LocalTime'
 import { buttonVariants } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 /**
  * "This server is not running main."
@@ -66,17 +67,48 @@ export function OffMainBanner({
           Automatic updates are paused while it is parked.
         </span>
         {/*
-          A BUTTON, IN THE CONSOLE'S PRIMARY COLOUR, ASKED FOR BY NAME. It was
-          link-styled text in warn, which put the one thing to DO about this
+          A BUTTON, NOT LINK-STYLED TEXT, AND THAT HALF WAS RIGHT. It was
+          underlined text in warn, which put the one thing to DO about this
           banner in the same colour and the same weight as the banner's own
           complaint — so the strip read as three sentences of alarm with a
-          fourth underlined one, and nothing in it looked like an action.
+          fourth underlined one, and nothing in it looked like an action. It
+          stays a button.
 
-          THE PURPLE IS `--primary` VIA THE `default` VARIANT, not a colour
-          invented here: `buttonVariants({ variant: 'default' })` is the exact
-          class list `Button` itself composes (`bg-primary
-          text-primary-foreground`), so this cannot drift from every other
-          primary button in the console.
+          IT IS NOT PURPLE ANY MORE, AND THE REASON IS WHERE IT SITS. `default`
+          is `--primary`, which in this console means "the main action on this
+          page". THIS IS NOT A PAGE. It is a strip in the chrome saying
+          something is unusual, and a saturated brand fill inside a warning
+          strip competes with the warning for attention — two loud things, one
+          of which is decoration. The owner: it "looks very out of place being
+          purple".
+
+          `outline` IS THE VARIANT: a neutral fill, so the control reads as a
+          control without a saturated block of brand colour competing with the
+          warning it sits in. `secondary` was the other candidate and lost on
+          measurement — see below.
+
+          THE BORDER IS `--warn` RATHER THAN `--border`, AND THAT IS NOT
+          DECORATION, IT IS THE ONLY THING THAT MAKES THIS BUTTON VISIBLE. The
+          banner is a `warn/10` wash, and MEASURED against it every neutral
+          surface token in the system lands within 1.5:1 — `outline`'s own
+          `--border` gives a 1.28:1 edge in light and 1.49:1 in dark, and
+          `secondary` is worse still at 1.04:1. WCAG 1.4.11 wants 3:1 for the
+          boundary that identifies a control, and a button whose edge is
+          invisible is back to being link-styled text, which is exactly what the
+          owner rejected in the first place. Swapping the edge to the banner's
+          own `--warn` takes it to 3.73:1 light and 10.05:1 dark. Numbers and
+          method are in the issue comment.
+
+          `dark:border-warn` IS NOT REDUNDANT. `outline` ships `dark:border-input`,
+          and `twMerge` treats a `dark:`-prefixed utility as a different key from
+          an unprefixed one — so a bare `border-warn` would be overridden in dark
+          mode and the edge would silently fall back to 1.49:1, which is the half
+          of this that a screenshot in one theme would never catch.
+
+          NOTHING IS INVENTED HERE. `buttonVariants({ variant: 'outline' })` is
+          the exact class list `Button` composes, and `--warn` is the token the
+          banner itself is painted from — an existing variant composed with an
+          existing semantic colour, not a new shade.
 
           IT IS `buttonVariants` ON THE LINK RATHER THAN `<Button render={<Link
           />}>`, AND BASE UI SAYS SO ITSELF. Its own docs — installed, at
@@ -90,13 +122,15 @@ export function OffMainBanner({
           the reader the one thing an anchor tells them. This control goes to
           /maintenance; it does not revert anything by itself.
 
-          SIZED `sm` DELIBERATELY. A filled default-height button in a 2.5-line
-          strip competes with the warning it sits in. Small and filled reads as
-          "here is what to do about it", which is the job.
+          SIZED `sm` DELIBERATELY. A default-height button in a 2.5-line strip
+          competes with the warning it sits in.
         */}
         <Link
           href="/maintenance"
-          className={buttonVariants({ variant: 'default', size: 'sm' })}
+          className={cn(
+            buttonVariants({ variant: 'outline', size: 'sm' }),
+            'border-warn dark:border-warn',
+          )}
         >
           <Undo2 />
           Revert to main

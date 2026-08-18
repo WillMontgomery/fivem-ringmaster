@@ -4,7 +4,7 @@ import { AppShell } from '@/components/AppShell'
 import { MaintenancePanel } from '@/components/MaintenancePanel'
 import { DEMO_USER } from '@/lib/demo'
 import { AUTO_AFTER_MS, type MaintenanceWindow } from '@/lib/maintenance'
-import type { RefUpdate } from '@/lib/ssh'
+import type { RefUpdate, UpdateTarget } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 
 /**
@@ -26,8 +26,9 @@ import { cn } from '@/lib/utils'
  *   parked-stale   on `dev`, a zero the host answered from stale refs — BOX STAYS
  *   parked-live    on `dev`, a plain update scheduled and draining
  *   parked-switch  on `dev`, a window that switches to another branch
- *   main-update    on main, three commits behind — the ordinary case
+ *   main-update    on main, behind — the ordinary case
  *   main-current   on main, nothing to deploy
+ *   unpolled       NOBODY HAS ASKED THE HOST YET — the box must still be there
  *   unknown        the host has not said which ref it is on
  *
  * THE FOUR PARKED READINGS ARE THE POINT OF THE NEW ONES. "Behind its branch",
@@ -42,6 +43,14 @@ import { cn } from '@/lib/utils'
  * out, there is no disabled control left to hint the action ever existed. Flip
  * between `parked-level` and `parked-stale`: one has the box, one does not, and
  * the underlying number is 0 in both.
+ *
+ * `unpolled` IS THE SAME TRAP ON MAIN, AND IT HAD NO FIXTURE UNTIL #26. The
+ * main-branch distance used to be read as `updateAvailable ?? 0`, so a console
+ * that had not yet heard from the game host computed a KNOWN zero and removed
+ * its own scheduling box — #146 arrived at from the other ref, and reachable on
+ * every console restart rather than only on a parked box. Flip between
+ * `unpolled` and `main-current`: `behindMain` is null in one and 0 in the other,
+ * they look nothing alike, and only the second may take the card away.
  *
  * The panel is passed `frozen` so it holds the fixture instead of polling the
  * real console out from under it. See the prop's own comment.
@@ -97,23 +106,57 @@ interface View {
    * a state in its own right and NOT the same as zero — see the panel's prop.
    */
   refUpdate: RefUpdate | null
+  /**
+   * How far behind main. `null` is "the host has not answered", which is a state
+   * in its own right and NOT the same as zero — the whole subject of #26.
+   */
+  behindMain: number | null
+  /**
+   * The two commits an update would move between. `null` is "we have not read
+   * the branch list yet", which is why several fixtures below have an update and
+   * no arrow: that is the honest first two minutes of a console's life.
+   */
+  updateTarget: UpdateTarget | null
   window: MaintenanceWindow | null
   players: number
 }
 
 /**
- * A reading of the parked branch, as the telemetry poller would hold one.
+ * The two shas every fixture below reuses.
  *
- * The shas are fixtures and deliberately look like shas: this object is what a
- * `branches` answer collapses to, and a reviewer comparing this harness against
- * the real page should be able to tell at a glance that nothing here was
- * invented in a different shape from the real thing.
+ * ONE PAIR, SHARED, so a reviewer flipping between states sees the SAME two
+ * commits move in and out of view rather than a fresh pair of random hex per
+ * state — which would make "did the arrow change" impossible to answer by
+ * looking. They also sit in `refAt` and in `targetOn` alike, because in
+ * production the count and the arrow come out of ONE `branches` answer one line
+ * apart, and a harness that let those two drift would stop being a rehearsal of
+ * the real thing.
+ *
+ * They are fixtures and deliberately look like shas: a reviewer comparing this
+ * harness against the real page should be able to tell at a glance that nothing
+ * here was invented in a different shape from the real thing. Both are also live
+ * hyperlinks in the card now, so following one goes to GitHub and 404s — which
+ * is the correct outcome for an invented commit, and better than a link that
+ * silently went nowhere.
  */
+const DEPLOYED_SHA = '4f2b9c1de8a7365019bd4ac2e5f80917bb3c6d24'
+const TIP_SHA = '9c1e77a4b02d5f38e6ab41cc7d90e2f5138ba604'
+
+/** A reading of the parked branch, as the telemetry poller would hold one. */
 const refAt = (ref: string, behind: number, stale = false): RefUpdate => ({
   ref,
   behind,
-  tipSha: '9c1e77a4b02d5f38e6ab41cc7d90e2f5138ba604',
-  deployedSha: '4f2b9c1de8a7365019bd4ac2e5f80917bb3c6d24',
+  tipSha: TIP_SHA,
+  deployedSha: DEPLOYED_SHA,
+  stale,
+  at: NOW - 30_000,
+})
+
+/** The pair of commits a deploy on `ref` would move between. */
+const targetOn = (ref: string, stale = false): UpdateTarget => ({
+  ref,
+  fromSha: DEPLOYED_SHA,
+  toSha: TIP_SHA,
   stale,
   at: NOW - 30_000,
 })
@@ -126,8 +169,20 @@ const views: Record<string, View> = {
    * at zero by the driver because distance-from-main is not what a parked box
    * is tracking. Before #146 this rendered the off-main banner and then nothing
    * at all; it must now render the card, the button, and no commit count.
+   *
+   * NO ARROW EITHER, and that is the same fact told twice rather than a second
+   * gap: the pair of commits rides the same `branches` reading the count does,
+   * so a console that has not read the branch list has neither. The card says
+   * what the button DOES instead of what the branch has done.
    */
-  parked: { deployedRef: 'dev', refUpdate: null, window: BASE, players: 7 },
+  parked: {
+    deployedRef: 'dev',
+    refUpdate: null,
+    behindMain: null,
+    updateTarget: null,
+    window: BASE,
+    players: 7,
+  },
 
   /**
    * THE STATE THIS FEATURE EXISTS FOR. Somebody pushed three commits to the
@@ -139,6 +194,8 @@ const views: Record<string, View> = {
   'parked-behind': {
     deployedRef: 'dev',
     refUpdate: refAt('dev', 3),
+    behindMain: null,
+    updateTarget: targetOn('dev'),
     window: BASE,
     players: 7,
   },
@@ -159,6 +216,10 @@ const views: Record<string, View> = {
   'parked-level': {
     deployedRef: 'dev',
     refUpdate: refAt('dev', 0),
+    behindMain: null,
+    // Level means the box IS the tip, so the pair collapses to one commit and
+    // `updateTargetNow` withholds it. There is no card here to hang it on.
+    updateTarget: { ...targetOn('dev'), toSha: DEPLOYED_SHA },
     window: BASE,
     players: 7,
   },
@@ -175,6 +236,15 @@ const views: Record<string, View> = {
   'parked-stale': {
     deployedRef: 'dev',
     refUpdate: refAt('dev', 0, true),
+    behindMain: null,
+    /**
+     * A STALE TIP IS STILL SHOWN, unlike a stale zero, and the asymmetry is
+     * deliberate — see `updateTargetNow`. A stale zero is indistinguishable from
+     * "we have not looked", so it must not refuse a deploy; a stale tip is a real
+     * commit that really was the tip at the last successful fetch and may simply
+     * have been overtaken. The arrow renders and says so in warn text.
+     */
+    updateTarget: targetOn('dev', true),
     window: BASE,
     players: 7,
   },
@@ -183,6 +253,8 @@ const views: Record<string, View> = {
   'parked-live': {
     deployedRef: 'dev',
     refUpdate: refAt('dev', 3),
+    behindMain: null,
+    updateTarget: targetOn('dev'),
     window: DRAINING,
     players: 3,
   },
@@ -191,18 +263,29 @@ const views: Record<string, View> = {
   'parked-switch': {
     deployedRef: 'dev',
     refUpdate: refAt('dev', 3),
+    behindMain: null,
+    updateTarget: targetOn('dev'),
     window: {
       ...DRAINING,
       targetRef: 'feature/loot-v2',
-      targetSha: '4f2b9c1de8a7365019bd4ac2e5f80917bb3c6d24',
+      targetSha: DEPLOYED_SHA,
     },
     players: 3,
   },
 
-  /** The ordinary case: on main, behind, with the 72-hour clock running. */
+  /**
+   * The ordinary case: on main, behind, with the 72-hour clock running.
+   *
+   * THE CARD SAYS "UPDATE AVAILABLE" AND NOT HOW MANY. The count is gone on the
+   * owner's instruction; what stands where it was is the pair of commits, both
+   * hyperlinked, plus the diff between them. Compare against `main-update-cold`
+   * below, which is the same update before the branch list has been read.
+   */
   'main-update': {
     deployedRef: 'main',
     refUpdate: null,
+    behindMain: 3,
+    updateTarget: targetOn('main'),
     window: {
       ...BASE,
       updateAvailable: 3,
@@ -211,11 +294,59 @@ const views: Record<string, View> = {
     players: 12,
   },
 
-  /** On main, level with it — the empty state. */
+  /**
+   * ON MAIN, BEHIND, AND THE ARROW HAS NOT ARRIVED YET. The distance comes off
+   * the fifteen-second `status` poll; the two commits come off the two-minute
+   * `branches` one. So there is a real window in which the console knows there
+   * is an update and does not yet know which commit it leads to — and the honest
+   * rendering is the card, the button, and no arrow. It must not invent an end.
+   */
+  'main-update-cold': {
+    deployedRef: 'main',
+    refUpdate: null,
+    behindMain: 3,
+    updateTarget: null,
+    window: {
+      ...BASE,
+      updateAvailable: 3,
+      updateFirstSeenAt: NOW - 20 * 60 * 60_000,
+    },
+    players: 12,
+  },
+
+  /** On main, level with it — the empty state. THE ONLY MAIN STATE WITH NO CARD. */
   'main-current': {
     deployedRef: 'main',
     refUpdate: null,
+    behindMain: 0,
+    updateTarget: null,
     window: BASE,
+    players: 12,
+  },
+
+  /**
+   * NOBODY HAS ASKED THE GAME HOST YET, AND THE BOX MUST STILL BE THERE.
+   *
+   * THE STATE #26 EXISTS FOR, and the one with no fixture before it. The
+   * telemetry poller holds `status` as null until its first SSH round trip
+   * lands, and `ensureDriver` starts that poller and the driver's tick in the
+   * same breath — so this is every console for the first seconds after every
+   * restart, not a corner case. Read as `updateAvailable ?? 0` it was a KNOWN
+   * zero, which meant the empty state below: a green tick and "the server is
+   * running the latest code", asserted by a console that had never asked.
+   *
+   * WHAT TO CHECK: the scheduling card is present, its button is live, there is
+   * no commit count, no arrow, and NO CLAIM EITHER WAY about how current the
+   * server is. Flip to `main-current` — same ref, same window, `behindMain` 0
+   * instead of null — and the card should vanish. If both look the same, the
+   * three states have collapsed back into two.
+   */
+  unpolled: {
+    deployedRef: 'main',
+    refUpdate: null,
+    behindMain: null,
+    updateTarget: null,
+    window: null,
     players: 12,
   },
 
@@ -228,6 +359,17 @@ const views: Record<string, View> = {
   unknown: {
     deployedRef: null,
     refUpdate: null,
+    behindMain: 3,
+    /**
+     * NO ARROW, DELIBERATELY, and for a different reason from `unpolled`. A host
+     * that will not name its ref cannot have a reading PAIRED to that ref, and
+     * `updateTargetNow` refuses an unpaired one — the same rule that stops the
+     * previous branch's commits appearing under a new branch's name for the few
+     * seconds after a switch. The card is still here, because the distance from
+     * main is a fact and this box folds in with main for everything a human
+     * reads.
+     */
+    updateTarget: null,
     window: {
       ...BASE,
       updateAvailable: 3,
@@ -300,6 +442,8 @@ async function Preview({
           canRun
           initialDeployedRef={view.deployedRef}
           initialRefUpdate={view.refUpdate}
+          initialBehindMain={view.behindMain}
+          initialUpdateTarget={view.updateTarget}
           frozen
         />
 
@@ -309,15 +453,29 @@ async function Preview({
           the card above ever shows a count that matches neither line here, that
           is the bug.
         */}
+        {/*
+          THE FOOTER STATES ALL THREE READINGS SEPARATELY, and "(not known)" is
+          now spelled out for the main one as well. The failure this harness
+          catches is two different distances being read as one; the failure #26
+          fixed is a third state — not yet measured — being read as zero. Both
+          are invisible unless the underlying values are printed as they are, so
+          `(not known)` and `0` appear here as different strings and never as the
+          same one.
+        */}
         <p className="mt-8 border-t border-border pt-4 text-xs text-muted-foreground/60">
           Design harness — fixtures only, nothing is read from a game host and
           the panel does not poll. Deployed ref{' '}
           <code className="font-mono">{view.deployedRef ?? '(not reported)'}</code>
-          , {view.window?.updateAvailable ?? 0} behind main, behind its own
-          branch{' '}
+          , behind main {view.behindMain ?? '(not known)'}, behind its own branch{' '}
           {view.refUpdate
             ? `${view.refUpdate.behind} (${view.refUpdate.ref})${
                 view.refUpdate.stale ? ', from stale refs — read as not known' : ''
+              }`
+            : '(not known)'}
+          , moving{' '}
+          {view.updateTarget
+            ? `${view.updateTarget.fromSha.slice(0, 8)} → ${view.updateTarget.toSha.slice(0, 8)} on ${view.updateTarget.ref}${
+                view.updateTarget.stale ? ', from stale refs' : ''
               }`
             : '(not known)'}
           {deadline ? ', automatic deadline set' : ', no automatic deadline'}.

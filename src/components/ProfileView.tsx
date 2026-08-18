@@ -44,7 +44,7 @@ import {
 // Aliased: `Ban` in this file is already the lucide icon.
 import type { Ban as BanRecord } from '@/lib/bans'
 import type { AccentSurface } from '@/lib/contrast'
-import { humanDuration } from '@/lib/duration'
+import { ago, humanDuration } from '@/lib/duration'
 import type {
   DiscordNameChange,
   Profile,
@@ -84,10 +84,6 @@ import { nextThresholdFor } from '@/lib/xp'
 function when(ms: number): string {
   const d = new Date(ms)
   return d.toISOString().slice(0, 16).replace('T', ' ') + 'Z'
-}
-
-function ago(ms: number, now: number): string {
-  return `${humanDuration(now - ms)} ago`
 }
 
 /**

@@ -4,9 +4,11 @@ import {
   refUpdateFrom,
   runVerb,
   sshConfigured,
+  updateTargetFrom,
   type HostStatus,
   type HostTelemetry,
   type RefUpdate,
+  type UpdateTarget,
 } from './ssh'
 
 /**
@@ -42,6 +44,17 @@ interface TelState {
 
   /** How far the box is behind its own branch. Null on main and when unknown. */
   refUpdate: RefUpdate | null
+  /**
+   * The two commits an update would move between, on WHICHEVER ref the box is
+   * on — main included. Null until a `branches` answer has been read.
+   *
+   * SEPARATE FROM `refUpdate` BECAUSE IT ANSWERS FOR MAIN TOO. They come out of
+   * the same `branches` call one line apart; what differs is that this one
+   * carries no count, so it cannot disagree with `behindMain`. See
+   * `updateTargetFrom` in lib/ssh for why that is the whole reason it may cover
+   * main at all.
+   */
+  updateTarget: UpdateTarget | null
   /** `<ref>@<deployed sha>` of the last attempt, whether or not it succeeded. */
   refKey: string
   /** When that attempt started, so a failing host is throttled too. */
@@ -86,6 +99,7 @@ function create(): TelState {
     polling: false,
     timer: null,
     refUpdate: null,
+    updateTarget: null,
     refKey: '',
     refPolledAt: 0,
     refBusy: false,
@@ -137,6 +151,12 @@ function rateBetween(prev: HostTelemetry | undefined, cur: HostTelemetry): {
  * graph. What it must not do is claim zero: `refUpdateFrom` returns null when
  * the branch is gone from the remote, and null renders as nothing rather than
  * as "you are up to date".
+ *
+ * ONE ANSWER, TWO READINGS. `refUpdateFrom` and `updateTargetFrom` are handed
+ * the same `branches` object and assigned in the same beat, on purpose: the
+ * count and the pair of commits it stands for must describe one moment. Read on
+ * two cadences they would eventually render "3 new commits" beside an arrow
+ * pointing at a tip from before those commits existed.
  */
 async function pollDeployedRef(status: HostStatus): Promise<void> {
   if (state.refBusy) return
@@ -149,7 +169,9 @@ async function pollDeployedRef(status: HostStatus): Promise<void> {
   state.refPolledAt = now
   state.refBusy = true
   try {
-    state.refUpdate = refUpdateFrom(await listBranches())
+    const answer = await listBranches()
+    state.refUpdate = refUpdateFrom(answer)
+    state.updateTarget = updateTargetFrom(answer)
   } catch {
     /* keep the last reading; a dropped fetch is not a branch that moved */
   } finally {
@@ -187,10 +209,43 @@ async function poll(): Promise<void> {
      * this value feeds is something a human READS. Gate the automation
      * pessimistically; gate the decoration on a stated fact.
      */
-    if (isParkedOffMain(status)) {
+    const parked = isParkedOffMain(status)
+
+    /**
+     * The clearing half, and it stays synchronous and unconditional. Whatever
+     * the gate below decides, a `refUpdate` naming `dev` must not survive one
+     * tick of a box that is back on main: `pollDeployedRef` is async and its
+     * answer lands whenever it lands, so waiting for it to overwrite this would
+     * leave the old branch's count readable in the meantime.
+     */
+    if (!parked) state.refUpdate = null
+
+    /**
+     * WHEN THE `branches` VERB IS WORTH ITS COST, WHICH IS NOT ALWAYS.
+     *
+     * Parked, always: the count against the branch somebody is pushing to has
+     * no other source, and discovering a push rather than merely making it
+     * discoverable is the requirement REF_POLL_MS exists to pay for.
+     *
+     * ON MAIN, ONLY WHILE THERE IS AN UPDATE OUTSTANDING — `behindMain > 0`,
+     * which the fifteen-second `status` poll already answers for free. This is
+     * the one new cost in the change that replaced the commit count with the
+     * two commits, and it is bounded on the side that matters: the steady state
+     * of a healthy box is level with main, and a level box makes NO extra call
+     * at all. When it is behind, one `git fetch --prune` every two minutes buys
+     * the sha of the commit the operator is being asked to deploy — which is
+     * precisely the window in which somebody is looking at the banner.
+     *
+     * WHY NOT ALWAYS, given the box already fetches main on its own: because
+     * `branches` is the only read in this console that costs a real network
+     * round trip from the game box to GitHub, and putting an unconditional
+     * timer on it would spend that on every console that has ever been opened,
+     * forever, to learn a sha nothing would render.
+     */
+    if (parked || status.behindMain > 0) {
       void pollDeployedRef(status)
     } else {
-      state.refUpdate = null
+      state.updateTarget = null
       state.refKey = ''
       state.refPolledAt = 0
     }
@@ -230,5 +285,11 @@ export function hostView() {
      * call that produces it lives on the server timer rather than in a route.
      */
     refUpdate: state.refUpdate,
+    /**
+     * The two commits an update would move between. Same provenance as
+     * `refUpdate` — same call, same beat — and the same cost to read here,
+     * which is none.
+     */
+    updateTarget: state.updateTarget,
   }
 }

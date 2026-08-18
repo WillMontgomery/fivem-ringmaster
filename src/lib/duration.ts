@@ -21,6 +21,26 @@ export function humanDuration(ms: number): string {
 }
 
 /**
+ * How long ago an instant was, for a reader who is asking "recently?".
+ *
+ * A RELATIVE TIME IS THE QUESTION, AN ABSOLUTE ONE IS THE EVIDENCE. Nobody
+ * scanning a list of branch tips is asking what o'clock the commit landed; they
+ * are asking whether it is from this afternoon or from March. `formatInstant`
+ * answers a question that was not asked and costs the width of a date to do it.
+ * The absolute instant still has to be REACHABLE — `docs/hover-text.md` — so the
+ * two live together at every call site: this on the face of it, the instant in
+ * `<time dateTime>` for machines and on hover for people.
+ *
+ * `now` IS PASSED IN, NEVER READ FROM THE CLOCK HERE. Every caller already has
+ * a ticking `now` in state, and a function that read `Date.now()` itself would
+ * be a different answer on the server than in the browser one render later —
+ * which is a hydration mismatch React 19 repairs by throwing the tree away.
+ */
+export function ago(ms: number, now: number): string {
+  return `${humanDuration(now - ms)} ago`
+}
+
+/**
  * How long a player has been connected, from the envelope's clock pair.
  *
  * The snapshot carries `connectedAt` as a GAME-clock reading rather than a

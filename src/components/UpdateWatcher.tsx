@@ -4,6 +4,10 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
+import { behindMainNow, refBehindNow } from '@/lib/maintenance'
+// TYPE-ONLY. See the note on the same import in UpdateBadge.
+import type { RefUpdate } from '@/lib/ssh'
+
 /**
  * Announces an available update, once.
  *
@@ -19,8 +23,14 @@ import { toast } from 'sonner'
  * Maintenance would not have closed that gap at all. What it says now is that
  * the branch they are pushing to has moved, which is the update they are
  * actually waiting for, and it names it. The two sentences are deliberately
- * different: "3 commits behind main" and "3 new commits on dev" are different
- * facts with different remedies.
+ * different: "Update available" and "dev has moved" are different facts with
+ * different remedies.
+ *
+ * AND NEITHER SENTENCE COUNTS ANYTHING, since #26. A toast is the one surface
+ * where a commit count could never have been checked — there is nothing to
+ * click, and it is gone in ten seconds — so it was pure assertion. The count
+ * survives internally as the change detector behind the session stamp, which is
+ * a job it is good at and one nobody reads.
  *
  * SESSION STORAGE, NOT LOCAL: the "already told you" flag should survive a
  * navigation and die with the tab. Keyed on the REF AND the commit count, so a
@@ -49,10 +59,13 @@ export function UpdateWatcher() {
       try {
         const res = await fetch('/api/host', { cache: 'no-store' })
         if (!res.ok || !alive) return
+        // `RefUpdate` in full rather than a subset — the hand-written shape here
+        // dropped `stale`, so a zero the game host could not stand behind was
+        // read as a real zero and CLEARED the "already announced" flag.
         const v = (await res.json()) as {
           configured?: boolean
           status?: { behindMain?: number; deployedRef?: string } | null
-          refUpdate?: { ref: string; behind: number } | null
+          refUpdate?: RefUpdate | null
         }
         if (!v.configured || !v.status) return
 
@@ -65,17 +78,25 @@ export function UpdateWatcher() {
         const parked = typeof ref === 'string' && ref !== 'main'
 
         /**
-         * A MISMATCHED READING IS NO READING. `refUpdate` is polled on its own
-         * cadence, so just after a switch it can still describe the previous
-         * branch. Announcing that would attach a count to the wrong name, which
-         * is worse than staying quiet for one interval.
+         * A MISMATCHED READING IS NO READING, AND NEITHER IS AN UNPOLLED ONE.
+         *
+         * Both derivations return `number | null` and null means "we have not
+         * been told" — for the parked side because `refUpdate` may be missing,
+         * stale-zero, or still describing the previous branch; for main because
+         * the telemetry poller has not answered yet. This used to read
+         * `v.status.behindMain ?? 0` on the main side, which turned an unanswered
+         * host into a confident zero — and a zero here does not merely stay
+         * quiet, it CLEARS the "already announced" flag below. So a console that
+         * dropped one poll would re-announce an update it had already announced,
+         * on the strength of a number nobody had measured.
          */
-        const r = parked && v.refUpdate?.ref === ref ? v.refUpdate : null
-        const behind = parked ? (r?.behind ?? 0) : (v.status.behindMain ?? 0)
+        const behind = parked
+          ? refBehindNow(ref, v.refUpdate)
+          : behindMainNow(v.status)
 
-        // Parked with no usable reading yet: say nothing, and leave the flag
-        // alone so whatever was already announced stays announced.
-        if (parked && !r) return
+        // No usable reading: say nothing, and leave the flag alone so whatever
+        // was already announced stays announced.
+        if (behind === null) return
 
         const stamp = `${parked ? ref : 'main'}:${behind}`
         if (behind <= 0) {
@@ -89,14 +110,22 @@ export function UpdateWatcher() {
         if (!armed.current) return
         sessionStorage.setItem(KEY, stamp)
 
+        /**
+         * NO COUNT IN THE WORDS, THOUGH THE COUNT STILL DRIVES THE STAMP.
+         *
+         * The owner's rule from #26 — "just 'update available'" — is about what
+         * a reader is told: the number does not change the decision and there is
+         * nowhere in a toast to make it checkable. `stamp` above is a different
+         * job: it is how this component notices that the branch has moved AGAIN
+         * while somebody was reading, and a count is a perfectly good change
+         * detector precisely because it is not being shown.
+         */
         toast.info(
-          parked
-            ? `${ref} has moved — ${behind} new commit${behind > 1 ? 's' : ''}`
-            : `Update available — ${behind} commit${behind > 1 ? 's' : ''} behind main`,
+          parked ? `${ref} has moved` : 'Update available',
           {
             description: parked
-              ? `The game server is parked on ${ref} and is not running its newest commit. Deploy it from Maintenance.`
-              : 'The game server is not running the latest code. Deploy it from Maintenance.',
+              ? `The game server is parked on ${ref} and is not running its newest commit. Deploy it from Maintenance, where you can read the commit it would move to.`
+              : 'The game server is not running the latest code. Deploy it from Maintenance, where you can read the commit it would move to.',
             action: {
               label: 'Maintenance',
               onClick: () => router.push('/maintenance'),

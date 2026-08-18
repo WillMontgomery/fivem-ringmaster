@@ -3,7 +3,7 @@ import { ddb, tables } from './dynamo'
 // at module scope, and the two rules below are read by MaintenancePanel, which
 // is a client component. `import type` is erased outright, so nothing from the
 // SSH channel reaches a browser bundle.
-import type { RefUpdate } from './ssh'
+import type { RefUpdate, UpdateTarget } from './ssh'
 
 /**
  * Scheduled maintenance.
@@ -217,6 +217,93 @@ export function refBehindNow(
   return refUpdate.behind
 }
 
+/**
+ * HOW FAR BEHIND MAIN THE BOX IS, OR NULL FOR "WE DO NOT KNOW".
+ *
+ * THE OTHER HALF OF `refBehindNow`, AND IT EXISTS BECAUSE THE TWO READINGS DID
+ * NOT AGREE ABOUT WHAT NULL MEANS. The parked reading has returned `null`,
+ * never `0`, since `refUpdateFrom` was written — "we have not looked" and
+ * "there is nothing" are different facts and the whole safety of
+ * `nothingToDeploy` rests on their staying apart. The main reading was spelled
+ * `behindMain ?? 0` at four call sites, which folds an unanswered host into
+ * "zero commits behind" and renders it as *up to date*. Same question, same
+ * three states: known-behind, known-level, NOT YET KNOWN.
+ *
+ * WHAT "NOT YET KNOWN" ACTUALLY IS HERE, because it is not hypothetical. The
+ * telemetry poller holds `status` as null until its first SSH round trip lands,
+ * and `ensureDriver` starts the driver's tick and that poller in the same
+ * breath — so the first driver tick after every console restart runs with no
+ * status at all. Under `?? 0` that tick wrote `updateAvailable: 0` over a real
+ * pending update AND cleared `updateFirstSeenAt`, which is the start of the
+ * 72-hour automatic-deploy clock. A console that restarted daily could never
+ * reach the deadline it exists to enforce.
+ *
+ * IT ANSWERS ONLY FOR MAIN, which is the mirror of `refBehindNow` answering
+ * only off it. `behindMain` on a parked box is a large permanent number
+ * describing an update nobody is waiting for, and every surface that has ever
+ * rendered it beside a branch name has been a bug. Null there is not a gap in
+ * our knowledge; it is the correct answer to a question that does not apply.
+ *
+ * A HOST THAT HAS NOT NAMED ITS REF FOLDS IN WITH MAIN, not with parked — the
+ * `isParkedOffMain` polarity, not `!isOnMain`. This decides what a human READS
+ * and what a human may ASK FOR, and an older dispatcher must keep behaving
+ * exactly as it always has. lib/ssh states the rule; this obeys it rather than
+ * restating it, which is why the comparison is spelled out the same way
+ * `refBehindNow` spells it rather than importing the function (lib/ssh reaches
+ * `node:child_process` at module scope and this file is read by a client
+ * component — see the import at the top).
+ */
+export function behindMainNow(
+  status:
+    | { behindMain?: number | null; deployedRef?: string | null }
+    | null
+    | undefined,
+): number | null {
+  if (!status) return null
+  const ref = status.deployedRef
+  if (typeof ref === 'string' && ref !== 'main') return null
+  return typeof status.behindMain === 'number' ? status.behindMain : null
+}
+
+/**
+ * THE TWO COMMITS A DEPLOY WOULD MOVE BETWEEN, OR NULL.
+ *
+ * THE PAIRING RULE, ONCE, for the same reason `refBehindNow` states it once: a
+ * reading taken for another branch is not a reading. `updateTarget` is refreshed
+ * on the two-minute `branches` cadence while `deployedRef` moves on the
+ * fifteen-second `status` one, so between a switch landing and the next answer
+ * the poller holds a pair of commits belonging to the previous branch. Rendering
+ * those under the new branch's name is the exact mislabelling every reading on
+ * this page is guarded against.
+ *
+ * AN ARROW THAT POINTS AT ITSELF IS NOT AN UPDATE. `fromSha === toSha` is the
+ * box sitting on the tip it would deploy — which is a real and common state, and
+ * one where "moving from X to X" is worse than saying nothing. It also covers a
+ * skew the count cannot: `behindMain` comes off a fifteen-second poll and these
+ * shas off a two-minute one, so just after a deploy the count can still say
+ * "behind" while the pair already agrees. The pair is the more recent fact about
+ * the commits and is allowed to withhold the arrow; it is never allowed to
+ * invent one.
+ *
+ * STALENESS IS CARRIED, NOT REFUSED, and that is the opposite of the rule for a
+ * stale ZERO in `refBehindNow`. A stale zero is indistinguishable from "we have
+ * not looked", so it must not refuse a deploy. A stale TIP is a real commit that
+ * really was the tip when the box last managed a fetch — it may simply have been
+ * overtaken. Withholding it would leave the operator with no commit to read at
+ * all; showing it and saying it may have moved on leaves them better off.
+ */
+export function updateTargetNow(
+  deployedRef: string | null | undefined,
+  updateTarget: UpdateTarget | null | undefined,
+): UpdateTarget | null {
+  if (!updateTarget) return null
+  // A host that has not named its ref cannot have a reading paired to it.
+  if (typeof deployedRef !== 'string') return null
+  if (updateTarget.ref !== deployedRef) return null
+  if (updateTarget.fromSha === updateTarget.toSha) return null
+  return updateTarget
+}
+
 /** Why a deploy cannot be asked for, in the three registers it gets read in. */
 export interface NothingToDeploy {
   /** After the fact — the body of the 409, and what a toast would show. */
@@ -250,22 +337,32 @@ export interface NothingToDeploy {
  * itself. Absent box, refused request; present box, accepted request — one
  * expression decides both.
  *
- * KNOWN ZERO IS THE ONLY REFUSAL. Not "unknown", which is the trap: the count
- * against a parked branch is null whenever the host has not answered, whenever
- * the branch is gone from the remote, for the first couple of minutes after the
- * console boots, and whenever the box's own fetch timed out. Refusing on any of
- * those would re-create #146 with a better excuse — the operator has the commit,
- * and we would be declining to ship it on the strength of a number we do not
- * have. Unknown renders the box and takes the deploy, and that matters more now
- * that the box disappears rather than greys out: there is no longer a disabled
- * control left behind to hint that the action exists at all.
+ * KNOWN ZERO IS THE ONLY REFUSAL, ON EITHER REF. Not "unknown", which is the
+ * trap: the count against a parked branch is null whenever the host has not
+ * answered, whenever the branch is gone from the remote, for the first couple of
+ * minutes after the console boots, and whenever the box's own fetch timed out.
+ * Refusing on any of those would re-create #146 with a better excuse — the
+ * operator has the commit, and we would be declining to ship it on the strength
+ * of a number we do not have. Unknown renders the box and takes the deploy, and
+ * that matters more now that the box disappears rather than greys out: there is
+ * no longer a disabled control left behind to hint that the action exists at all.
  *
- * BOTH REFS, ONE FACT. On main the number is `updateAvailable`, distance from
- * reviewed code; parked it is the distance from the tip of the branch the box is
- * actually on. They are different measurements and must never be swapped (see
- * lib/ssh), but "it is zero, so a deploy would restart every match in progress
- * to change nothing" reads the same either way, which is why one function
- * answers for both.
+ * AND THE MAIN SIDE NOW OBEYS THAT SENTENCE TOO. It used to read
+ * `(input.behindMain ?? 0) > 0`, which refuses on unknown — the coalesce turns
+ * "the host has not answered yet" into a known zero and the console removes its
+ * own scheduling box on the strength of it. That is #146 with the control
+ * removed rather than greyed, on main, and it is reachable on every console
+ * restart: the driver's first tick runs before the telemetry poller's first
+ * answer. `behindMainNow` supplies the null; the test below is `!== 0` so the
+ * null cannot fall into the zero branch, exactly as the parked side has always
+ * been written.
+ *
+ * BOTH REFS, ONE FACT. On main the number is the distance from reviewed code;
+ * parked it is the distance from the tip of the branch the box is actually on.
+ * They are different measurements and must never be swapped (see lib/ssh), but
+ * "it is zero, so a deploy would restart every match in progress to change
+ * nothing" reads the same either way, which is why one function answers for
+ * both — and now the two sides answer "we do not know" the same way as well.
  *
  * A REF CHANGE IS EXEMPT AND HAS TO BE, and that exemption lives here rather
  * than beside each caller. Switching branch changes WHICH CODE runs, not how
@@ -274,7 +371,12 @@ export interface NothingToDeploy {
  * with a legitimate zero in front of them.
  */
 export function nothingToDeploy(input: {
-  /** `updateAvailable` off the row — distance from main. */
+  /**
+   * Distance from main, as {@link behindMainNow} answers it: a number, or NULL
+   * for "the host has not told us". Never coalesce this to zero at a call site
+   * — that is the bug the `!== 0` below exists to be immune to, and a caller
+   * that writes `?? 0` on the way in defeats it before it runs.
+   */
   behindMain?: number | null
   /** What the host says it is running. Absent or `main` is the main case. */
   deployedRef?: string | null
@@ -303,7 +405,13 @@ export function nothingToDeploy(input: {
     }
   }
 
-  if ((input.behindMain ?? 0) > 0) return null
+  /**
+   * `!== 0`, NEVER `> 0`, AND IT IS THE SAME CHARACTER-LEVEL RULE AS ABOVE.
+   * `undefined > 0` and `null > 0` are both false, so the comparison that reads
+   * like "is there an update" quietly refuses on both spellings of "we have not
+   * looked". Only a reading that IS the number zero refuses anything here.
+   */
+  if (input.behindMain !== 0) return null
   return {
     reason:
       'The server is already running the latest code — there is nothing to deploy.',
@@ -617,13 +725,25 @@ export async function markComplete(error?: string | null): Promise<void> {
 /**
  * The badge state the console chrome shows, or null when nothing is planned.
  *
- * Collapses the five states into the two an operator reads at a glance from
- * across the room: something is coming, or something is happening now.
+ * THREE, NOT TWO, AND THE THIRD IS THE ONE THAT WAS MISSING. This collapsed the
+ * five states into "something is coming" and "something is happening now" —
+ * and `deploying` fell into the second, because `isDraining` returns true for
+ * it. So the chip said DRAINING through the entire deploy, which is the one
+ * moment it is not true: draining is the server emptying itself with players
+ * still on, and deploying is the server restarted and gone. An operator
+ * watching the chip could not tell "waiting for the last match to finish" from
+ * "the server is down right now", which are different answers to "can I ask
+ * somebody to join".
+ *
+ * `updating` IS ALSO WHAT SUPPRESSES THE HEALTH CHIPS beside it — see
+ * `updateInProgress` in lib/serverPhase. The order of the tests matters: the
+ * `deploying` check comes FIRST, because `isDraining` would otherwise claim it.
  */
 export function badgeState(
   w: MaintenanceWindow | null,
   now = Date.now(),
-): 'scheduled' | 'draining' | null {
+): 'scheduled' | 'draining' | 'updating' | null {
   if (!isLive(w)) return null
+  if (w.state === 'deploying') return 'updating'
   return isDraining(w, now) ? 'draining' : 'scheduled'
 }

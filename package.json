@@ -13,9 +13,10 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "check:secrets": "node scripts/check-secrets.mjs",
-    "verify": "npm run check:secrets && npm run check:banrule && npm run check:xpcurve && npm run check:contrast && npm run typecheck",
+    "verify": "npm run check:secrets && npm run check:banrule && npm run check:xpcurve && npm run check:chips && npm run check:contrast && npm run typecheck",
     "check:xpcurve": "tsx scripts/check-xp-curve.mjs",
     "check:banrule": "node scripts/check-ban-rule.mjs",
+    "check:chips": "tsx scripts/check-chip-suppression.mjs",
     "check:contrast": "tsx scripts/check-contrast.mjs"
   },
   "dependencies": {

@@ -105,7 +105,6 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     const existing = await maint.current()
-    const behind = existing?.updateAvailable ?? 0
 
     /**
      * IS THE BOX PARKED ON A BRANCH RIGHT NOW?
@@ -130,6 +129,27 @@ export async function POST(req: Request): Promise<Response> {
      */
     const { status: hostStatus, refUpdate } = hostView()
     const parked = isParkedOffMain(hostStatus)
+
+    /**
+     * HOW FAR BEHIND MAIN, OR NULL FOR "THE HOST HAS NOT SAID".
+     *
+     * READ FROM THE HOST SNAPSHOT, NOT OFF THE ROW, and that is the change that
+     * makes "not yet known" expressible at all. `existing?.updateAvailable ?? 0`
+     * had no way to say it: a console whose poller has not answered, and a
+     * console with no maintenance row at all, both arrived here as the number
+     * zero — which `nothingToDeploy` then read as a KNOWN zero and refused. The
+     * row is the driver's copy of this same number, one tick behind it and
+     * written only when the driver knew something; the snapshot is the number
+     * itself, and its absence is legible as absence.
+     *
+     * IT IS STILL THE SAME READING THE PANEL USES. `/api/host` hands the panel
+     * this exact object and the panel runs `behindMainNow` over it, so the card
+     * on the page and the acceptance here are one function over one snapshot,
+     * skewed by at most a poll interval. Card present, request accepted; card
+     * absent, request refused — unchanged, and now true in the unknown case too,
+     * where both sides say "go ahead".
+     */
+    const behindMain = maint.behindMainNow(hostStatus)
 
     /**
      * NOTHING TO DEPLOY, NOTHING TO SCHEDULE.
@@ -162,14 +182,16 @@ export async function POST(req: Request): Promise<Response> {
      * resolves itself.
      *
      * The automatic path is NOT relaxed or tightened by any of this. It lives
-     * in the driver behind `onMain && behind > 0` and stays exactly where it
-     * is: the rule is that automatic updates require main, not that deploying
-     * requires main. Nothing derived from `refUpdate` is written to the
-     * maintenance row, so `behind` above is still `updateAvailable` and still
-     * means distance from main and nothing else.
+     * in the driver behind `onMain && behind !== null && behind > 0` and stays
+     * exactly where it is: the rule is that automatic updates require main, not
+     * that deploying requires main. Nothing derived from `refUpdate` is written
+     * to the maintenance row, and `behindMain` above still means distance from
+     * main and nothing else — it is now read from the host snapshot rather than
+     * from the row's copy of it, which is the same number a tick fresher and,
+     * unlike the row, able to say that nobody has measured it yet.
      */
     const noDeploy = maint.nothingToDeploy({
-      behindMain: behind,
+      behindMain,
       deployedRef: hostStatus?.deployedRef ?? null,
       refUpdate,
       changingRef: Boolean(input.targetRef),
@@ -214,9 +236,17 @@ export async function POST(req: Request): Promise<Response> {
      * sitting on the row until the next driver tick clears it, which would make
      * a timed refresh of the parked branch fail with a sentence about an
      * automatic update that is not coming.
+     *
+     * AND NULL WHEN THE DISTANCE IS UNKNOWN, for the same reason. The driver's
+     * gate is now `onMain && behind !== null && behind > 0`; a tick that does not
+     * know the distance schedules nothing, so there is no deadline to collide
+     * with and no reason to refuse a time against one. `behindMain !== null &&
+     * behindMain > 0` is that gate, spelled the same way.
      */
     const deadline =
-      behind > 0 ? maint.autoDeadline(existing?.updateFirstSeenAt) : null
+      behindMain !== null && behindMain > 0
+        ? maint.autoDeadline(existing?.updateFirstSeenAt)
+        : null
     if (
       input.deployMode === 'at-time' &&
       deadline !== null &&

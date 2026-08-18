@@ -44,9 +44,23 @@ export default async function MaintenancePage() {
    * rather than from the fifteen-second `status`. The panel renders "we do not
    * know yet" for it, which is true, instead of a zero that would read as "your
    * branch has not moved".
+   *
+   * `behindMain` IS NULL ON THAT FIRST RENDER TOO, and it is now ALLOWED to be.
+   * It used to arrive as `updateAvailable ?? 0` off the maintenance row, which
+   * cannot distinguish "the poller has not answered" from "level with main" —
+   * so a console that had just booted rendered the empty state, telling an
+   * operator there was nothing to deploy on the strength of never having asked.
+   * `behindMainNow` returns null there, and null keeps the scheduling box on the
+   * page. See `nothingToDeploy`.
+   *
+   * `updateTarget` is the pair of commits an update would move between, on
+   * whichever ref the box is on. Null for longer still — it rides the same
+   * two-minute `branches` cadence as `refUpdate` — and the panel simply omits
+   * the arrow until it lands rather than guessing at either end.
    */
-  const { status, refUpdate } = hostView()
+  const { status, refUpdate, updateTarget } = hostView()
   const deployedRef = status?.deployedRef ?? null
+  const behindMain = maint.behindMainNow(status)
 
   return (
     <AppShell
@@ -75,6 +89,8 @@ export default async function MaintenancePage() {
           canRun={canRun}
           initialDeployedRef={deployedRef}
           initialRefUpdate={refUpdate}
+          initialBehindMain={behindMain}
+          initialUpdateTarget={updateTarget}
         />
       </div>
     </AppShell>
