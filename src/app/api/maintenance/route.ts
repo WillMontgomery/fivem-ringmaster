@@ -128,7 +128,7 @@ export async function POST(req: Request): Promise<Response> {
      * stated a ref — the page and this route read the same snapshot, so the
      * offer and the acceptance cannot disagree.
      */
-    const hostStatus = hostView().status
+    const { status: hostStatus, refUpdate } = hostView()
     const parked = isParkedOffMain(hostStatus)
 
     /**
@@ -138,47 +138,44 @@ export async function POST(req: Request): Promise<Response> {
      * match in progress, and delivers exactly the code that was already
      * running. There is no version of that which is what somebody meant.
      *
-     * A REF CHANGE IS EXEMPT, AND HAS TO BE. `updateAvailable` measures the
-     * distance from main; switching branch changes WHICH CODE runs, not how
-     * current it is. Without this exemption the two cases that matter most both
-     * fail: reverting to main from a parked branch sitting at main's tip
-     * (behind is 0, so "there is nothing to deploy" — while the box is visibly
-     * running something else), and switching between two branches that are both
-     * level with main.
+     * THE RULE IS NOT WRITTEN HERE, ON PURPOSE. `nothingToDeploy` in
+     * lib/maintenance is the single copy, and MaintenancePanel calls the same
+     * function to decide whether the scheduling card is on the page at all. The
+     * two decisions are the same decision: if the card is there this must
+     * accept, and if this would refuse the card must not be. Restating the
+     * condition here — even correctly, even once — is how those two drift.
      *
-     * A PARKED BOX IS THE THIRD EXEMPTION, and leaving it out is half of
-     * WillMontgomery/fivem-br-gamemode#146. `updateAvailable` is pinned at zero
-     * for the whole time the server runs a branch — deliberately, because the
-     * distance from main is not an update anybody is waiting for — so this
-     * guard read "there is nothing to deploy" at an operator who had just
-     * pushed a commit to the branch the live server was running, and refused
-     * the one action that would have shipped it. The distance from main simply
-     * does not describe whether a parked branch has moved.
+     * WHAT IT REFUSES IS A KNOWN ZERO, on whichever ref the box is on. Off main
+     * that is `refUpdate`, the distance from the tip of the branch the box is
+     * actually running, which the poller reads off the `branches` verb on its
+     * own slow cadence (lib/telemetry). Every way of NOT having that number —
+     * host silent, branch deleted from the remote, console booted a minute ago,
+     * the box's own fetch timed out — comes back as null and is allowed
+     * through, because refusing a deploy on the strength of a number we do not
+     * have is WillMontgomery/fivem-br-gamemode#146 with a better excuse. A ref
+     * change is allowed through as well; see the function.
      *
-     * THERE IS NOW A NUMBER THAT DOES, AND IT DELIBERATELY DOES NOT GATE THIS.
-     * `hostView().refUpdate` carries how far the box is behind the tip of the
-     * branch it is on, read off the `branches` verb on the poller's own slow
-     * cadence (lib/telemetry). It is what the page SAYS, and it must not become
-     * what this route ENFORCES: it is null whenever the host has not answered,
-     * whenever the branch has been deleted from the remote, and for the first
-     * couple of minutes after the console boots — and refusing a deploy on the
-     * strength of a number we may simply not have yet would re-create #146 with
-     * a better excuse. Zero is also a legitimate reason to deploy, to re-sync
-     * resources. The human who pushed the commit decides, which is what a
-     * manual deploy has always meant.
+     * IT READS THE SAME SNAPSHOT THE PAGE DOES. `hostView()` is the telemetry
+     * poller's in-memory object, and `/api/host` hands the panel that same
+     * object — so the offer and the acceptance are computed from one reading by
+     * one function, and can differ only by a poll interval of skew that
+     * resolves itself.
      *
-     * The automatic path is NOT relaxed by any of this. It lives in the driver
-     * behind `onMain && behind > 0` and stays exactly where it is: the rule is
-     * that automatic updates require main, not that deploying requires main.
-     * Nothing derived from `refUpdate` is written to the maintenance row, so
-     * `behind` above is still `updateAvailable` and still means distance from
-     * main and nothing else.
+     * The automatic path is NOT relaxed or tightened by any of this. It lives
+     * in the driver behind `onMain && behind > 0` and stays exactly where it
+     * is: the rule is that automatic updates require main, not that deploying
+     * requires main. Nothing derived from `refUpdate` is written to the
+     * maintenance row, so `behind` above is still `updateAvailable` and still
+     * means distance from main and nothing else.
      */
-    if (behind <= 0 && !input.targetRef && !parked) {
-      throw new ActionError(
-        'The server is already running the latest code — there is nothing to deploy.',
-        409,
-      )
+    const noDeploy = maint.nothingToDeploy({
+      behindMain: behind,
+      deployedRef: hostStatus?.deployedRef ?? null,
+      refUpdate,
+      changingRef: Boolean(input.targetRef),
+    })
+    if (noDeploy) {
+      throw new ActionError(noDeploy.reason, 409)
     }
 
     if (input.deployMode === 'at-time' && input.deployAt! <= drainStartsAt) {

@@ -300,13 +300,37 @@ export interface Profile {
   /** moderation — Slice 2+. */
   incidents: ProfileIncident[]
   reportsFiled: ProfileIncident[]
-  bans: Array<{
+  /**
+   * THE BAN ROW FOR THIS LICENSE, OR NULL. One, or none — never a list.
+   *
+   * IT WAS AN ARRAY AND THE ARRAY WAS A LIE. The bans table is keyed on license
+   * and a second ban OVERWRITES the first, so this could only ever hold zero or
+   * one row — but shaped as a list it invited a count, and the identity bar duly
+   * rendered "1 BAN" beside the player's name for anybody with a row, INCLUDING
+   * one that was lifted or long served. A player in good standing wore a red
+   * chip that read like a rap sheet and could never say anything but 1. The
+   * owner asked for the count to go; the shape that produced it goes with it.
+   *
+   * IT IS THE CURRENT ROW, NOT A HISTORY, AND IT IS NOT THE SAME QUESTION AS
+   * "IS THIS PLAYER BANNED". Whether it is in force is decided once, by
+   * `bans.isActive`, on the server — see the `banned` prop on ProfileView. This
+   * is what the chip SAYS when it is; the history of every ban and lift lives in
+   * `actions`, from the append-only audit log.
+   */
+  ban: {
     at: number
     reason: string
+    /** The issuing admin's display name at the time. */
     by: string
-    liftedAt?: number
-    liftedBy?: string
-  }>
+    /**
+     * Their license, when we have one, so the card can link to their profile
+     * the way the audit log links both parties. Null for a system-issued ban,
+     * and for an admin whose record has since gone.
+     */
+    byLicense: string | null
+    /** Absolute, or null for permanent. Never a duration; see lib/bans. */
+    expiresAt: number | null
+  } | null
 
   /**
    * Kicks and bans taken against them, newest first.

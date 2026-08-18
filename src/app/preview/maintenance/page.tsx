@@ -22,18 +22,26 @@ import { cn } from '@/lib/utils'
  * `?state=` picks the case:
  *   parked         on `dev`, host has not said how far behind `dev` it is
  *   parked-behind  on `dev`, THREE NEW COMMITS ON `dev` — the discovered update
- *   parked-level   on `dev`, level with it — nothing new, button still offered
+ *   parked-level   on `dev`, level with it — NO SCHEDULING BOX AT ALL
+ *   parked-stale   on `dev`, a zero the host answered from stale refs — BOX STAYS
  *   parked-live    on `dev`, a plain update scheduled and draining
  *   parked-switch  on `dev`, a window that switches to another branch
  *   main-update    on main, three commits behind — the ordinary case
  *   main-current   on main, nothing to deploy
  *   unknown        the host has not said which ref it is on
  *
- * THE THREE PARKED SHAPES ARE THE POINT OF THE NEW ONES. "Behind its branch",
- * "level with its branch" and "we have not been told" are three different
- * sentences on the same card, and only the first is an update waiting. They are
- * indistinguishable in a type check and each needs a live game box in a
+ * THE FOUR PARKED READINGS ARE THE POINT OF THE NEW ONES. "Behind its branch",
+ * "level with it", "we have not been told" and "we were told by a host that
+ * could not check" are four different readings, only the first is an update
+ * waiting, and only the SECOND may take the scheduling box off the page. They
+ * are indistinguishable in a type check and each needs a live game box in a
  * particular state to see, which is the same argument that produced this file.
+ * The two that cost #146 are `parked` and `parked-stale`: an unknown count must
+ * never read as "nothing to do" while an operator is looking at a branch they
+ * just pushed to — and now that the box VANISHES on a zero rather than greying
+ * out, there is no disabled control left to hint the action ever existed. Flip
+ * between `parked-level` and `parked-stale`: one has the box, one does not, and
+ * the underlying number is 0 in both.
  *
  * The panel is passed `frozen` so it holds the fixture instead of polling the
  * real console out from under it. See the prop's own comment.
@@ -101,12 +109,12 @@ interface View {
  * the real page should be able to tell at a glance that nothing here was
  * invented in a different shape from the real thing.
  */
-const refAt = (ref: string, behind: number): RefUpdate => ({
+const refAt = (ref: string, behind: number, stale = false): RefUpdate => ({
   ref,
   behind,
   tipSha: '9c1e77a4b02d5f38e6ab41cc7d90e2f5138ba604',
   deployedSha: '4f2b9c1de8a7365019bd4ac2e5f80917bb3c6d24',
-  stale: false,
+  stale,
   at: NOW - 30_000,
 })
 
@@ -136,13 +144,37 @@ const views: Record<string, View> = {
   },
 
   /**
-   * Parked and level with the branch. The card and its button stay — a deploy
-   * here still re-syncs resources — but the page must not imply an update is
-   * waiting, and must not be confused with the `parked` shape above.
+   * PARKED AND LEVEL — THE ONE STATE WITH NO SCHEDULING BOX AT ALL. The owner:
+   * "the schedule an update box shouldn't even exist when there is no update
+   * found." The deploy would end every match in progress and change nothing,
+   * and `api/maintenance` refuses the same request with the same rule.
+   *
+   * FOUR THINGS TO CHECK HERE, and the last two are the ones that would make
+   * this a bug rather than a feature: the scheduling card is gone; the space it
+   * left says what is true and names `dev` rather than sitting empty; the parked
+   * card above still offers REVERT TO MAIN; and "Deploy a different branch" is
+   * still below it. A box level with its branch must not be a box an operator
+   * cannot leave.
    */
   'parked-level': {
     deployedRef: 'dev',
     refUpdate: refAt('dev', 0),
+    window: BASE,
+    players: 7,
+  },
+
+  /**
+   * A ZERO THE HOST DOES NOT STAND BEHIND, WHICH IS NOT A ZERO. `stale` means
+   * the box could not finish its `git fetch` inside the SSH budget and answered
+   * from the refs it already had, so the count MAY UNDERCOUNT — and an
+   * undercounted zero is "we have not looked", not "there is nothing there".
+   * This must render and behave as `parked` does, button live: it is the
+   * likeliest way to re-create fivem-br-gamemode#146, because it happens
+   * exactly when GitHub is slow and somebody has just pushed.
+   */
+  'parked-stale': {
+    deployedRef: 'dev',
+    refUpdate: refAt('dev', 0, true),
     window: BASE,
     players: 7,
   },
@@ -284,7 +316,9 @@ async function Preview({
           , {view.window?.updateAvailable ?? 0} behind main, behind its own
           branch{' '}
           {view.refUpdate
-            ? `${view.refUpdate.behind} (${view.refUpdate.ref})`
+            ? `${view.refUpdate.behind} (${view.refUpdate.ref})${
+                view.refUpdate.stale ? ', from stale refs — read as not known' : ''
+              }`
             : '(not known)'}
           {deadline ? ', automatic deadline set' : ', no automatic deadline'}.
           Not reachable in production.

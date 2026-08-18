@@ -1,4 +1,9 @@
 import { ddb, tables } from './dynamo'
+// TYPE-ONLY, AND IT HAS TO STAY THAT WAY. `lib/ssh` imports `node:child_process`
+// at module scope, and the two rules below are read by MaintenancePanel, which
+// is a client component. `import type` is erased outright, so nothing from the
+// SSH channel reaches a browser bundle.
+import type { RefUpdate } from './ssh'
 
 /**
  * Scheduled maintenance.
@@ -176,6 +181,135 @@ export function autoDeadline(updateFirstSeenAt: number | null | undefined):
   | null {
   if (!updateFirstSeenAt) return null
   return updateFirstSeenAt + AUTO_AFTER_MS
+}
+
+/**
+ * HOW FAR BEHIND ITS OWN BRANCH THE BOX IS, OR NULL FOR "WE DO NOT KNOW".
+ *
+ * ONE DERIVATION, READ BY THE WORDS AND BY THE RULE. The card's sentences and
+ * the gate on its button are the same fact seen twice, and the way that fact
+ * goes wrong is subtle enough that it must not be spelled out in two places:
+ * see `refUpdateFrom` in lib/ssh for why a count paired with the wrong ref, or
+ * a confident zero, is worse than silence.
+ *
+ * A READING TAKEN FOR ANOTHER BRANCH IS NOT A READING. The poller re-reads this
+ * on its own two-minute cadence, so between a switch landing and the next
+ * answer `deployedRef` already names the new branch while `refUpdate` still
+ * describes the old one. Pairing them would print the previous branch's count
+ * beside the current branch's name.
+ *
+ * AND A STALE ZERO IS NOT A ZERO. `stale` means the box could not finish its
+ * `git fetch` inside the SSH budget and answered from the refs already on disk,
+ * so `behind` MAY UNDERCOUNT — which makes a stale zero exactly the shape of
+ * "we have not looked yet", not "we looked and there is nothing". Anything that
+ * refuses an action on the strength of a zero has to refuse this one too, or
+ * WillMontgomery/fivem-br-gamemode#146 comes back as "the fetch timed out and
+ * the console told an operator with a commit in hand that there was nothing to
+ * ship". A stale NONZERO is kept: it is a floor, and a floor is information.
+ */
+export function refBehindNow(
+  deployedRef: string | null | undefined,
+  refUpdate: Pick<RefUpdate, 'ref' | 'behind' | 'stale'> | null | undefined,
+): number | null {
+  if (typeof deployedRef !== 'string' || deployedRef === 'main') return null
+  if (!refUpdate || refUpdate.ref !== deployedRef) return null
+  if (refUpdate.stale && refUpdate.behind === 0) return null
+  return refUpdate.behind
+}
+
+/** Why a deploy cannot be asked for, in the three registers it gets read in. */
+export interface NothingToDeploy {
+  /** After the fact — the body of the 409, and what a toast would show. */
+  reason: string
+  /**
+   * Instead of the box — what IS true, stated in one line.
+   *
+   * The scheduling card does not render at all when this object exists (the
+   * owner: "the schedule an update box shouldn't even exist when there is no
+   * update found"), and a card that renders nothing reads as a broken page. So
+   * the space says the fact the missing box would have argued with, and it
+   * names the ref, because "running the latest code" under a banner that says
+   * the server is not on main is only true of one branch.
+   */
+  state: string
+  /** And what would bring the box back. */
+  fix: string
+}
+
+/**
+ * IS THERE A DEPLOY A HUMAN COULD ASK FOR? Null means yes, go ahead.
+ *
+ * THE ONE COPY OF THIS RULE. It is called twice: by `api/maintenance` before it
+ * schedules, and by `MaintenancePanel` to decide whether the scheduling box is
+ * on the page at all. Those two must never disagree — a box that produces a 409
+ * is a console lying to an operator, and a missing box over a request the server
+ * would have honoured is #146 again — so neither of them states the rule itself.
+ * Both read the SAME telemetry snapshot as well as the same function
+ * (`hostView()` in the route, the same object over `/api/host` in the panel), so
+ * the only way they can differ is one poll interval of skew, which resolves
+ * itself. Absent box, refused request; present box, accepted request — one
+ * expression decides both.
+ *
+ * KNOWN ZERO IS THE ONLY REFUSAL. Not "unknown", which is the trap: the count
+ * against a parked branch is null whenever the host has not answered, whenever
+ * the branch is gone from the remote, for the first couple of minutes after the
+ * console boots, and whenever the box's own fetch timed out. Refusing on any of
+ * those would re-create #146 with a better excuse — the operator has the commit,
+ * and we would be declining to ship it on the strength of a number we do not
+ * have. Unknown renders the box and takes the deploy, and that matters more now
+ * that the box disappears rather than greys out: there is no longer a disabled
+ * control left behind to hint that the action exists at all.
+ *
+ * BOTH REFS, ONE FACT. On main the number is `updateAvailable`, distance from
+ * reviewed code; parked it is the distance from the tip of the branch the box is
+ * actually on. They are different measurements and must never be swapped (see
+ * lib/ssh), but "it is zero, so a deploy would restart every match in progress
+ * to change nothing" reads the same either way, which is why one function
+ * answers for both.
+ *
+ * A REF CHANGE IS EXEMPT AND HAS TO BE, and that exemption lives here rather
+ * than beside each caller. Switching branch changes WHICH CODE runs, not how
+ * current it is: reverting to main from a branch sitting at main's tip, and
+ * switching between two branches level with each other, are both real actions
+ * with a legitimate zero in front of them.
+ */
+export function nothingToDeploy(input: {
+  /** `updateAvailable` off the row — distance from main. */
+  behindMain?: number | null
+  /** What the host says it is running. Absent or `main` is the main case. */
+  deployedRef?: string | null
+  /** The parked-branch reading, unpaired; {@link refBehindNow} pairs it. */
+  refUpdate?: Pick<RefUpdate, 'ref' | 'behind' | 'stale'> | null
+  /** True when the same action also switches the box to another ref. */
+  changingRef: boolean
+}): NothingToDeploy | null {
+  if (input.changingRef) return null
+
+  const ref = input.deployedRef
+  if (typeof ref === 'string' && ref !== 'main') {
+    /**
+     * `!== 0`, NEVER `!behind`, AND THAT ONE CHARACTER IS THE WHOLE SAFETY OF
+     * THIS FUNCTION. `refBehindNow` returns a number or null, and in JavaScript
+     * `!0` and `!null` are both true — so the falsy spelling folds "we looked
+     * and there is nothing" together with "we have not looked", which is
+     * precisely the collapse that produces #146. Only a reading that IS the
+     * number zero refuses anything here.
+     */
+    if (refBehindNow(ref, input.refUpdate) !== 0) return null
+    return {
+      reason: `${ref} has not moved since this server deployed — there is nothing to deploy.`,
+      state: `The server is running the latest code on ${ref}.`,
+      fix: `There is nothing to schedule until somebody pushes to ${ref}. Putting a different branch on the box — or main back — is a different action, and it is below.`,
+    }
+  }
+
+  if ((input.behindMain ?? 0) > 0) return null
+  return {
+    reason:
+      'The server is already running the latest code — there is nothing to deploy.',
+    state: 'The server is running the latest code.',
+    fix: 'Maintenance can only be scheduled when there is an update to deploy.',
+  }
 }
 
 /** States in which the window still governs the server's behaviour. */

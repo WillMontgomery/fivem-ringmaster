@@ -271,20 +271,23 @@ export default async function PlayerProfilePage({
       : null,
 
     // ---- moderation ----
-    bans: ban
-      ? [
-          {
-            at: ban.at,
-            reason: ban.reason,
-            by: ban.byName,
-            liftedAt: ban.liftedAt ?? undefined,
-            liftedBy: ban.liftedByName ?? undefined,
-          },
-        ]
-      : [],
+    // THE CURRENT ROW, WHATEVER STATE IT IS IN — active, lifted or served. What
+    // the profile does with it depends entirely on `banned` below, which is the
+    // one place that decides. `liftedAt`/`liftedBy` are deliberately not carried
+    // over: nothing reads them, and a lift is already a row of its own in the
+    // audit log beneath.
+    ban: ban
+      ? {
+          at: ban.at,
+          reason: ban.reason,
+          by: ban.byName,
+          byLicense: ban.by,
+          expiresAt: ban.expiresAt,
+        }
+      : null,
 
     // EVERY KICK AND BAN, FROM THE AUDIT LOG. The bans table holds one row per
-    // license, so a second ban overwrites the first — `p.bans` above is the
+    // license, so a second ban overwrites the first — `p.ban` above is the
     // CURRENT ban only, and this is the history. They are different questions
     // and the page asks both.
     actions: actions.map((a) => ({

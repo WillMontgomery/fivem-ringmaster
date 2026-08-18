@@ -34,7 +34,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { postJson } from '@/lib/api'
-import { AUTO_AFTER_MS, type MaintenanceWindow } from '@/lib/maintenance'
+import {
+  AUTO_AFTER_MS,
+  nothingToDeploy,
+  refBehindNow,
+  type MaintenanceWindow,
+} from '@/lib/maintenance'
 import type { HostBranch, RefUpdate } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 
@@ -171,16 +176,15 @@ export function MaintenancePanel({
    * How many commits the parked branch has gained since this box deployed, or
    * null for "we do not know".
    *
-   * THE READING IS ONLY USED UNDER THE NAME IT WAS TAKEN FOR. The poller
-   * re-reads this on its own cadence, so between a switch landing and the next
-   * reading `deployedRef` already names the new branch while `refUpdate` still
-   * describes the old one. Pairing them would print the previous branch's count
-   * beside the current branch's name — which is precisely the confusion of two
-   * "behind" numbers this whole card is trying to end. A mismatch reads as
-   * unknown for one interval instead.
+   * DERIVED IN lib/maintenance, NOT HERE, because the same reading now decides
+   * two things: what these sentences say, and whether the button under them can
+   * be pressed. The pairing rules it applies — a count is only valid under the
+   * ref it was taken for, and a STALE zero is not a zero — are stated there and
+   * are the difference between "there is nothing to ship" and "we have not
+   * looked". Both readings must come out of one place or the card will
+   * eventually describe a state its own button disagrees with.
    */
-  const refBehind =
-    parked && refUpdate && refUpdate.ref === deployedRef ? refUpdate.behind : null
+  const refBehind = refBehindNow(deployedRef, refUpdate)
 
   /**
    * Every time this panel DISPLAYS is in the reader's stated zone and says so.
@@ -866,35 +870,83 @@ export function MaintenancePanel({
       : null
 
   /**
-   * IS THERE A DEPLOY A HUMAN COULD ASK FOR? Not "is the box behind main".
+   * WHY THERE IS NO BOX, OR NULL WHEN THERE IS ONE.
    *
-   * THIS IS THE FIX FOR WillMontgomery/fivem-br-gamemode#146 and it is worth
-   * stating what was wrong, because the shape of the old code looked
-   * deliberate. The card below was reached through `parked ? null : behind > 0`
-   * — two separate gates, both measured against main, and each one alone was
-   * enough to remove the ONLY ordinary schedule button in the console. Parked
-   * on `dev`, the first gate deleted the card outright; even without it the
-   * second would have, because `behind` is the distance from MAIN and the
-   * driver holds it at zero the whole time the server runs a branch. The
-   * operator was left with the branch picker as the sole way to schedule
-   * anything, which means re-choosing a branch to do a plain update of the
-   * branch already on the box.
+   * THE OWNER'S RULE, IN HIS WORDS: "the schedule an update box shouldn't even
+   * exist when there is no update found." Not a disabled button with a sentence
+   * under it — the card itself. Known zero, on either ref, is a restart that
+   * ends every match in progress to deliver the code that is already running,
+   * and the branch picker below has always refused exactly that on its own rows
+   * ("Already running, at this exact commit"). The two now agree.
    *
-   * The suppression was not arbitrary — the old comment here was right that
-   * rendering "the server is running the latest code" under a banner saying the
-   * server is on an unreviewed branch says something false. The mistake was
-   * treating a card with a button in it and a card saying there is nothing to
-   * do as one thing that could be dropped together. What a parked box needs is
-   * neither: it is a third state, with its own words and the same button.
+   * IT IS THE SERVER'S RULE, LITERALLY THE SAME FUNCTION. `api/maintenance`
+   * calls `nothingToDeploy` before it schedules and throws its `reason` as a
+   * 409; this calls it to decide whether the card renders. There is no second
+   * copy to fall out of step, and the inputs are the same telemetry snapshot —
+   * the route reads `hostView()`, this reads that same object over `/api/host`
+   * every five seconds. Card absent, request refused; card present, request
+   * accepted. Not two rules that happen to agree: one expression, twice.
    *
-   * THE RULE, AND IT IS NOT SYMMETRIC. Automatic updates require main; a
-   * human-initiated deploy does not. The 72-hour automation exists to stop the
-   * server drifting from reviewed code while nobody is looking, and it must
-   * never fire at a box somebody is testing on — that gate is `onMain` in the
-   * driver and this change does not go near it. A person pressing a button is
-   * not the thing that rule was written about. They can see the banner, they
-   * chose the branch, and refusing them the action does not keep the server on
-   * main; it only makes them use the branch picker to get there.
+   * UNKNOWN STILL GETS THE BOX, and it is now the ONLY thing standing between
+   * this change and #146. `refBehindNow` answers null for a host that has not
+   * spoken, a branch gone from the remote, a console that booted a minute ago
+   * and a reading the box itself admits is stale — and every one of those has to
+   * leave the operator able to ship the commit in their hand. It matters more
+   * than it did when the button merely greyed out: there is no disabled control
+   * left behind to say the action exists. `/preview/maintenance?state=parked`
+   * and `?state=parked-stale` are those cases; the card and its button are live
+   * in both, and `nothingToDeploy` compares `!== 0` rather than testing falsy
+   * precisely so `null` cannot fall into the `0` branch.
+   *
+   * NOTHING HERE TOUCHES THE REF-CHANGE PATH, and that is what stops a level box
+   * stranding anybody. Switching branch is a different action against a
+   * different control: `BranchPicker` is its own Card below, rendered outside
+   * this decision, and "Revert to main" is a third control on the parked card
+   * above. An operator on a `dev` that has not moved keeps both. The rule is
+   * passed `changingRef: false` here because this button never sends a
+   * `targetRef` — the picker's "Schedule switch" does, and the same function
+   * exempts it.
+   */
+  const noDeploy = nothingToDeploy({
+    behindMain: behind,
+    deployedRef,
+    refUpdate,
+    changingRef: false,
+  })
+
+  /**
+   * WHICH CARD THIS PAGE IS: the one that schedules, or the one that says there
+   * is nothing to schedule. `noDeploy` decides, and nothing else does.
+   *
+   * WHAT #146 WAS, BECAUSE THIS IS THE LINE THAT CAUSED IT. This used to read
+   * `parked ? null : behind > 0` — two gates, both measured against MAIN, and
+   * either one alone removed the only ordinary schedule button in the console
+   * from a parked box. `behind` is distance from main and the driver holds it at
+   * zero the whole time the server runs a branch, so an operator who had just
+   * pushed to `dev` was told there was nothing to do. The number was not zero
+   * because there was nothing; it was zero because nobody was measuring the
+   * right thing.
+   *
+   * WHAT MAKES HIDING SAFE NOW IS THAT THERE IS A RIGHT THING TO MEASURE.
+   * `refUpdateFrom` (lib/ssh) measures the box against the tip of the branch it
+   * is actually on and returns null — never zero — when it cannot. So an absent
+   * card means "we asked, and there is nothing", which is a fact worth acting
+   * on, where before it meant "we asked the wrong question". Null still renders
+   * the card. That distinction is the entire safety of this change and it is
+   * enforced in one place, `nothingToDeploy`, with `!== 0`.
+   *
+   * THE SUPPRESSION THAT WAS DROPPED, AND WHY IT IS BACK. The pre-#146 comment
+   * argued that "the server is running the latest code" under a banner saying
+   * the server is on an unreviewed branch says something false. It was right,
+   * and the answer is not to suppress the sentence but to qualify it: the empty
+   * state below names the ref — "running the latest code on dev" — which is true
+   * of exactly the branch it names and says nothing about main. `nothingToDeploy`
+   * writes that sentence, beside the 409 it would refuse with.
+   *
+   * THE RULE IS STILL NOT SYMMETRIC. Automatic updates require main; a
+   * human-initiated deploy does not. The 72-hour automation must never fire at a
+   * box somebody is testing on — that gate is `onMain && behind > 0` in the
+   * driver and none of this goes near it.
    *
    * NOTHING HERE PINS A SHA. An update is `scheduleWith(null)` — no
    * `targetRef`, no `targetSha` — which leaves `tools/deploy.sh` to resolve the
@@ -906,23 +958,12 @@ export function MaintenancePanel({
    * the request, and the box would refuse it the moment the branch moved.
    * Pinning belongs to the branch picker, where a human has read the commit
    * they are choosing.
-   *
-   * `refBehind` DOES NOT GATE THIS. Now that the console knows how far behind
-   * its own branch a parked box is, the tempting next step is to hide the card
-   * when that number is zero — and it would re-create #146 in a subtler form.
-   * The number can be unknown (host unreachable, branch deleted, a dispatcher
-   * that answered from stale refs), and every one of those would read as
-   * "nothing to do" while the operator is looking at a branch they just pushed
-   * to. A redeploy is also legitimately wanted at zero, to re-sync resources.
-   * The number changes what the card SAYS; it never removes the button.
    */
-  const canSchedule = parked || behind > 0
-
   return (
     <div className="space-y-4">
       {parkedCard}
 
-      {canSchedule ? (
+      {noDeploy === null ? (
         <Card className="surface-edge gap-0 px-5 py-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -955,12 +996,16 @@ export function MaintenancePanel({
                     </Badge>
                   </div>
                   {/*
-                    THREE SENTENCES FOR THREE STATES, because "we have not
-                    looked" and "we looked and there is nothing" are not the
-                    same fact and the operator's next move differs. Only the
-                    first is an update waiting; the third is the honest shape of
-                    a host that has not answered yet, and it says what the
-                    button does rather than what the branch has done.
+                    TWO SENTENCES FOR THE TWO STATES THAT REACH THIS CARD, and
+                    the third is deliberately not here. A parked box has three
+                    readings — behind, level, and not known — but "level" no
+                    longer renders a card at all, so this ternary must not grow a
+                    branch for it: dead copy for an unreachable state is how a
+                    page ends up describing something it cannot show. The
+                    remaining two are "there is an update" and "we have not been
+                    told", and the second says what the button DOES rather than
+                    what the branch has done, because nothing is known about the
+                    branch.
                   */}
                   <p className="mt-1 text-sm text-muted-foreground">
                     {refBehind ? (
@@ -974,16 +1019,6 @@ export function MaintenancePanel({
                         {refBehind === 1 ? 'it' : 'them'} and restarts — the same
                         drain as any other window, so the server empties first
                         and nobody loses a match.
-                      </>
-                    ) : refBehind === 0 ? (
-                      <>
-                        <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
-                          {deployedRef}
-                        </code>{' '}
-                        has not moved since this server deployed, so there is
-                        nothing new to take. Deploying anyway still drains and
-                        restarts — worth it to re-sync resources, not worth it
-                        for the code.
                       </>
                     ) : (
                       <>
@@ -1053,6 +1088,12 @@ export function MaintenancePanel({
               the sentence above, and the confirmation on the live window.
               Varying the verb as well made the ref look like a consequence of
               the verb rather than the only thing that differs.
+            */}
+            {/*
+              NEVER DISABLED, BECAUSE IT IS NEVER HERE WHEN IT WOULD BE. The
+              card this button lives in does not render at all unless there is
+              something to deploy — see `noDeploy` — so the only state left for
+              the control itself is "in flight".
             */}
             {canRun && (
               <Button disabled={busy} onClick={schedule}>
@@ -1169,11 +1210,32 @@ export function MaintenancePanel({
           )}
         </Card>
       ) : (
+        /*
+          WHERE THE BOX WAS, RATHER THAN A HOLE WHERE THE BOX WAS.
+          The scheduling card is gone on the owner's instruction, and a panel
+          that renders nothing reads as a page that failed to load — especially
+          here, where an admin arrived intending to do something. So the space
+          answers the question the missing card would have: there is no update,
+          on this ref, and here is what would change that.
+
+          BOTH SENTENCES COME FROM THE RULE THAT REMOVED THE CARD. `state` and
+          `fix` are written beside the `reason` the server would refuse the same
+          request with, so what the page says and what the API would say cannot
+          drift into disagreeing about the same fact. Off main both name the
+          branch, which is what makes "running the latest code" true here at all:
+          it is a statement about `dev`, under a banner that has just said the
+          server is not on main, and the two do not contradict each other.
+
+          THE GREEN TICK IS STILL RIGHT OFF MAIN. This card answers one question
+          — is there an update to schedule — and the answer is genuinely "no, you
+          are current". Whether being on `dev` at all is fine is the banner's
+          question, and the banner is still saying no.
+        */
         <Card className="surface-edge items-center px-6 py-12 text-center">
           <CircleCheck className="size-6 text-live" />
-          <p className="mt-2 text-sm">The server is running the latest code.</p>
+          <p className="mt-2 text-sm">{noDeploy.state}</p>
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Maintenance can only be scheduled when there is an update to deploy.
+            {noDeploy.fix}
           </p>
         </Card>
       )}

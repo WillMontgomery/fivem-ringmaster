@@ -6,7 +6,7 @@ import {
   DiscordChromeStateProvider,
 } from '@/components/DiscordChrome'
 import { ProfileView } from '@/components/ProfileView'
-import type { Ban } from '@/lib/bans'
+import { isActive, type Ban } from '@/lib/bans'
 import { accentSurface } from '@/lib/contrast'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 import { CATEGORY_LABEL } from '@/lib/incidents'
@@ -44,7 +44,12 @@ import { thresholdFor } from '@/lib/xp'
  *   ?state=      match history — played / legacy / never / unreadable
  *   ?incidents=  0, 1, 5, 6 and 43 rows, for the tabs and the page boundary
  *   ?xp=         the reported truncation value, and the curve's worst case
- *   ?mod=        the top bar's moderation buttons, in each of their shapes
+ *   ?mod=        the ban row: the top bar's buttons AND the BANNED chip beside
+ *                the name, which read the same row. `banned` is permanent,
+ *                `banned-temp` counts down and was issued by `system`, `served`
+ *                is a real ban that has run out — no chip at all, which is the
+ *                case the owner asked for and the one a harness that only ever
+ *                passed `bans: []` could never show
  *   ?names=      the IN-GAME rename history: never renamed, renamed twice, and
  *                enough renames to reach the "+N more" overflow
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
@@ -423,10 +428,51 @@ const ACTIVE_BAN: Ban = {
   playerName: 'Preview Player',
 }
 
+/**
+ * A TEMPORARY BAN, AND A SYSTEM-ISSUED ONE, IN THE SAME FIXTURE.
+ *
+ * The countdown on the BANNED chip's card has three shapes and only one of them
+ * is reachable from `ACTIVE_BAN`: permanent says so and shows no clock, a live
+ * expiry counts down, and an expiry already in the past is neither (nothing
+ * sweeps this table — `bans.isActive` simply stops counting it). This is the
+ * middle one, at four days and change from the preview's `now`.
+ *
+ * It is issued by `system` on purpose, which is the OTHER branch on that card:
+ * `by` is null for a system ban, so the admin renders as plain text rather than
+ * as a link to a profile that does not exist. An automatic ban is also the one
+ * that realistically has an expiry on it.
+ */
+const TEMP_BAN: Ban = {
+  license: LICENSE,
+  at: BASE - 2 * HOUR,
+  by: null,
+  byName: 'system',
+  reason: 'Anticheat: impossible movement across 3 matches',
+  expiresAt: BASE + 99 * HOUR,
+  playerName: 'Preview Player',
+}
+
+/**
+ * A BAN THAT IS NO LONGER IN FORCE, WHICH MUST SHOW NO CHIP AT ALL.
+ *
+ * THE CASE THE OWNER WAS LOOKING AT. The identity bar used to render "1 BAN" for
+ * any row in this table, so this player — banned once, served it, in good
+ * standing since — wore a red chip beside their name for good. The chip is now
+ * driven by `bans.isActive` alone: nothing here, and the ban itself in the
+ * Kicks and bans panel below, which is where a history belongs.
+ */
+const SERVED_BAN: Ban = {
+  ...ACTIVE_BAN,
+  reason: 'Griefing — 24 hours',
+  expiresAt: BASE - 10 * HOUR,
+}
+
 const MOD_CASES = {
   online: { online: true, canBan: true, ban: null },
   offline: { online: false, canBan: true, ban: null },
   banned: { online: false, canBan: true, ban: ACTIVE_BAN },
+  'banned-temp': { online: false, canBan: true, ban: TEMP_BAN },
+  served: { online: true, canBan: true, ban: SERVED_BAN },
   noscope: { online: true, canBan: false, ban: null },
 } as const
 
@@ -719,7 +765,23 @@ function fixture(
       : null,
     incidents: reportsAgainst(counts.against),
     reportsFiled: reportsFiledBy(counts.filed),
-    bans: [],
+    /*
+     * THE SAME ROW THE BUTTONS GET, MAPPED THE WAY THE REAL PAGE MAPS IT.
+     *
+     * This was `bans: []` — a fixture that made the identity bar's ban chip
+     * unreviewable here, which is how a chip counting lifted and served bans
+     * survived. The chip and the moderation buttons read one row on the real
+     * page, so they read one row here too, and `?mod=` moves both together.
+     */
+    ban: MOD_CASES[mod].ban
+      ? {
+          at: MOD_CASES[mod].ban.at,
+          reason: MOD_CASES[mod].ban.reason,
+          by: MOD_CASES[mod].ban.byName,
+          byLicense: MOD_CASES[mod].ban.by,
+          expiresAt: MOD_CASES[mod].ban.expiresAt,
+        }
+      : null,
     /*
      * KICKS AND BANS, INCLUDING THE ROW THAT MUST NOT APPEAR (#22 item 6).
      *
@@ -873,6 +935,7 @@ async function Preview({
   const { matches, stats } = MATCH_CASES[state]
   const p = fixture(matches, stats, xp, incidents, mod, discord, names)
   const now = BASE + 5 * 60_000
+  const banRow = MOD_CASES[mod].ban
 
   // Built here and NOT awaited, exactly as the real page builds it — awaiting it
   // would hide the one behaviour half these cases exist to show.
@@ -915,10 +978,17 @@ async function Preview({
         <AccentReadout discord={discord} />
       </nav>
 
+      {/*
+        `isActive`, NOT `ban !== null`, AND THAT IS THE POINT OF THE `served`
+        CASE. The real page computes this prop with `bans.isActive` — the one
+        place that decides what banned means — so a harness that shortcut it to
+        "there is a row" would show the chip on exactly the profile the owner
+        asked to stop showing it on, and would go on passing.
+      */}
       <ProfileView
         p={p}
         now={now}
-        banned={MOD_CASES[mod].ban !== null}
+        banned={banRow !== null && isActive(banRow, now)}
         categoryLabel={CATEGORY_LABEL}
         moderation={MOD_CASES[mod]}
       />

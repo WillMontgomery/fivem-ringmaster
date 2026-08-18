@@ -154,12 +154,29 @@ function Figure({
   value,
   label,
   className,
+  wrap = false,
 }: {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   value: string | number
   label: string
   /** Grid placement, for figures whose value needs more than one column. */
   className?: string
+  /**
+   * LET THIS VALUE TAKE A SECOND LINE INSTEAD OF LOSING ITS END.
+   *
+   * `truncate` is right for every figure that is ONE number: a count clipped
+   * mid-digit is unreadable either way, and no cell in this app is narrow
+   * enough to clip one. It is wrong for a value made of TWO numbers with a
+   * separator, because the half that gets cut is a fact of its own — which is
+   * exactly how "2,707 / 2,8…" shipped twice (#22 item 11, then again when a
+   * value was promoted into a fixed grid without measuring).
+   *
+   * So the one figure that carries a pair opts out. It breaks at the space
+   * around the slash and only ever does so where the alternative was ellipsis:
+   * measured at 375 and in the 1024-1130 band, one line everywhere else. Both
+   * numbers survive at every width, which is the property that matters.
+   */
+  wrap?: boolean
 }) {
   return (
     <div className={cn('min-w-0', className)}>
@@ -167,7 +184,14 @@ function Figure({
         <Icon className="size-3" />
         {label}
       </div>
-      <div className="mt-1 truncate font-mono text-xl tabular-nums">{value}</div>
+      <div
+        className={cn(
+          'mt-1 font-mono text-xl tabular-nums',
+          wrap ? 'break-words' : 'truncate',
+        )}
+      >
+        {value}
+      </div>
     </div>
   )
 }
@@ -1289,6 +1313,130 @@ function IdLabel({ label, body }: { label: string; body: string[] }) {
   )
 }
 
+/**
+ * The chip that says a player is banned, and the record behind it on hover.
+ *
+ * WHAT IT REPLACED. Two chips sat here: "Currently banned", which was correct
+ * and said nothing else, and "1 BAN", a count of a row that can only ever be one
+ * and that appeared for lifted and served bans too. The owner asked for the
+ * count to go and for the remaining chip to read plainly — and a moderator who
+ * then wants to know WHY, WHO and FOR HOW LONG had to scroll to a panel.
+ *
+ * A CARD RATHER THAN A TOOLTIP, by rule 5 of docs/hover-text.md: this is three
+ * labelled rows, which is a layout. A single-line pill cannot hold a free-text
+ * reason, a linked admin and a countdown.
+ *
+ * THE SAME IDIOM AS `IdLabel`, DELIBERATELY, AND FOR THE SAME REASON: one
+ * treatment on this page rather than two. Trigger rendered as the chip itself
+ * (`HoverCardTrigger` renders an `<a>` left alone, which would nest an anchor
+ * with no href beside the player's name), the affordance visible rather than
+ * discovered by accident, and EVERY STRING IN THE CARD ALSO IN THE DOM as
+ * `sr-only` — Base UI's popup carries no `role` and no `aria-describedby`, and
+ * an inert chip cannot be focused, so the hover reaches a sighted mouse user and
+ * nobody else. The rows are built once, as strings, and rendered twice.
+ *
+ * THE ADMIN LINKS WHERE WE HAVE A LICENSE, which is how `AuditList` and the
+ * incident rows already treat both parties: moderation is a thing people do to
+ * people. A system-issued ban has no license and renders as plain text rather
+ * than a link to nowhere. The spoken copy carries the name either way.
+ */
+function BannedChip({
+  ban,
+  now,
+}: {
+  ban: Profile['ban']
+  now: number
+}) {
+  const chip =
+    'gap-1 border-0 bg-danger/10 text-xs font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30'
+
+  /*
+   * THE CHIP STANDS ALONE IF THE ROW IS MISSING. `banned` is decided on the
+   * server by `bans.isActive` and this is the row it was decided from, so the
+   * two arrive together — but a chip that threw, or vanished, because the detail
+   * behind it was absent would trade the most important fact on the page for the
+   * least. The fact is the chip; the card is the elaboration.
+   */
+  if (!ban) {
+    return (
+      <Badge className={chip}>
+        <Ban className="size-3" />
+        Banned
+      </Badge>
+    )
+  }
+
+  /*
+   * PERMANENT SAYS SO AND COUNTS DOWN TO NOTHING. `expiresAt` is null for
+   * permanent (lib/bans — an absolute instant or nothing, never a duration), so
+   * there is no arithmetic to do and no "expires in NaN" to render.
+   *
+   * AND AN EXPIRY IN THE PAST IS ITS OWN SENTENCE. Nothing sweeps this table:
+   * `isActive` simply stops counting a ban once its instant has passed, and the
+   * row stays. A page rendered a moment before that boundary — or left open
+   * across it — would otherwise ask `humanDuration` for a negative number, which
+   * answers "—". Say what actually happened instead.
+   *
+   * A DURATION, NOT A TIMESTAMP, because "in 4 days" is the question a moderator
+   * is asking. The instant it was issued is in Kicks and bans below, with the
+   * rest of the history.
+   */
+  const expiry =
+    ban.expiresAt === null
+      ? 'Permanent — it does not expire.'
+      : ban.expiresAt <= now
+        ? 'The end of it has passed — they are no longer banned.'
+        : `Ends in ${humanDuration(ban.expiresAt - now)}.`
+
+  const rows = [
+    { label: 'Reason', value: ban.reason, license: null },
+    { label: 'Banned by', value: ban.by, license: ban.byLicense },
+    { label: 'How long', value: expiry, license: null },
+  ]
+
+  return (
+    <HoverCard>
+      <HoverCardTrigger render={<Badge className={cn(chip, 'cursor-help')} />}>
+        <Ban className="size-3" />
+        {/* The dotted underline is the affordance. A chip that hides its own
+            explanation until somebody happens to point at it is the complaint
+            that produced `IdLabel`; `cursor-help` alone only pays out once the
+            pointer is already there. */}
+        <span className="underline decoration-dotted decoration-danger/50 underline-offset-2">
+          Banned
+        </span>
+        <span className="sr-only">
+          . {rows.map((r) => `${r.label}: ${r.value}`).join(' ')}
+        </span>
+      </HoverCardTrigger>
+      <HoverCardContent side="bottom" align="start" className="w-72">
+        <p className="text-sm font-medium">Banned</p>
+        <dl className="mt-1.5 space-y-1.5 text-sm">
+          {rows.map((r) => (
+            <div key={r.label}>
+              <dt className="text-xs uppercase tracking-wider text-muted-foreground">
+                {r.label}
+              </dt>
+              <dd className="text-foreground">
+                {r.license ? (
+                  <Link
+                    href={`/players/${encodeURIComponent(r.license)}`}
+                    className="underline underline-offset-2 transition-colors hover:text-muted-foreground"
+                  >
+                    {r.value}
+                  </Link>
+                ) : (
+                  r.value
+                )}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </HoverCardContent>
+    </HoverCard>
+  )
+}
+
 /** What the display-name row means, in the card and in the DOM. */
 const DISPLAY_NAME_NOTE = [
   'What Discord shows for this account right now — free text the player can change at any time, so it identifies nobody.',
@@ -1676,18 +1824,21 @@ function ProfileSkeleton({ moderation }: { moderation: boolean }) {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Progression: two figures on a row, then the two that span it —
-            "lifetime xp" and "cosmetics owned". The trailing sentence this used
-            to draw is gone with the prose it stood for; cosmetics is a figure
-            now. */}
+        {/* Progression: FOUR figures, two rows of two, which is the shape the
+            real card took when cosmetics owned moved up beside lifetime xp. It
+            was one row of two plus two stacked full-width blocks, and leaving
+            that here would drop ~55px out from under the page the moment the
+            skeleton cleared.
+
+            THE ONE CASE IT CANNOT MATCH is a lifetime-xp pair too wide for its
+            cell, which wraps to a second line — see the grid in the real card.
+            That depends on the player's XP and on the viewport, neither of which
+            a skeleton knows, so this draws the one-line shape: right for a low
+            level anywhere and for everyone above ~1425px, and one line short of
+            a high level in a narrow column. The alternative is being one line
+            too tall for everybody else. */}
         <SkeletonSection>
-          <SkeletonFigures n={2} className="grid grid-cols-2 gap-4" />
-          {Array.from({ length: 2 }, (_, i) => (
-            <div key={i} className="mt-4 space-y-1.5">
-              <Skeleton className="h-3 w-20" />
-              <Skeleton className="h-6 w-40" />
-            </div>
-          ))}
+          <SkeletonFigures n={4} className="grid grid-cols-2 gap-4" />
         </SkeletonSection>
 
         <SkeletonSection>
@@ -1864,12 +2015,7 @@ export function ProfileView({
                   It is the single most important fact about a player when it
                   is true, and it has to be visible in the same glance that
                   confirms you are looking at the right person. */}
-              {banned && (
-                <Badge className="gap-1 border-0 bg-danger/10 text-xs font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
-                  <Ban className="size-3" />
-                  Currently banned
-                </Badge>
-              )}
+              {banned && <BannedChip ban={p.ban} now={now} />}
               {p.live ? (
                 // #22 item 3. The chip is `uppercase`, so this renders as
                 // ONLINE NOW — which is what the owner asked for, and which
@@ -1886,12 +2032,28 @@ export function ProfileView({
                   Offline
                 </Badge>
               )}
-              {p.bans.length > 0 && (
-                <Badge className="gap-1 border-0 bg-danger/10 text-xs font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/25">
-                  <Ban className="size-3" />
-                  {p.bans.length} ban{p.bans.length > 1 ? 's' : ''}
-                </Badge>
-              )}
+              {/*
+                THE "1 BAN" CHIP IS GONE, and it was worse than a redundant
+                count. The owner: "remove where it says 'x bans' at the top of
+                the player profile page, unless they're actively banned it
+                should just say 'banned'."
+
+                WHAT IT WAS COUNTING WAS NOT A HISTORY. `p.ban` is the bans
+                table's single row for this license — the table is keyed on
+                license and a second ban overwrites the first — so the number
+                could never be anything but 1, and it appeared for a row that
+                was LIFTED or SERVED just as readily as for one in force. A
+                player in good standing carried a red chip reading like a rap
+                sheet, next to no "banned" chip at all, which is the page
+                telling a moderator someone is banned when they are not.
+
+                NOTHING IS LOST WITH IT. Every ban and every lift is a row in
+                Kicks and bans below, from the append-only audit log, with the
+                reason, the admin and the time — checked, not assumed: the
+                `ban.issue` and `ban.lift` rows are in this page's fixture and
+                render there. That panel is the history; the chip above is the
+                present tense, and only that.
+              */}
             </div>
             {/* The license used to sit here as well as in the identifiers box.
                 One copy is enough, and the box is where somebody looking for an
@@ -2037,29 +2199,39 @@ export function ProfileView({
           {p.progress ? (
             <>
               {/*
-                #22 ITEM 11 — THE CONTAINER, NOT THE TEXT.
-                "xp this level" was the third cell of a three-column grid inside
-                a half-width card, which is about 145px. Its value is ALWAYS
-                "<into> / <span>" and the spans run from 800 up to 15,450, so
-                the string is routinely 13-15 monospace characters at text-xl —
-                roughly 180px. It truncated to "2,707 / 2,8…" for most players at
-                most levels, not as an edge case, and half a progress figure is
-                worse than none: a moderator reading it cannot tell whether the
-                player is about to level.
+                TWO ROWS OF TWO — level / volts, then lifetime xp / cosmetics
+                owned. The owner: "the cosmetics owned should be next to lifetime
+                xp and below volts, not on it's own row."
 
-                So the figure now spans the full width of this grid and the other
-                two share the row above it. That gives it 330-470px against the
-                ~180px it needs, which holds at every breakpoint and for the
-                widest span on the curve — checked in /preview/profile, which is
-                the only place this is visible without a live game table.
+                THAT TAKES BACK THE WIDTH #22 ITEM 11 WAS PAID IN, WHICH IS THE
+                WHOLE TRAP HERE. "xp this level" truncated to "2,707 / 2,8…" in a
+                narrow cell; the fix both times was to widen the cell, and this
+                layout narrows it again by exactly one column. So it was measured
+                rather than assumed, in /preview/profile?xp=widest, against the
+                widest string the curve can produce — "991,549 / 991,550", 17
+                monospace characters at text-xl, 229.5px — with the sidebar
+                expanded, which is its default:
 
-                IT GOT WIDER when the pair below became the cumulative one, and
-                the headroom above is why that was affordable. The widest value
-                is no longer a span but a lifetime total: "991,549 / 991,550" at
-                level 99, which is 17 monospace characters, roughly 205px. Still
-                well inside the 330px this cell has at its narrowest, and the
-                `widest` fixture in /preview/profile is pinned to exactly that
-                total so it stays checked rather than remembered.
+                  viewport   cell    one line?
+                  375        138px   no
+                  768        183px   no
+                  1024       138px   no   (lg halves the card — the narrowest of all)
+                  1280       202px   no
+                  1440       242px   yes
+
+                It fits on one line only from about 1425px up. THE NUMBER IS NOT
+                THE THING THAT GIVES WAY: this figure alone opts out of `truncate`
+                (see `Figure`'s `wrap`) and takes a second line where the width
+                demands one, so both halves of the pair survive at every width
+                tested. Nothing is ever clipped — `scrollWidth === clientWidth` at
+                all five.
+
+                WHAT WAS REJECTED, MEASURED RATHER THAN GUESSED. A smaller numeral
+                for this one figure would need ~13.5px type at 138px, which is
+                smaller than its own label. An abbreviated form ("992k / 992k")
+                still needs ~148px, still does not fit at 375 or 1024, and stops
+                being the number. Keeping the span was the layout the owner asked
+                to change.
               */}
               <div className="grid grid-cols-2 gap-4">
                 <Figure icon={Trophy} value={p.progress.level} label="level" />
@@ -2093,16 +2265,37 @@ export function ProfileView({
                   "0 / 0" — into and span are both zero up there. `nextThreshold
                   For` returns 0 to say there is no next level, and it is spelt
                   out rather than drawn as a division by nothing.
+
+                  THE SPACE AFTER THE SLASH IS NON-BREAKING, AND THAT IS THE
+                  WHOLE OF THE LINE BREAK. Now that this figure wraps rather than
+                  truncates (see the grid comment above), WHERE it breaks is a
+                  choice, and there is only one break in the string. Left alone
+                  it splits after the slash —
+
+                      991,549 /
+                      991,550
+
+                  — which orphans an operator at the end of a line and reads as
+                  if the number were unfinished. Tying the slash to the threshold
+                  moves the break in front of it:
+
+                      991,549
+                      / 991,550
+
+                  where the second line still says "out of" and the first is a
+                  whole number on its own. It costs nothing when the pair fits on
+                  one line, which is what it does above ~1425px: U+00A0 renders as
+                  an ordinary space.
                 */}
                 <Figure
                   icon={Swords}
-                  className="col-span-2"
+                  wrap
                   value={
                     nextThresholdFor(p.progress.xp) > 0
-                      ? `${formatCount(p.progress.xp)} / ${formatCount(
+                      ? `${formatCount(p.progress.xp)} /\u00A0${formatCount(
                           nextThresholdFor(p.progress.xp),
                         )}`
-                      : `${formatCount(p.progress.xp)} / max`
+                      : `${formatCount(p.progress.xp)} /\u00A0max`
                   }
                   label="lifetime xp"
                 />
@@ -2118,17 +2311,16 @@ export function ProfileView({
                   one of its numbers. Nothing about the value changed; only what
                   it is drawn as.
 
-                  IT SPANS THE ROW, AND THAT IS THE COLUMN-WIDTH DECISION.
-                  Promoting a value into this grid truncated a neighbour once
-                  already — see the block above — so this one takes no width from
-                  anybody: the grid is still two columns, `level` and `volts`
-                  still share the first row at exactly the widths they had, and
-                  the two spanning figures stack under them. The alternative, a
-                  third single-column cell, is a three-item row in a two-column
-                  grid, which leaves a hole beside it at every breakpoint and
-                  would have squeezed nothing but still looked broken. Measured
-                  at 375, 768, 1024 and 1280: no cell narrower than before this
-                  change, and no value truncated at any of them.
+                  IT SITS BESIDE LIFETIME XP NOW, WHICH IS WHERE THE WIDTH WENT.
+                  It used to span the row, on the reasoning that promoting a
+                  value into this grid had truncated a neighbour once already and
+                  this one should take width from nobody. The owner has since
+                  asked for the pairing — "next to lifetime xp and below volts,
+                  not on it's own row" — so the width did come out of the xp
+                  cell, and the grid comment above is the measurement of what
+                  that cost and what now gives way instead. This figure is a
+                  single count of at most three digits (13.5px), so it is not the
+                  one at risk in either layout.
 
                   ZERO IS A NUMBER HERE. The prose said "No cosmetics owned."; a
                   figure says 0, which is the same fact in the shape the rest of
@@ -2137,7 +2329,6 @@ export function ProfileView({
                 */}
                 <Figure
                   icon={Shirt}
-                  className="col-span-2"
                   value={formatCount(p.progress.owned)}
                   label="cosmetics owned"
                 />

@@ -1,7 +1,8 @@
-import { GitBranch } from 'lucide-react'
+import { GitBranch, Undo2 } from 'lucide-react'
 import Link from 'next/link'
 
 import { LocalTime } from '@/components/LocalTime'
+import { buttonVariants } from '@/components/ui/button'
 
 /**
  * "This server is not running main."
@@ -64,10 +65,40 @@ export function OffMainBanner({
         <span className="text-muted-foreground">
           Automatic updates are paused while it is parked.
         </span>
+        {/*
+          A BUTTON, IN THE CONSOLE'S PRIMARY COLOUR, ASKED FOR BY NAME. It was
+          link-styled text in warn, which put the one thing to DO about this
+          banner in the same colour and the same weight as the banner's own
+          complaint — so the strip read as three sentences of alarm with a
+          fourth underlined one, and nothing in it looked like an action.
+
+          THE PURPLE IS `--primary` VIA THE `default` VARIANT, not a colour
+          invented here: `buttonVariants({ variant: 'default' })` is the exact
+          class list `Button` itself composes (`bg-primary
+          text-primary-foreground`), so this cannot drift from every other
+          primary button in the console.
+
+          IT IS `buttonVariants` ON THE LINK RATHER THAN `<Button render={<Link
+          />}>`, AND BASE UI SAYS SO ITSELF. Its own docs — installed, at
+          node_modules/@base-ui/react/docs/react/components/button.md, under
+          "Rendering links as buttons" — rule out putting an anchor through
+          `render` on the grounds that a link has its own semantics, and say to
+          style the `<a>` directly when one needs to LOOK like a button. The
+          mechanics agree: `useButton` merges `type="button"` onto whatever it
+          renders with `nativeButton` at its default, or `role="button"` with it
+          set false, and the second announces a navigation as a button and costs
+          the reader the one thing an anchor tells them. This control goes to
+          /maintenance; it does not revert anything by itself.
+
+          SIZED `sm` DELIBERATELY. A filled default-height button in a 2.5-line
+          strip competes with the warning it sits in. Small and filled reads as
+          "here is what to do about it", which is the job.
+        */}
         <Link
           href="/maintenance"
-          className="font-medium text-warn underline underline-offset-2 hover:text-warn/80"
+          className={buttonVariants({ variant: 'default', size: 'sm' })}
         >
+          <Undo2 />
           Revert to main
         </Link>
       </div>
