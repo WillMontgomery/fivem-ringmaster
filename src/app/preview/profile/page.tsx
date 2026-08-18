@@ -9,7 +9,7 @@ import { ProfileView } from '@/components/ProfileView'
 import { isActive, type Ban } from '@/lib/bans'
 import { accentSurface } from '@/lib/contrast'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
-import { CATEGORY_LABEL } from '@/lib/incidents'
+import { CATEGORY_LABEL, VERDICT_LABEL } from '@/lib/incidents'
 import type {
   DiscordChrome,
   DiscordNameChange,
@@ -284,6 +284,26 @@ const FILERS = [
   { name: 'Kestrel', license: 'license:preview333333333333333333333333333' },
 ]
 
+/**
+ * The verdicts a resolved row can carry, cycled so all of them appear (#28).
+ *
+ * ALL FOUR SHAPES, NOT THREE. `null` is in this list on purpose and is the one
+ * most likely to be got wrong later: a resolved row with no verdict reads
+ * "resolved" and nothing more, while every row beside it reads "resolved ·
+ * banned" or "resolved · no action". Seeing the two side by side is the only
+ * way to notice if the bare one ever starts claiming a decision nobody made.
+ *
+ * A TEMPORARY BAN AND A PERMANENT ONE LOOK IDENTICAL HERE, and that is correct
+ * rather than a gap: the chip says what was done, not for how long. The expiry
+ * is on the incident page, which is where a ban's length is read.
+ */
+const VERDICTS: ProfileIncident['verdict'][] = [
+  { action: 'ban', expiresAt: BASE + 7 * 24 * HOUR },
+  { action: 'none' },
+  { action: 'kick' },
+  null,
+]
+
 /** Cycle a fixture list. `noUncheckedIndexedAccess` is on, so `%` is not enough. */
 function cycle<T>(list: T[], k: number): T {
   const item = list[k % list.length]
@@ -310,6 +330,14 @@ function reportsAgainst(n: number): ProfileIncident[] {
       summary: 'Steam id already bound to a different license',
       state: 'resolved',
       category: 'system',
+      /*
+       * NO VERDICT AT ALL — the case worth staring at (#28). A closure from
+       * before the field existed, or one the system resolved itself. Its chip
+       * must keep reading the bare word "resolved" and must NEVER narrow to
+       * "no action": nobody decided anything, and saying otherwise is the
+       * console inventing a decision. Every other row on this page narrows.
+       */
+      verdict: null,
       subjectName: 'Preview Player',
       subjectLicense: LICENSE,
     },
@@ -320,6 +348,8 @@ function reportsAgainst(n: number): ProfileIncident[] {
       summary: 'Reported for abusive chat',
       state: 'resolved',
       category: 'abusive_chat',
+      /* A permanent ban, which is the loudest the chip ever gets. */
+      verdict: { action: 'ban', expiresAt: null },
       // A filer we no longer have a license for — the name must render as plain
       // text, not as a link to nowhere.
       reportedBy: 'A player who has since been removed',
@@ -338,12 +368,17 @@ function reportsAgainst(n: number): ProfileIncident[] {
     }
     const filer = cycle(FILERS, k)
     const category = cycle(CATEGORIES, k)
+    const resolved = k % 3 !== 0
     rows.push({
       id: `bbbbbbbb-0000-4000-8000-${String(k).padStart(12, '0')}`,
       kind: 'report',
       at: BASE - (k + 4) * HOUR,
       summary: `Reported for ${category}`,
-      state: k % 3 === 0 ? 'pending_review' : 'resolved',
+      state: resolved ? 'resolved' : 'pending_review',
+      // A PENDING ROW CARRIES NO VERDICT, EVER — the real write cannot produce
+      // one, so neither may the harness. A fixture that showed a verdict beside
+      // "pending review" would be reviewing a row that cannot exist.
+      verdict: resolved ? cycle(VERDICTS, k) : null,
       category,
       reportedBy: filer.name,
       reportedByLicense: filer.license,
@@ -363,12 +398,17 @@ function reportsFiledBy(n: number): ProfileIncident[] {
   return Array.from({ length: n }, (_, k): ProfileIncident => {
     const target = cycle(targets, k)
     const category = cycle(CATEGORIES, k)
+    const resolved = k % 4 !== 0
     return {
       id: `cccccccc-0000-4000-8000-${String(k).padStart(12, '0')}`,
       kind: 'report',
       at: BASE - (k + 1) * 2 * HOUR,
       summary: `Reported for ${category}`,
-      state: k % 4 === 0 ? 'pending_review' : 'resolved',
+      state: resolved ? 'resolved' : 'pending_review',
+      // The tab where the verdict is the POINT: this is what came of the
+      // reports this player filed, which is how a reporter's record becomes
+      // readable at all.
+      verdict: resolved ? cycle(VERDICTS, k + 1) : null,
       category,
       reportedBy: 'Preview Player',
       reportedByLicense: LICENSE,
@@ -990,6 +1030,7 @@ async function Preview({
         now={now}
         banned={banRow !== null && isActive(banRow, now)}
         categoryLabel={CATEGORY_LABEL}
+        verdictLabel={VERDICT_LABEL}
         moderation={MOD_CASES[mod]}
       />
     </div>

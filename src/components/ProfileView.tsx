@@ -45,6 +45,7 @@ import {
 import type { Ban as BanRecord } from '@/lib/bans'
 import type { AccentSurface } from '@/lib/contrast'
 import { ago, humanDuration } from '@/lib/duration'
+import { incidentChip } from '@/lib/incidentChip'
 import type {
   DiscordNameChange,
   Profile,
@@ -192,15 +193,17 @@ function Figure({
   )
 }
 
-const INCIDENT_STATE: Record<ProfileIncident['state'], string> = {
-  pending_review: 'text-warn ring-warn/30 bg-warn/10',
-  resolved: 'text-muted-foreground ring-border bg-muted/40',
-}
-
-const INCIDENT_STATE_LABEL: Record<ProfileIncident['state'], string> = {
-  pending_review: 'pending review',
-  resolved: 'resolved',
-}
+/*
+ * THE STATE CHIP MOVED OUT, IT DID NOT GROW A SECOND COPY (#28).
+ *
+ * This used to be a pair of local maps from `state` to a word and a colour. The
+ * word is no longer a function of `state` alone — a resolved incident now says
+ * what was decided — and the incident queue renders the same chip about the same
+ * rows. Two copies of that rule is how one list ends up saying "resolved" while
+ * the other says "resolved · banned" about the same case, so it lives in
+ * `lib/incidentChip` and both read it. See `NOT_AN_ACTION` below, whose
+ * justification depends on this chip actually narrowing.
+ */
 
 /**
  * One incident, as a title in three pieces (#22 item 5).
@@ -237,14 +240,17 @@ function IncidentRow({
   now,
   direction,
   categoryLabel,
+  verdictLabel,
 }: {
   i: ProfileIncident
   now: number
   /** Which tab this row is in — decides who the "other party" is. */
   direction: 'against' | 'by'
   categoryLabel: Record<string, string>
+  verdictLabel: Record<string, string>
 }) {
   const filedByAPlayer = i.kind === 'report' && i.category !== 'system'
+  const chip = incidentChip(i, verdictLabel)
 
   const other =
     direction === 'against'
@@ -305,10 +311,10 @@ function IncidentRow({
         variant="outline"
         className={cn(
           'shrink-0 rounded-md border-0 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
-          INCIDENT_STATE[i.state],
+          chip.tone,
         )}
       >
-        {INCIDENT_STATE_LABEL[i.state]}
+        {chip.label}
       </Badge>
     </li>
   )
@@ -614,16 +620,34 @@ function actionLabel(action: string): string {
  * every report about somebody turned up under "Kicks and bans", next to actual
  * kicks and actual bans.
  *
- * THE FILTER IS UNCONDITIONAL, and that is a finding rather than a shortcut.
- * There is no machine-readable "action taken" on a resolution: `lib/incidents`
- * stores the admin's decision as free text (the box literally suggests "Banned
- * for 7 days / watched a match, looked fine / no action"). So nothing here can
- * tell an action-taken closure from a no-action one — and it does not need to,
- * because a closure that DID come with a ban or a kick already wrote its own
- * `ban.issue` or `player.kick` row, which is still listed. Dropping these rows
- * therefore loses no action from the history; it only stops decisions being
- * filed as actions. What was decided stays on the incident itself, which is one
- * click away in the panel above.
+ * THE FILTER IS UNCONDITIONAL, and it is now a CHOICE rather than a corner it
+ * was backed into. It used to be forced: there was no machine-readable "action
+ * taken" on a resolution, because `lib/incidents` stored the admin's decision as
+ * free text (the box literally suggested "Banned for 7 days / watched a match,
+ * looked fine / no action"), so nothing here could tell an action-taken closure
+ * from a no-action one. #28 added `verdict`, and the `incident.resolve` audit
+ * row now carries `detail.verdict` — so this list CAN discriminate.
+ *
+ * IT STILL DROPS THEM ALL, and the verdict is what makes that defensible rather
+ * than merely convenient. Work through every case a row can be in:
+ *
+ *   verdict `ban` or `kick`   the action already wrote its own `ban.issue` or
+ *                             `player.kick` row, which is still listed here.
+ *                             Keeping the resolution too would show one event
+ *                             as two rows, and the second one would repeat the
+ *                             first one's reason.
+ *   verdict `none`            #22 item 6, the owner: "A resolution with no
+ *                             action is not an entry in a list of actions."
+ *   no verdict on the row     a closure from before #28. Unknowable, and
+ *                             therefore the one row that could never be listed
+ *                             honestly under a heading that says "actions".
+ *
+ * So nothing is lost, and the reason has changed from "we cannot tell" to "we
+ * can tell, and every answer is still no". What was decided lives on the
+ * incident, and — since #28 — on the Incidents panel above, whose chip reads
+ * "resolved · banned" rather than the bare word "resolved". See
+ * {@link incidentChip}, which is the thing that has to stay true for this
+ * paragraph to.
  */
 const NOT_AN_ACTION = new Set(['incident.resolve'])
 
@@ -728,11 +752,13 @@ function IncidentsPanel({
   filed,
   now,
   categoryLabel,
+  verdictLabel,
 }: {
   against: ProfileIncident[]
   filed: ProfileIncident[]
   now: number
   categoryLabel: Record<string, string>
+  verdictLabel: Record<string, string>
 }) {
   const [tab, setTab] = useState<'against' | 'by'>('against')
 
@@ -774,6 +800,7 @@ function IncidentsPanel({
             direction="against"
             now={now}
             categoryLabel={categoryLabel}
+            verdictLabel={verdictLabel}
           />
         </TabsContent>
         <TabsContent value="by">
@@ -782,6 +809,7 @@ function IncidentsPanel({
             direction="by"
             now={now}
             categoryLabel={categoryLabel}
+            verdictLabel={verdictLabel}
           />
         </TabsContent>
       </Tabs>
@@ -795,11 +823,13 @@ function IncidentList({
   direction,
   now,
   categoryLabel,
+  verdictLabel,
 }: {
   rows: ProfileIncident[]
   direction: 'against' | 'by'
   now: number
   categoryLabel: Record<string, string>
+  verdictLabel: Record<string, string>
 }) {
   if (rows.length === 0) {
     return (
@@ -822,6 +852,7 @@ function IncidentList({
               now={now}
               direction={direction}
               categoryLabel={categoryLabel}
+              verdictLabel={verdictLabel}
             />
           ))}
         </ul>
@@ -1911,6 +1942,7 @@ export function ProfileView({
   banned = false,
   moderation,
   categoryLabel = {},
+  verdictLabel = {},
 }: {
   p: Profile
   now: number
@@ -1938,6 +1970,8 @@ export function ProfileView({
   }
   /** Report categories in English. From `lib/incidents`, which is server-only. */
   categoryLabel?: Record<string, string>
+  /** Verdicts in English. Same arrangement, same reason (#28). */
+  verdictLabel?: Record<string, string>
 }) {
   /*
    * THE GATE (owner, item 3). One `ready` signal, one skeleton, one page.
@@ -2375,6 +2409,7 @@ export function ProfileView({
         filed={p.reportsFiled}
         now={now}
         categoryLabel={categoryLabel}
+        verdictLabel={verdictLabel}
       />
 
       {/*

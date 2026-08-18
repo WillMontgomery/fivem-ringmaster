@@ -30,6 +30,7 @@ export function ConfirmDialog({
   body,
   confirmLabel,
   busyLabel,
+  confirmDisabled,
   onConfirm,
 }: {
   open: boolean
@@ -38,6 +39,18 @@ export function ConfirmDialog({
   body: React.ReactNode
   confirmLabel: string
   busyLabel: string
+  /**
+   * Hold the confirm button until the body says it is ready.
+   *
+   * FOR BODIES THAT COLLECT SOMETHING, which is why it is optional and defaults
+   * to off — most confirms have nothing to collect and this prop should not
+   * appear at their call sites. The one that does is the incident page's "no
+   * action" verdict, where the reason has the same minimum length a ban reason
+   * does and the confirm is the last step before something permanent. Keeping
+   * that in this dialog rather than forking a fourth one is the whole point of
+   * there being one "are you sure" in the console.
+   */
+  confirmDisabled?: boolean
   /** Resolves when the action is done; the dialog closes itself. */
   onConfirm: () => Promise<void>
 }) {
@@ -77,7 +90,7 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant="destructive"
-            disabled={busy}
+            disabled={busy || confirmDisabled === true}
             onClick={async () => {
               setBusy(true)
               try {

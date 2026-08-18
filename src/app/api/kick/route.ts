@@ -7,6 +7,8 @@ import {
   licenseSchema,
 } from '@/lib/actions'
 import * as audit from '@/lib/audit'
+import { can } from '@/lib/grants'
+import * as incidents from '@/lib/incidents'
 import { kickPlayer, sshConfigured } from '@/lib/ssh'
 
 /**
@@ -29,11 +31,20 @@ const kickSchema = z.object({
   license: licenseSchema,
   playerName: z.string().trim().max(120).optional().nullable(),
   reason: z.string().trim().max(300).optional().nullable(),
+
+  /**
+   * The incident this kick is the verdict on, when it was chosen as one.
+   *
+   * Same reasoning as `/api/bans`: one kick, one shape, one `player.kick` row,
+   * with a field naming where it was decided. The incident page does not get
+   * its own way of removing somebody from the server.
+   */
+  incidentId: z.string().uuid().optional(),
 })
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('kick')
+    const { actor, admin } = await authorize('kick')
 
     if (!sshConfigured()) {
       throw new ActionError(
@@ -47,6 +58,47 @@ export async function POST(req: Request): Promise<Response> {
     })
     const input = kickSchema.parse(body)
 
+    /**
+     * CLOSING A CASE STILL TAKES THE `ban` SCOPE, even when the action is only
+     * a kick.
+     *
+     * `kick` and `ban` are separate scopes because kicking is the reversible
+     * one — see the note at the top of this file. Resolving an incident is not
+     * reversible at all, so it keeps the heavier scope it has always had
+     * (`/api/incidents/resolve` authorises on `ban` and says why). Without this
+     * check, an admin trusted only to nudge people out of the bus door could
+     * close a cheating report permanently by kicking the subject, and #168
+     * would pay 250 Volts against a verdict they were not trusted to give.
+     *
+     * The kick itself is unaffected: they may still kick, they simply cannot
+     * make it a verdict.
+     */
+    if (input.incidentId && !(await can(admin.license, 'ban'))) {
+      throw new ActionError(
+        'Resolving an incident needs the `ban` scope, which this account does not have.',
+        403,
+      )
+    }
+
+    /**
+     * A CLOSED CASE MEANS NO KICK, for the same reason `/api/bans` refuses one:
+     * the decision has already been made, and removing somebody from a match
+     * because of a case that is already settled is an action nobody asked for.
+     */
+    let incidentRow: incidents.Incident | null = null
+    if (input.incidentId) {
+      incidentRow = await incidents.get(input.incidentId)
+      if (!incidentRow) {
+        throw new ActionError('That incident no longer exists.', 404)
+      }
+      if (incidentRow.state !== 'pending_review') {
+        throw new ActionError(
+          'That incident has already been resolved, so nobody was kicked.',
+          409,
+        )
+      }
+    }
+
     const reason = input.reason?.trim() || 'Kicked by an admin'
 
     const { commandId, ts } = await audit.begin({
@@ -55,6 +107,7 @@ export async function POST(req: Request): Promise<Response> {
       targetLicense: input.license,
       targetName: input.playerName ?? null,
       reason,
+      detail: input.incidentId ? { incidentId: input.incidentId } : undefined,
     })
 
     try {
@@ -66,11 +119,35 @@ export async function POST(req: Request): Promise<Response> {
       throw new ActionError(`The game server refused the kick: ${message}`, 502)
     }
 
+    /**
+     * The verdict, recorded only now that the command has been accepted.
+     *
+     * "ACCEPTED" IS AS STRONG A CLAIM AS THIS PATH CAN MAKE, and the verdict
+     * inherits exactly that and no more — see the note below on why the audit
+     * row is not marked `ok` either. A `kick` verdict means the game host took
+     * the command, which is the same thing the `player.kick` row beside it
+     * means. If the two ever say different things, one of them is lying.
+     *
+     * A REFUSAL HERE DOES NOT UNDO THE KICK, and is reported rather than
+     * thrown: they have already been removed from the match, and an error would
+     * invite a retry that removes them again.
+     */
+    let incident: { closed: boolean; error?: string } | undefined
+    if (incidentRow) {
+      const res = await incidents.closeWithVerdict({
+        incident: incidentRow,
+        actor,
+        resolution: reason,
+        verdict: { action: 'kick' },
+      })
+      incident = res.ok ? { closed: true } : { closed: false, error: res.reason }
+    }
+
     // DELIBERATELY NOT RESOLVED AS 'ok' HERE. All we know is that the command
     // reached the console; whether a player was removed comes back as an
     // outcome event carrying this commandId. Marking it done now would make the
     // audit log claim knowledge it does not have.
-    return Response.json({ ok: true, accepted: true, commandId })
+    return Response.json({ ok: true, accepted: true, commandId, incident })
   } catch (e) {
     return errorResponse(e)
   }

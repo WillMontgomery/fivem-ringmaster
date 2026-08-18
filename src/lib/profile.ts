@@ -18,6 +18,8 @@
  *   moderation Ringmaster's own tables — bans, audit, incidents.
  */
 
+import type { IncidentVerdict } from './incidents'
+
 import type { AccentSurface } from './contrast'
 
 export type Provenance = 'live' | 'identity' | 'stats' | 'moderation'
@@ -135,6 +137,23 @@ export interface ProfileIncident {
    * incident rather than an old one changing its mind.
    */
   state: 'pending_review' | 'resolved'
+  /**
+   * What was decided, when anybody decided anything (#28).
+   *
+   * IMPORTED RATHER THAN RESPELLED, unlike `state` above. `state` is two string
+   * literals that have not moved since the module was written; a verdict is a
+   * discriminated union that another repository reads to decide whether to pay
+   * somebody 250 Volts, and a hand-copy of it here would be a third spelling of
+   * a shape that already has two. The import is `import type`, so it erases and
+   * nothing drags `lib/incidents` — which reaches DynamoDB — into a client
+   * bundle.
+   *
+   * NULL AND ABSENT MEAN "NOBODY RECORDED ONE", NOT "NO ACTION". Everything
+   * closed before #28, and everything the system auto-resolved, arrives here
+   * with nothing — and the row must say so rather than inventing a decision. See
+   * {@link IncidentVerdict}.
+   */
+  verdict?: IncidentVerdict | null
   /**
    * What the reporter picked in game — the raw id, e.g. `abusive_chat`.
    *

@@ -9,6 +9,7 @@ import {
 } from '@/lib/actions'
 import * as audit from '@/lib/audit'
 import * as bans from '@/lib/bans'
+import * as incidents from '@/lib/incidents'
 import { kickPlayer, sshConfigured } from '@/lib/ssh'
 import { liveView } from '@/lib/state'
 
@@ -42,6 +43,21 @@ const issueSchema = z.object({
    * pick a timestamp in the past and produce a ban that was never in force.
    */
   days: z.number().int().positive().max(3650).optional().nullable(),
+
+  /**
+   * The incident this ban is the verdict on, when it was issued from one.
+   *
+   * ONE BAN, ONE SHAPE, ONE AUDIT ACTION. A ban chosen as an incident verdict
+   * is not a different kind of ban — it is this route, this schema, this
+   * `ban.issue` row, with an extra field naming where the decision was made.
+   * The alternative was a second endpoint under /api/incidents that also issued
+   * bans, and an audit log with two ways to say one thing is the failure mode
+   * this console has already paid for once.
+   *
+   * ABSENT IS THE ORDINARY CASE. The profile page and the moderation board send
+   * nothing here and nothing changes for them.
+   */
+  incidentId: z.string().uuid().optional(),
 })
 
 export async function GET(): Promise<Response> {
@@ -69,6 +85,35 @@ export async function POST(req: Request): Promise<Response> {
       throw new ActionError('That license is already banned.', 409)
     }
 
+    /**
+     * REFUSE BEFORE BANNING IF THE CASE IS ALREADY CLOSED.
+     *
+     * Checked here rather than after, because the alternative is a ban nobody
+     * asked for: two admins on the same incident, the other one resolves it as
+     * "no action", and this request would otherwise cut somebody off for a case
+     * that had already been decided the other way.
+     *
+     * THE RACE IS NARROWED, NOT CLOSED, and the residual is deliberate. If the
+     * other admin's write lands between this read and the resolve below, the
+     * BAN STILL STANDS and the incident carries their verdict. That asymmetry
+     * is the right way round: the ban is a real thing that happened to a real
+     * person and it is in the audit log and on their profile either way, while
+     * a verdict claiming a ban that never happened would have #168 pay 250
+     * Volts against nothing. Ban first, record second, and never the reverse.
+     */
+    if (input.incidentId) {
+      const incident = await incidents.get(input.incidentId)
+      if (!incident) {
+        throw new ActionError('That incident no longer exists.', 404)
+      }
+      if (incident.state !== 'pending_review') {
+        throw new ActionError(
+          'That incident has already been resolved, so no ban was issued.',
+          409,
+        )
+      }
+    }
+
     const expiresAt =
       input.days == null ? null : Date.now() + input.days * 86_400_000
 
@@ -79,7 +124,14 @@ export async function POST(req: Request): Promise<Response> {
         targetLicense: input.license,
         targetName: input.playerName ?? null,
         reason: input.reason,
-        detail: { expiresAt, permanent: expiresAt === null },
+        detail: {
+          expiresAt,
+          permanent: expiresAt === null,
+          // PROVENANCE, NOT A SECOND SHAPE. Same action, same fields, plus
+          // where it was decided — the same thing `becauseOf` does for the
+          // kick below.
+          ...(input.incidentId ? { incidentId: input.incidentId } : {}),
+        },
       },
       () =>
         bans.issue({
@@ -148,7 +200,40 @@ export async function POST(req: Request): Promise<Response> {
       }
     }
 
-    return Response.json({ ok: true, ban, online, kicked }, { status: 201 })
+    /**
+     * Now record it as the verdict on the case it came from.
+     *
+     * LAST, AND UNABLE TO UNDO ANYTHING BEFORE IT. Everything above already
+     * happened to a person; this only writes down why. So a refusal here — the
+     * other admin won the race described above — is reported alongside a
+     * successful ban rather than turned into an error, exactly as the failed
+     * kick is. The admin is told the ban stands and the case was closed by
+     * somebody else, which is both true and actionable.
+     *
+     * THE VERDICT IS DERIVED FROM WHAT ACTUALLY HAPPENED, not from what was
+     * asked for: `expiresAt` is the absolute value this route computed, not the
+     * `days` the browser sent. Nothing a client says ends up in the field #168
+     * pays against.
+     */
+    let incident: { closed: boolean; error?: string } | undefined
+    if (input.incidentId) {
+      const row = await incidents.get(input.incidentId)
+      const res = row
+        ? await incidents.closeWithVerdict({
+            incident: row,
+            actor,
+            resolution: input.reason,
+            verdict: { action: 'ban', expiresAt },
+          })
+        : ({ ok: false, reason: 'That incident no longer exists.' } as const)
+
+      incident = res.ok ? { closed: true } : { closed: false, error: res.reason }
+    }
+
+    return Response.json(
+      { ok: true, ban, online, kicked, incident },
+      { status: 201 },
+    )
   } catch (e) {
     return errorResponse(e)
   }

@@ -1,11 +1,30 @@
 import { z } from 'zod'
 
-import { ActionError, authorize, errorResponse } from '@/lib/actions'
-import * as audit from '@/lib/audit'
+import {
+  ActionError,
+  authorize,
+  errorResponse,
+  reasonSchema,
+} from '@/lib/actions'
 import * as incidents from '@/lib/incidents'
 
 /**
- * Close an incident, once and permanently.
+ * Close an incident with NO ACTION, once and permanently.
+ *
+ * THIS ROUTE CAN ONLY EVER WRITE ONE VERDICT, and that is the design rather
+ * than a limitation. A `ban` verdict is written by `/api/bans` after the ban row
+ * exists; a `kick` verdict by `/api/kick` after the game host accepts the
+ * command. Neither can be claimed from here, so there is no request a browser
+ * can send that records an action which did not happen — which matters because
+ * fivem-br-gamemode#168 pays 250 Volts against exactly that field. The wire
+ * carries no verdict at all: it is not a parameter, it is a consequence of
+ * which endpoint you reached.
+ *
+ * "NO ACTION" IS A VERDICT, NOT AN ABSENCE. An admin who watched a match and
+ * concluded there was nothing in the report has decided something, and this
+ * writes it down as `{ action: 'none' }`. What it must never be confused with
+ * is a resolved incident carrying no verdict at all — see lib/incidents, where
+ * absent means nobody decided.
  *
  * TAKES THE `ban` SCOPE, not a scope of its own. Resolving is a moderation
  * decision — "I looked, and this person is fine" carries the same weight as
@@ -15,18 +34,29 @@ import * as incidents from '@/lib/incidents'
  * THE ONE-WAY RULE IS ENFORCED IN THE DATABASE, not here. lib/incidents issues
  * a conditional write that requires the incident to still be pending, so two
  * admins pressing resolve on the same one is an ordinary race the loser is told
- * about rather than a silent overwrite of somebody else's decision.
+ * about rather than a silent overwrite of somebody else's decision. The same
+ * write is what makes a verdict unamendable: there is no path that sets
+ * `verdict` without also moving `state`, and `state` can only move once.
  *
  * AUDITED, because the audit log is where "who decided nothing was wrong" has
  * to survive — the incident itself carries the timeline, but the audit log is
  * the one place every moderation action across the whole console is comparable.
+ * The row is written by `incidents.closeWithVerdict`, shared with the two
+ * routes above so that closing a case cannot be logged three different ways.
  */
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const schema = z.object({
   incidentId: z.string().uuid(),
-  resolution: z.string().trim().min(1).max(500),
+  /**
+   * THE SAME SCHEMA THE BAN REASON USES, which it was not before: this had its
+   * own `min(1).max(500)` and no control-character strip, so the one free-text
+   * field on this route was the only admin text in the console that could carry
+   * newlines into an audit row. It is the same kind of value written by the same
+   * kind of person into the same kind of box; it gets the same rule.
+   */
+  resolution: reasonSchema,
 })
 
 export async function POST(req: Request): Promise<Response> {
@@ -49,33 +79,16 @@ export async function POST(req: Request): Promise<Response> {
       throw new ActionError('That incident no longer exists.', 404)
     }
 
-    const result = await incidents.resolve({
-      incidentId,
-      // The actor always has a license here -- authorize() resolves the
-      // session to a grants row, and grants are keyed on license.
-      byLicense: actor.license ?? '',
-      byName: actor.name,
+    const result = await incidents.closeWithVerdict({
+      incident: existing,
+      actor,
       resolution,
+      verdict: { action: 'none' },
     })
 
     if (!result.ok) {
       throw new ActionError(result.reason, 409)
     }
-
-    // AFTER the write, not around it. The two-phase intent/outcome shape exists
-    // for actions that reach OUT to something that can fail slowly — a kick
-    // crossing an SSH channel, a deploy. This one already succeeded against a
-    // conditional write, so there is no window in which it could be pending:
-    // the row opens and closes in the same breath.
-    const handle = await audit.begin({
-      action: 'incident.resolve',
-      actor,
-      targetLicense: existing.subjectLicense,
-      targetName: existing.subjectName,
-      reason: resolution,
-      detail: { incidentId, kind: existing.kind },
-    })
-    await audit.resolve(handle.ts, 'ok')
 
     return Response.json({ ok: true })
   } catch (e) {

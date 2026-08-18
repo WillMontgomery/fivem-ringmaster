@@ -9,7 +9,13 @@ import { Pager } from '@/components/Pager'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { Incident, IncidentCategory, IncidentKind } from '@/lib/incidents'
+import { incidentChip } from '@/lib/incidentChip'
+import type {
+  Incident,
+  IncidentCategory,
+  IncidentKind,
+  VerdictAction,
+} from '@/lib/incidents'
 import { cn } from '@/lib/utils'
 
 /**
@@ -45,12 +51,15 @@ function Row({
   i,
   now,
   categoryLabel,
+  verdictLabel,
 }: {
   i: Incident
   now: number
   categoryLabel: Record<IncidentCategory, string>
+  verdictLabel: Record<VerdictAction, string>
 }) {
   const Icon = KIND_ICON[i.kind] ?? Flag
+  const chip = incidentChip(i, verdictLabel)
 
   return (
     <Link
@@ -75,12 +84,33 @@ function Row({
           >
             {categoryLabel[i.category] ?? i.category}
           </Badge>
+          {/*
+            THE OUTCOME, NOT JUST THE STATE (#28).
+            "resolved" was the whole problem: it covered "this player was
+            banned" and "I watched a match and they were fine" with one word, so
+            the Resolved tab was a list of things that had stopped rather than a
+            record of what was decided. The verdict says which.
+
+            THE WORDING AND THE COLOUR COME FROM `lib/incidentChip`, which the
+            profile's incident rows read too. The same chip about the same row
+            has to say the same thing in both places, and the way that fails is
+            not a crash — it is one list reading "resolved" while the other
+            reads "resolved · banned", with nothing to say which is right.
+
+            PENDING ROWS CARRY NO CHIP HERE, which is why this is guarded rather
+            than left to the helper: the queue tab is entirely pending, so a
+            "pending review" badge on every row would be noise. The profile
+            mixes both and shows it.
+          */}
           {i.state === 'resolved' && (
             <Badge
               variant="outline"
-              className="border-0 bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
+              className={cn(
+                'border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
+                chip.tone,
+              )}
             >
-              resolved
+              {chip.label}
             </Badge>
           )}
         </div>
@@ -138,11 +168,13 @@ function QueuePanel({
   empty,
   now,
   categoryLabel,
+  verdictLabel,
 }: {
   rows: Incident[]
   empty: string
   now: number
   categoryLabel: Record<IncidentCategory, string>
+  verdictLabel: Record<VerdictAction, string>
 }) {
   const [page, setPage] = useState(0)
 
@@ -160,7 +192,13 @@ function QueuePanel({
         <>
           <div>
             {slice.map((i) => (
-              <Row key={i.incidentId} i={i} now={now} categoryLabel={categoryLabel} />
+              <Row
+                key={i.incidentId}
+                i={i}
+                now={now}
+                categoryLabel={categoryLabel}
+                verdictLabel={verdictLabel}
+              />
             ))}
           </div>
 
@@ -183,11 +221,18 @@ export function IncidentQueue({
   history,
   now,
   categoryLabel,
+  verdictLabel,
 }: {
   pending: Incident[]
   history: Incident[]
   now: number
   categoryLabel: Record<IncidentCategory, string>
+  /**
+   * Passed in like `categoryLabel`, and for the same reason: `lib/incidents`
+   * owns the labels and is server-only (it reaches DynamoDB), so a client
+   * component takes the map as a prop rather than importing the module.
+   */
+  verdictLabel: Record<VerdictAction, string>
 }) {
   const resolved = history.filter((i) => i.state === 'resolved')
 
@@ -231,6 +276,7 @@ export function IncidentQueue({
             empty={EMPTY.pending}
             now={now}
             categoryLabel={categoryLabel}
+            verdictLabel={verdictLabel}
           />
         </TabsContent>
         <TabsContent value="resolved">
@@ -239,6 +285,7 @@ export function IncidentQueue({
             empty={EMPTY.resolved}
             now={now}
             categoryLabel={categoryLabel}
+            verdictLabel={verdictLabel}
           />
         </TabsContent>
         <TabsContent value="all">
@@ -247,6 +294,7 @@ export function IncidentQueue({
             empty={EMPTY.all}
             now={now}
             categoryLabel={categoryLabel}
+            verdictLabel={verdictLabel}
           />
         </TabsContent>
       </Tabs>

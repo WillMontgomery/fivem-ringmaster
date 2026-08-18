@@ -43,7 +43,15 @@ import { postJson } from '@/lib/api'
  * audit log even less.
  */
 
-const MIN_REASON = 15
+/**
+ * EXPORTED BECAUSE IT IS A RULE, NOT A LOCAL.
+ *
+ * The incident page's "no action" verdict asks for a reason with the same floor,
+ * because it closes the same kind of case with the same finality — and a second
+ * `const MIN_REASON = 15` over there would be a second place to change it. This
+ * is the origin; anything that needs the number imports it from here.
+ */
+export const MIN_REASON = 15
 
 const DURATIONS = [
   { value: '1', label: '24 hours' },
@@ -55,6 +63,7 @@ export function BanDialog({
   license,
   name,
   online,
+  incidentId,
   open,
   onOpenChange,
 }: {
@@ -62,6 +71,22 @@ export function BanDialog({
   name: string
   /** Drives the "they will be kicked immediately" warning. */
   online: boolean
+  /**
+   * The incident this ban is the verdict on, when it was chosen from one.
+   *
+   * THE SAME DIALOG, NOT A COPY OF IT. The owner asked for the incident page to
+   * offer a ban "with the same 'are you sure', character requirement, and
+   * pre-defined terms/perma options that exist already" — so it opens this,
+   * with one more field in the request body. Everything the admin sees, every
+   * validation, and the `ban.issue` row that comes out are identical to a ban
+   * issued from a profile, because they are the same code.
+   *
+   * IT ALSO CLOSES THE INCIDENT, server-side, in the same request. The two
+   * cannot be separated by a failed second fetch or a closed tab, and the
+   * verdict records the ban this route actually wrote rather than the one the
+   * browser asked for.
+   */
+  incidentId?: string
   open: boolean
   onOpenChange: (v: boolean) => void
 }) {
@@ -113,11 +138,13 @@ export function BanDialog({
         ok?: boolean
         error?: string
         kicked?: { attempted: boolean; ok: boolean; error?: string }
+        incident?: { closed: boolean; error?: string }
       }>('/api/bans', {
         license,
         reason: reason.trim(),
         playerName: name,
         days: effectiveDays,
+        ...(incidentId ? { incidentId } : {}),
       })
 
       // The toast names the player and the expiry, because "Ban recorded" a
@@ -126,7 +153,21 @@ export function BanDialog({
       const expiry =
         effectiveDays === null ? 'permanently' : expiryLabel(effectiveDays)
 
-      if (d.kicked?.attempted && d.kicked.ok) {
+      /**
+       * THE VERDICT FAILING IS ITS OWN SENTENCE, and it wins over the kick's.
+       *
+       * The ban happened either way — that is the loud part and it is already
+       * true — but "the case was closed by somebody else while you were typing"
+       * is the only outcome here that leaves work undone, so it is the one the
+       * admin has to read. Reporting it as a plain success would leave them
+       * believing they had resolved something they had not.
+       */
+      if (incidentId && d.incident && !d.incident.closed) {
+        toast.warning(
+          `${name} banned ${expiry}, but the incident was not closed.`,
+          { description: d.incident.error },
+        )
+      } else if (d.kicked?.attempted && d.kicked.ok) {
         toast.success(`${name} banned ${expiry} and removed from the server.`)
       } else if (d.kicked?.attempted) {
         toast.warning(
@@ -154,9 +195,23 @@ export function BanDialog({
           <>
             <DialogHeader>
               <DialogTitle>Ban {name}</DialogTitle>
+              {/*
+                THE WARNING IS ONLY ON THE INCIDENT PATH, AND THAT IS THE POINT.
+                The reason has always been shown to the banned player; what is
+                new is WHERE it gets typed. On an incident page the reporter's
+                name is on screen, a few lines above this box, so "reported by
+                Marla for aimbot" is the natural thing to type — and it would be
+                shown to the person Marla reported, as they are dropped. The
+                gamemode already treats that as a rule rather than a preference
+                (#93: an offender must be shown nothing at all), and a console
+                that hands them the name of their reporter breaks it from the
+                other end. Nowhere else in the console is a reporter's name on
+                the same screen as this field, so nowhere else needs the line.
+              */}
               <DialogDescription>
-                The reason is shown to the player. Keep it specific enough to
-                stand up to an appeal.
+                {incidentId
+                  ? 'The reason is shown to the player as they are dropped. Do not name whoever reported them.'
+                  : 'The reason is shown to the player. Keep it specific enough to stand up to an appeal.'}
               </DialogDescription>
             </DialogHeader>
 
@@ -277,6 +332,23 @@ export function BanDialog({
                     </p>
                   )}
                   <p className="text-muted-foreground">“{reason.trim()}”</p>
+                  {/*
+                    THE LAST CHANCE HAS TO SAY WHAT BECOMES PERMANENT (owner,
+                    2026-08-17: verdicts cannot be changed after the fact). There
+                    is no edit screen, no re-resolve and no appeal path in this
+                    console, so the sentence that would have been on one belongs
+                    here instead — a confirm step that only restated the ban
+                    would be hiding the half of this action that cannot be
+                    revisited at all. The ban itself can at least be lifted.
+                  */}
+                  {incidentId && (
+                    <p className="rounded-md bg-muted/40 px-3 py-2 text-muted-foreground ring-1 ring-inset ring-border">
+                      The incident is closed with a verdict of{' '}
+                      <span className="font-medium text-foreground">banned</span>
+                      . Verdicts are final — it cannot be edited, re-resolved or
+                      reopened, and lifting the ban later does not change it.
+                    </p>
+                  )}
             </div>
 
             <DialogFooter>

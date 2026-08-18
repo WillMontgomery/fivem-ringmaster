@@ -39,11 +39,24 @@ const MIN_REASON = 5
 export function KickDialog({
   license,
   name,
+  incidentId,
   open,
   onOpenChange,
 }: {
   license: string
   name: string
+  /**
+   * The incident this kick is the verdict on, when it was chosen from one.
+   *
+   * THE FIVE-CHARACTER FLOOR STAYS FIVE HERE, and that is deliberate rather
+   * than an oversight of the ban's fifteen. The floor is set by who reads the
+   * string and what they do with it, not by the screen it was typed on: a kick
+   * reason is read once, by somebody being dropped, and the argument written at
+   * the top of this file — short and true beats long and fake — does not stop
+   * being true because the kick was chosen as a verdict. The reason still lands
+   * on the incident and in the audit log in full.
+   */
+  incidentId?: string
   open: boolean
   onOpenChange: (v: boolean) => void
 }) {
@@ -62,14 +75,28 @@ export function KickDialog({
   const submit = async () => {
     setBusy(true)
     try {
-      await postJson('/api/kick', {
+      const d = await postJson<{
+        ok?: boolean
+        error?: string
+        incident?: { closed: boolean; error?: string }
+      }>('/api/kick', {
         license,
         playerName: name,
         reason: reason.trim(),
+        ...(incidentId ? { incidentId } : {}),
       })
-      toast.success(`${name} was kicked.`, {
-        description: `They were shown: “${reason.trim()}”`,
-      })
+
+      // Same rule as the ban dialog: the kick happened either way, and an
+      // incident that did not close is the only part still needing attention.
+      if (incidentId && d.incident && !d.incident.closed) {
+        toast.warning(`${name} was kicked, but the incident was not closed.`, {
+          description: d.incident.error,
+        })
+      } else {
+        toast.success(`${name} was kicked.`, {
+          description: `They were shown: “${reason.trim()}”`,
+        })
+      }
       setReason('')
       onOpenChange(false)
       router.refresh()
@@ -92,6 +119,29 @@ export function KickDialog({
             They are removed immediately, mid-match. A kick is not a ban —
             nothing stops them reconnecting straight away.
           </DialogDescription>
+          {/*
+            THE VERDICT IS THE PERMANENT HALF OF THIS, and it is the opposite way
+            round from what the sentence above says: the kick is the reversible
+            action and the record of it is not. Somebody reading only "nothing
+            stops them reconnecting" would reasonably assume the whole thing was
+            undoable. It is also where the reporter warning goes, for the same
+            reason it is on the ban dialog — this box is the only one in the
+            console reached from a screen showing who filed the report.
+          */}
+          {incidentId && (
+            <div className="space-y-2 rounded-md bg-muted/40 px-3 py-2 text-sm text-muted-foreground ring-1 ring-inset ring-border">
+              <p>
+                The reason below is shown to {name} as they are dropped. Do not
+                name whoever reported them.
+              </p>
+              <p>
+                The incident is closed with a verdict of{' '}
+                <span className="font-medium text-foreground">kicked</span>.
+                Verdicts are final — it cannot be edited, re-resolved or
+                reopened.
+              </p>
+            </div>
+          )}
         </DialogHeader>
 
         <div className="space-y-1.5">

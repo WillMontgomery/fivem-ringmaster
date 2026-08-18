@@ -315,6 +315,12 @@ export default async function PlayerProfilePage({
       at: i.openedAt,
       summary: i.summary,
       state: i.state,
+      // THE OUTCOME TRAVELS WITH THE ROW (#28). Without it the profile could
+      // only say "resolved", which is the exact word that meant both "banned"
+      // and "nothing in it" before the verdict existed. `?? null` because
+      // absent and null are the same fact here — nobody recorded one — and the
+      // row must not carry `undefined` into a client component prop.
+      verdict: i.verdict ?? null,
       category: i.category,
       reportedBy: i.reporterName ?? undefined,
       reportedByLicense: i.reporterLicense,
@@ -327,6 +333,10 @@ export default async function PlayerProfilePage({
       at: i.openedAt,
       summary: i.summary,
       state: i.state,
+      // Both directions carry it. "What happened to the people I reported" is
+      // the more interesting of the two lists, not the less — it is how a
+      // reporter's track record becomes readable.
+      verdict: i.verdict ?? null,
       category: i.category,
       reportedBy: i.reporterName ?? undefined,
       reportedByLicense: i.reporterLicense,
@@ -382,6 +392,7 @@ export default async function PlayerProfilePage({
             now={now}
             banned={bannedNow}
             categoryLabel={incidents.CATEGORY_LABEL}
+            verdictLabel={incidents.VERDICT_LABEL}
             moderation={{ ban, online: live !== null, canBan }}
           />
         </div>

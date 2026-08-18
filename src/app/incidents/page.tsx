@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
 import { IncidentQueue } from '@/components/IncidentQueue'
-import { CATEGORY_LABEL, all, queue } from '@/lib/incidents'
+import { CATEGORY_LABEL, VERDICT_LABEL, all, queue } from '@/lib/incidents'
 import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
 
@@ -41,6 +41,7 @@ export default async function IncidentsPage() {
         history={history}
         now={now}
         categoryLabel={CATEGORY_LABEL}
+        verdictLabel={VERDICT_LABEL}
       />
     </AppShell>
   )

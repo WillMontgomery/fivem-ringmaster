@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import * as audit from './audit'
 import { ddb, tables } from './dynamo'
 
 /**
@@ -32,6 +33,12 @@ import { ddb, tables } from './dynamo'
  * `dismissed` as STATES does not lose them as EVENTS: "resolved — no action"
  * and "resolved — banned" are different rows in `events` with the same end
  * state, and that is where the distinction belongs.
+ *
+ * THAT WAS TRUE AND IT WAS NOT ENOUGH. The timeline carries the distinction in
+ * PROSE, which a human reads and nothing else can. `verdict` carries the same
+ * distinction in a form a machine reads — see {@link IncidentVerdict}. The two
+ * are written in the same conditional update, so they cannot disagree, and
+ * neither replaces the other: the verdict says WHAT, the timeline says why.
  */
 
 export type IncidentState = 'pending_review' | 'resolved'
@@ -54,6 +61,80 @@ export type IncidentCategory =
   | 'other'
   /** Not a player report — the system filed it. */
   | 'system'
+
+/**
+ * WHAT WAS DECIDED, in a form that is not prose.
+ *
+ * THE FIELD THIS WHOLE MODULE WAS MISSING. `resolved` used to cover both "this
+ * player was banned" and "I watched a match and they were fine" — the decision
+ * lived in `resolution`, free text, whose own placeholder read "Banned for 7
+ * days / watched a match, looked fine / no action". Nothing could tell those
+ * apart, which cost two things already: the profile page had to discard EVERY
+ * `incident.resolve` row from its moderation list because it could not know
+ * which closures involved an action, and fivem-br-gamemode#168 — 250 Volts to a
+ * reporter whose report led to one — had nothing to pay against.
+ *
+ * ═══ THE CONTRACT, WHICH IS READ FROM ANOTHER REPOSITORY ═══
+ *
+ * The row this describes lives in `ringmaster-incidents`, keyed on
+ * `incidentId`. The game side already writes rows into that table (br_ddb's
+ * `buildIncidentItem`); this is the attribute it will read back.
+ *
+ *   verdict.action   'ban' | 'kick' | 'none'   — always present when `verdict` is
+ *   verdict.expiresAt  number | null           — PRESENT IF AND ONLY IF action is
+ *                                                'ban'. null means permanent.
+ *
+ * READ `action` FIRST, ALWAYS. `expiresAt` does not exist on a kick or a
+ * no-action verdict, and a reader that reaches for it without narrowing gets
+ * `undefined` where a permanent ban would have given `null` — two falsy values
+ * meaning entirely different things. The union below makes that a compile error
+ * on this side; on the game side it is a rule somebody has to keep.
+ *
+ * DERIVE, DO NOT STORE, "was an action taken". It is `action !== 'none'`. A
+ * stored boolean beside the enum is a second copy of one fact and the two
+ * eventually disagree, always in the direction of paying for a ban that did not
+ * happen.
+ *
+ * THE WORD FOR THE PLAYER-FACING SENTENCE comes from `action` and nothing else:
+ * 'ban' → "banned", 'kick' → "kicked", 'none' → there is no award and no
+ * sentence. The admin's `reason` is NOT part of that sentence — see below.
+ *
+ * ABSENT OR NULL IS A REAL STATE AND IT IS NOT 'none'. Two kinds of resolved
+ * incident carry no verdict at all:
+ *
+ *   · one resolved before this field existed, and
+ *   · one the system auto-resolved (`open({ autoResolved: true })`), where no
+ *     human decided anything.
+ *
+ * Neither may be read as "no action was taken" — that is a claim about a
+ * decision nobody made. A reader that pays on `action !== 'none'` is safe
+ * because it must check for the attribute first; a reader that pays on
+ * `action === undefined || action !== 'none'` is not. Absent means "do not
+ * know", and this console never converts "do not know" into an answer.
+ *
+ * IT IS WRITTEN ONCE AND NEVER AGAIN (owner, 2026-08-17: verdicts cannot be
+ * changed after the fact). It lands in the same conditional update that moves
+ * the incident to `resolved`, which already refuses to run twice — so there is
+ * no window in which an incident is resolved without a verdict, and no path
+ * that rewrites one. That immutability is what makes #168's award safe to pay
+ * once and never reconcile.
+ *
+ * A VERDICT ONLY EXISTS IF THE ACTION DID. `ban` is written by the ban route
+ * after the ban row is written, and `kick` by the kick route after the game
+ * host accepts the command. Neither is a claim the browser gets to make, which
+ * is the property that matters when 250 Volts are paid against it.
+ */
+export type VerdictAction = 'ban' | 'kick' | 'none'
+
+export type IncidentVerdict =
+  | { action: 'ban'; expiresAt: number | null }
+  | { action: 'kick' }
+  | { action: 'none' }
+
+/** Was something done to the player? The one derived question, in one place. */
+export function actionWasTaken(v: IncidentVerdict | null | undefined): boolean {
+  return v != null && v.action !== 'none'
+}
 
 /** One thing that happened to this incident. Append-only. */
 export interface IncidentEvent {
@@ -102,6 +183,16 @@ export interface Incident {
   resolvedByName?: string | null
   /** What was decided. Free text; the timeline carries the detail. */
   resolution?: string | null
+
+  /**
+   * The same decision, machine-readable. See {@link IncidentVerdict}.
+   *
+   * OPTIONAL BECAUSE HISTORY IS. Rows resolved before this field existed have
+   * no verdict and never will — there is no backfill, because inventing one
+   * would mean guessing from free text exactly the way this field exists to
+   * stop anybody doing.
+   */
+  verdict?: IncidentVerdict | null
 
   /**
    * S3 keys for capture frames, when the subject was still in the match.
@@ -266,6 +357,15 @@ export async function open(input: {
     resolvedByLicense: null,
     resolvedByName: resolved ? 'System' : null,
     resolution: resolved ? 'Handled automatically' : null,
+    /**
+     * NO VERDICT, EVEN WHEN THIS OPENS RESOLVED, and that is not an oversight.
+     * A verdict is a human's decision about what should happen to a player. The
+     * system handling something itself is a different fact, and writing
+     * `{ action: 'none' }` here would tell #168 that an admin looked and decided
+     * nothing — which nobody did. Absent means "no verdict", and that is the
+     * honest answer for this row.
+     */
+    verdict: null,
   }
 
   if (resolved) {
@@ -284,19 +384,33 @@ export async function open(input: {
 }
 
 /**
- * Resolve one, once.
+ * Resolve one, once, with a verdict.
  *
  * THE CONDITION IS THE NO-REOPEN RULE, enforced by the database rather than by
  * the UI. Two admins opening the same incident and both pressing resolve is the
  * ordinary case, not the exotic one — the second write is refused and the first
  * decision stands, rather than the two racing to overwrite each other's
  * resolution text.
+ *
+ * IT IS ALSO THE NO-EDIT RULE (owner, 2026-08-17: verdicts cannot be changed
+ * after the fact). There is no second function here that takes an incidentId
+ * and a verdict, and that absence is the enforcement — `#s = :pending` fails
+ * against a row that is already `resolved`, so the only write that can ever set
+ * `verdict` is the one that sets `state` at the same instant. A verdict cannot
+ * be edited because it cannot be reached without also un-resolving the
+ * incident, which nothing in this module can do.
+ *
+ * THE VERDICT IS REQUIRED, not optional. An optional one would mean a resolved
+ * incident that says nothing, which is the exact state this field was added to
+ * abolish — and the caller that "forgets" it is precisely the caller whose
+ * closure #168 would then never pay for.
  */
 export async function resolve(input: {
   incidentId: string
   byLicense: string
   byName: string
   resolution: string
+  verdict: IncidentVerdict
 }): Promise<{ ok: true } | { ok: false; reason: string }> {
   const now = Date.now()
 
@@ -314,10 +428,13 @@ export async function resolve(input: {
       Key: { incidentId: input.incidentId },
       UpdateExpression:
         'SET #s = :resolved, resolvedAt = :now, resolvedByLicense = :by, ' +
-        'resolvedByName = :byName, resolution = :res, ' +
+        'resolvedByName = :byName, resolution = :res, #verdict = :verdict, ' +
         'events = list_append(events, :ev)',
       ConditionExpression: 'attribute_exists(incidentId) AND #s = :pending',
-      ExpressionAttributeNames: { '#s': 'state' },
+      // `#verdict` is aliased for the same reason `#s` is: neither name is worth
+      // checking against DynamoDB's reserved-word list on every edit, and the
+      // failure mode is a ValidationException on a moderation write.
+      ExpressionAttributeNames: { '#s': 'state', '#verdict': 'verdict' },
       ExpressionAttributeValues: {
         ':resolved': 'resolved' satisfies IncidentState,
         ':pending': 'pending_review' satisfies IncidentState,
@@ -325,6 +442,7 @@ export async function resolve(input: {
         ':by': input.byLicense,
         ':byName': input.byName,
         ':res': input.resolution,
+        ':verdict': input.verdict,
         ':ev': [event],
       },
     })
@@ -338,6 +456,64 @@ export async function resolve(input: {
     console.error('[incidents] resolve failed', e)
     return { ok: false, reason: 'The database refused the change.' }
   }
+}
+
+/**
+ * Close a case with a verdict, and log that it happened. The only way in.
+ *
+ * THREE ROUTES CLOSE INCIDENTS AND THERE IS ONE OF THIS. `/api/bans` closes one
+ * with a ban, `/api/kick` with a kick, `/api/incidents/resolve` with no action —
+ * and if each wrote its own audit row, "who decided nothing was wrong" would be
+ * three slightly different rows within a month. The audit row is not optional
+ * and not the caller's to remember, which is why it is inside this function
+ * rather than beside each call to it.
+ *
+ * THE VERDICT GOES IN `detail`, and that is what unblocks the profile page. Its
+ * `NOT_AN_ACTION` filter currently discards every `incident.resolve` row
+ * unconditionally, with a comment saying it has to because nothing on the row
+ * can tell an action-taken closure from a no-action one. Now something can.
+ *
+ * RECORDED AFTER THE WRITE, not around it, for the reason the resolve route
+ * already gives: the two-phase intent/outcome shape exists for actions that
+ * reach out to something that can fail slowly, and this one has already
+ * succeeded against a conditional write by the time we get here.
+ */
+export async function closeWithVerdict(input: {
+  incident: Incident
+  actor: audit.Actor
+  resolution: string
+  verdict: IncidentVerdict
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const result = await resolve({
+    incidentId: input.incident.incidentId,
+    // The actor always has a license here — authorize() resolves the session to
+    // a grants row, and grants are keyed on license.
+    byLicense: input.actor.license ?? '',
+    byName: input.actor.name,
+    resolution: input.resolution,
+    verdict: input.verdict,
+  })
+
+  if (!result.ok) return result
+
+  const handle = await audit.begin({
+    action: 'incident.resolve',
+    actor: input.actor,
+    targetLicense: input.incident.subjectLicense,
+    targetName: input.incident.subjectName,
+    reason: input.resolution,
+    detail: {
+      incidentId: input.incident.incidentId,
+      kind: input.incident.kind,
+      verdict: input.verdict.action,
+      ...(input.verdict.action === 'ban'
+        ? { expiresAt: input.verdict.expiresAt }
+        : {}),
+    },
+  })
+  await audit.resolve(handle.ts, 'ok')
+
+  return { ok: true }
 }
 
 /**
@@ -445,4 +621,23 @@ export const KIND_LABEL: Record<IncidentKind, string> = {
   report: 'Player report',
   identifier_reuse: 'Shared identifier',
   anticheat: 'Anticheat',
+}
+
+/**
+ * The verdict in English, past tense, as a thing done to the subject.
+ *
+ * PAST TENSE ON PURPOSE. "Ban" is a button; "Banned" is a record. This map is
+ * only ever rendered against an incident that is already closed, so the label
+ * has to read as a fact rather than as an offer — the same reason the profile
+ * page maps `ban.issue` to "Banned" rather than to "Ban".
+ *
+ * "No action" IS NOT A FAILURE AND IS NOT STYLED LIKE ONE. An admin who looked
+ * at a report and concluded there was nothing in it did the job correctly, and
+ * a console that greys that outcome out teaches people to ban rather than
+ * decide.
+ */
+export const VERDICT_LABEL: Record<VerdictAction, string> = {
+  ban: 'Banned',
+  kick: 'Kicked',
+  none: 'No action',
 }
