@@ -22,6 +22,28 @@ jobs:
           # than the default shallow tip to be asking about anything real.
           fetch-depth: 0
 
+      # THE OTHER HALF OF ONE CONTRACT, AND THE ONE STEP THAT EARNS AN EDIT
+      # HERE. `check:verdict` drives this console's real incident write path
+      # into the GAME's real `projectVerdict()` — the function that decides
+      # whether a report reward is paid. That reader lives in the gamemode
+      # repository, so with one checkout the check has nothing to run against
+      # and skips. A gate that skips itself is a green tick that means nothing,
+      # so the second repo is cloned rather than the check being weakened.
+      #
+      # Shallow and unauthenticated-by-default: it is a public repo and only one
+      # source file is read. `.gamemode/` is gitignored so nothing here can be
+      # committed by accident.
+      #
+      # IF THIS STEP IS EVER DELETED, `check:verdict` FAILS RATHER THAN SKIPS —
+      # it hard-fails whenever $CI is set and the reader is missing. That is
+      # deliberate: removing the input to a check should break the build, not
+      # quietly retire the check.
+      - uses: actions/checkout@v4
+        with:
+          repository: WillMontgomery/fivem-br-gamemode
+          path: .gamemode
+          fetch-depth: 1
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -40,12 +62,19 @@ jobs:
       # check that must not quietly stop running.
       #
       # THAT IS ALSO WHAT MAKES IT CHEAP TO MAINTAIN: adding a check means
-      # adding it to `npm run verify`, and this file does not change.
+      # adding it to `npm run verify`, and this file does not change — unless
+      # the check needs an INPUT that is not in this repo, which `check:verdict`
+      # does and which is why the gamemode is cloned above. That is the whole
+      # exception, and it is narrow on purpose.
       #
       # Secret scanning runs first inside it, which is right — it is the
       # cheapest check and the only one whose failure is urgent. Everything else
       # can be fixed at leisure; a committed credential cannot be uncommitted.
       - run: npm run verify
+        env:
+          # Where the step above put the gamemode. `check:verdict` reads the
+          # game's verdict reader from here; every other check ignores it.
+          BR_GAMEMODE_DIR: .gamemode
 
       # NO ENVIRONMENT IS SUPPLIED, AND THIS IS THE GATE THAT PROVES IT WORKS.
       #

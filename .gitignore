@@ -56,6 +56,12 @@ PLAN.md
 # in the gamemode repo and the commit had to be rebuilt. Same convention here.
 .worktrees/
 
+# The gamemode checkout CI clones so `check:verdict` has the game's real
+# verdict reader to run against. Never committed here — it is another repo, and
+# a copy of it in this one would be the exact duplication that check exists to
+# catch. See scripts/check-verdict-contract.mjs.
+.gamemode/
+
 # Local overrides
 *.local
 config.local.*
