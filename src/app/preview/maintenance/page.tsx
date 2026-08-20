@@ -362,6 +362,37 @@ const views: Record<string, View> = {
   },
 
   /**
+   * THE DEPLOY VERB IS RUNNING — and in this harness, the one state where the
+   * header's two readings disagree.
+   *
+   * WHY IT IS HERE. `AppShell` seeds the header chips from TWO reads: the badge
+   * from whatever the page passes, and `initialPhase` from the maintenance
+   * driver's cached window. In this harness the driver has never read anything,
+   * so `initialPhase` is always `idle` — which makes this fixture the seed
+   * contradiction the owner's second complaint came through: a badge saying
+   * `updating` beside a phase saying nothing is happening. Before `chipCluster`
+   * took whole readings and grew its `updating` rung, that pair rendered
+   * "UPDATE AVAILABLE" next to a chip reading "UPDATING".
+   *
+   * WHAT TO CHECK: the header shows the feed chip and UPDATING, and NO update
+   * badge — neither "Update available" nor "Up to date".
+   */
+  deploying: {
+    deployedRef: 'main',
+    refUpdate: null,
+    behindMain: 3,
+    updateTarget: targetOn('main'),
+    window: {
+      ...BASE,
+      state: 'deploying',
+      updateAvailable: 3,
+      updateFirstSeenAt: NOW - 20 * 60 * 60_000,
+      deployStartedAt: NOW - 30_000,
+    },
+    players: 0,
+  },
+
+  /**
    * THE DEPLOY IS DONE AND THE SERVER HAS NOT SPOKEN YET — the state the owner
    * could not see, because the page used to skip straight past it.
    *
@@ -499,9 +530,11 @@ async function Preview({
         maintenance:
           view.window?.state === 'draining'
             ? 'draining'
-            : view.window?.state === 'scheduled'
-              ? 'scheduled'
-              : null,
+            : view.window?.state === 'deploying'
+              ? 'updating'
+              : view.window?.state === 'scheduled'
+                ? 'scheduled'
+                : null,
       }}
       feed={{ lastPushAt: NOW - 1_200, bootEpoch: 'preview', now: NOW }}
     >

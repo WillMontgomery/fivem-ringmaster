@@ -104,6 +104,30 @@ export function phaseOf(payload: LivePayload | null): DeployPhase {
 }
 
 /**
+ * THE WINDOW BADGE off that same payload — `phaseOf`'s other half.
+ *
+ * IT EXISTS TO SIT HERE, NEXT TO `phaseOf`, because the two used to disagree
+ * about what an ANSWERLESS PAYLOAD means and nothing made that visible.
+ * `phaseOf` reads a missing `maintenance` block as `idle` — assert nothing —
+ * while the chip read it as "keep whatever the server render said", which left
+ * a stale seed badge standing against a phase that had moved on. That is how
+ * "update available" got back beside "updating" after the draining rung closed
+ * the first door.
+ *
+ * SO ABSENCE MEANS THE SAME THING TO BOTH: no window, no claim. A payload that
+ * predates the `maintenance` field is not a payload that failed to arrive — it
+ * is the console being told nothing about the window, and "not knowing shows
+ * less" is this file's polarity everywhere else. The two-second seed before the
+ * FIRST poll is a different thing entirely and is still honoured; see
+ * `chipCluster`, which is handed whole readings and picks one.
+ */
+export function badgeOf(
+  payload: LivePayload | null,
+): 'scheduled' | 'draining' | 'updating' | null {
+  return payload?.maintenance?.badge ?? null
+}
+
+/**
  * The phase the last tick saw.
  *
  * IT LIVES IN THE MODULE, NOT IN A COMPONENT, AND THAT IS THE WHOLE REASON THIS

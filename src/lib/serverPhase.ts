@@ -258,17 +258,29 @@ export function updateInProgress(input: {
  *    would be the raw reading beside the attributed one, and the attributed one
  *    is strictly more useful.
  *
- * 3. THE SERVER IS DRAINING — no `UpdateBadge`. THIS IS THE OWNER'S RULE:
+ * 3. THE WINDOW SAYS SOMETHING IS HAPPENING RIGHT NOW — `draining` or
+ *    `updating` — and there is no `UpdateBadge`. THIS IS THE OWNER'S RULE:
  *    "'update available' should be superseded by 'draining' chips - they should
  *    never be displayed together". Draining means the server is refusing players
  *    RIGHT NOW; an available update is background information that will still be
  *    true in an hour. The urgent, specific, happening-now state supersedes the
- *    ambient one. The FEED chip stays, because "is my data current" is a
- *    different question and a drain is exactly when it is worth answering — the
- *    same call `check-chip-suppression.mjs` has always made for this state
- *    ("draining and the feed has died — must NOT be hidden").
+ *    ambient one, and an update that is RUNNING is the same sentence with a
+ *    stronger subject. `scheduled` stays out of this rung on the owner's ruling.
+ *    The FEED chip stays, because "is my data current" is a different question
+ *    and a drain is exactly when it is worth answering — the same call
+ *    `check-chip-suppression.mjs` has always made for this state ("draining and
+ *    the feed has died — must NOT be hidden").
  *
  * 4. ORDINARY. Feed, deploy state, and a scheduled window if there is one.
+ *
+ * ═══ AND ALL OF IT OFF ONE READING ═══
+ *
+ * `phase` AND `badge` ARE TWO VIEWS OF ONE WINDOW, and the rungs above are only
+ * as honest as the pair they are handed. Mixed across snapshots they contradict
+ * each other, and the contradiction lands on rung 4 — which is exactly where the
+ * owner's complaint reappeared after `draining` was fixed. So this function
+ * takes two whole readings and chooses ONE, rather than taking two loose fields
+ * that a caller may have assembled from anywhere.
  *
  * FEED STATUS IS ORTHOGONAL TO DEPLOY STATE, WITH ONE EXCEPTION, and the
  * exception is the point of rungs 1 and 2: a feed that is dead BECAUSE OF a
@@ -289,10 +301,50 @@ export interface ChipCluster {
   window: 'scheduled' | 'draining' | 'updating' | null
 }
 
+/**
+ * ONE READING OF THE SERVER — the phase and the window badge, together.
+ *
+ * THEY ARE A PAIR AND MUST TRAVEL AS ONE. Both are derived from a single
+ * maintenance window; split across two snapshots they can describe two
+ * different instants, and the cluster then paints a contradiction. That is not
+ * hypothetical — it is how "update available" got back beside "updating" after
+ * the draining rung closed the first door. See `chipCluster`.
+ */
+export interface ClusterReading {
+  phase: DeployPhase
+  badge: 'scheduled' | 'draining' | 'updating' | null
+}
+
 export function chipCluster(
-  phase: DeployPhase,
-  badge: 'scheduled' | 'draining' | 'updating' | null,
+  /**
+   * What the last poll said, or null before the first one lands.
+   *
+   * WHEN THIS IS PRESENT IT IS THE WHOLE ANSWER. The seed below is not
+   * consulted for so much as one field — see the no-mixing property in
+   * `check-chip-suppression.mjs`, which sweeps every pair of readings and
+   * asserts the seed cannot influence the result once a poll exists.
+   */
+  polled: ClusterReading | null,
+  /**
+   * The SERVER render's reading, which covers the two seconds before the first
+   * poll answers and nothing after it.
+   *
+   * IT IS DELIBERATE AND IT IS LOAD-BEARING. Without it a maintenance window in
+   * progress is invisible for two seconds after every page load, and
+   * `confirming` — a phase no badge can express — flickers through a clean
+   * header on every navigation during a deploy. It is NOT a fallback for fields
+   * a poll happened not to carry: a poll that cannot describe the window is
+   * still a poll, and "not known" must show less rather than leave a stale
+   * claim standing.
+   */
+  seed: ClusterReading,
 ): ChipCluster {
+  /**
+   * BOTH FIELDS FROM ONE SNAPSHOT, OR NEITHER. The single line this function
+   * exists to make unmissable, and the one a gate can hold.
+   */
+  const { phase, badge } = polled ?? seed
+
   /** 1. The deploy is running, or we are waiting for the server to come back. */
   if (phase === 'deploying' || phase === 'confirming') {
     return { feed: false, update: false, phase: 'updating', window: null }
@@ -303,9 +355,33 @@ export function chipCluster(
     return { feed: false, update: false, phase, window: null }
   }
 
-  /** 3. Draining supersedes "update available". The owner's rule, in one line. */
-  if (badge === 'draining') {
-    return { feed: true, update: false, phase: null, window: 'draining' }
+  /**
+   * 3. THE WINDOW SAYS SOMETHING IS HAPPENING RIGHT NOW. No `UpdateBadge`.
+   *
+   * THE OWNER'S RULE, AND ITS SECOND HALF. `draining` was the case they
+   * reported: "'update available' should be superseded by 'draining' chips -
+   * they should never be displayed together". `updating` is the same sentence
+   * with a stronger subject — an update that is RUNNING supersedes one that is
+   * merely available — and it reaches this rung only when the badge and the
+   * phase came from readings that disagree, which the console can still do.
+   *
+   * `scheduled` IS NOT HERE, ON THE OWNER'S RULING ("first one is fine to
+   * leave"). It describes something LATER, not something now, and it does not
+   * imply an update exists: a window can be scheduled with `updateAvailable: 0`
+   * for a restart or a config change. Suppressing on it would also hide `Up to
+   * date` — the resting state — for the hours a window can be scheduled.
+   *
+   * WHY THIS RUNG IS NOT DEAD CODE, now that one reading can no longer produce
+   * the pair: the SEED is still assembled from two reads. `AppShell` takes the
+   * badge from whatever the page passed — and `app/maintenance/page.tsx` passes
+   * `badgeState(await current(), now)`, a fresh DynamoDB read — while
+   * `initialPhase` comes from the driver's cached window. Two reads, on the one
+   * route where deploys are fired. Unifying them would mean changing the
+   * `badges` API and desyncing the header from the sidebar, so the mixing stays
+   * and the cluster refuses to paint its contradiction instead.
+   */
+  if (badge === 'draining' || badge === 'updating') {
+    return { feed: true, update: false, phase: null, window: badge }
   }
 
   /** 4. Nothing is happening to the server that changes what else may be said. */

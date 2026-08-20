@@ -160,19 +160,37 @@ const clusterCases = [
   ['scheduled — still shows the update badge, UNCHANGED by this work', 'idle', 'scheduled', { feed: true, update: true, phase: null, window: 'scheduled' }],
 
   /**
-   * `updating` REACHING THE ORDINARY RUNG IS A MIXED-PAYLOAD CASE, not a normal
-   * one. `badgeState` returns 'updating' only for `state === 'deploying'`, which
-   * `deployPhase` reads as `deploying` — so the two normally arrive together and
-   * land on the first rung. They can separate for one poll: a payload predating
-   * the maintenance field leaves `phaseOf` at `idle` while the SERVER-rendered
-   * seed badge still says 'updating'. Asserted as it BEHAVES rather than as it
-   * ought to, because this is the state the owner has not been asked about.
+   * ═══ THE CASE THAT USED TO ASSERT THE BUG, AND NOW ASSERTS THE FIX ═══
+   *
+   * IT PREVIOUSLY EXPECTED `update: true` — "update available" beside a chip
+   * reading "updating" — and said so deliberately, as a record of behaviour
+   * nobody had asked the owner about. They have now been asked, and ruled:
+   * "please close the 2nd". So `update: false`, and the badge takes rung 3
+   * beside `draining`.
+   *
+   * HOW THE TWO SEPARATE, since `badgeState` returns 'updating' only for
+   * `state === 'deploying'` and `deployPhase` reads that same state as
+   * `deploying`: one reading can no longer produce this pair at all — that is
+   * what taking whole readings fixed. The SEED still can. `AppShell` builds it
+   * from two reads, the badge from whatever the page passed and the phase from
+   * the driver's cache, and `app/maintenance/page.tsx` passes a fresh DynamoDB
+   * read. So this row is reachable, and it is why the rung is not dead code.
    */
-  ['updating badge with an idle phase — the mixed-payload second', 'idle', 'updating', { feed: true, update: true, phase: null, window: 'updating' }],
+  ['updating badge with an idle phase — two reads disagreeing', 'idle', 'updating', { feed: true, update: false, phase: null, window: 'updating' }],
+  ['a failure outranks a stale updating badge as well', 'failed', 'updating', { feed: false, update: false, phase: 'failed', window: null }],
+  ['unconfirmed outranks it too', 'unconfirmed', 'updating', { feed: false, update: false, phase: 'unconfirmed', window: null }],
 ]
 
+/**
+ * EVERY CASE IS ALSO A NO-MIXING ASSERTION. The reading under test goes in as
+ * the POLL, and the seed handed alongside it is deliberately the loudest thing
+ * that could possibly contradict it. If any rung ever consulted the seed while
+ * a poll existed, every row below would move.
+ */
+const CONTRADICTORY_SEED = { phase: 'deploying', badge: 'draining' }
+
 for (const [label, phase, badge, expected] of clusterCases) {
-  const got = chipCluster(phase, badge)
+  const got = chipCluster({ phase, badge }, CONTRADICTORY_SEED)
   for (const k of ['feed', 'update', 'phase', 'window']) {
     if (got[k] !== expected[k]) {
       failed++
@@ -181,21 +199,86 @@ for (const [label, phase, badge, expected] of clusterCases) {
       )
     }
   }
+
+  /** And the same reading as a SEED, with no poll, must decide identically. */
+  const seeded = chipCluster(null, { phase, badge })
+  for (const k of ['feed', 'update', 'phase', 'window']) {
+    if (seeded[k] !== expected[k]) {
+      failed++
+      console.error(
+        `  FAIL  ${label} (as seed, before the first poll): ${k} -> ${JSON.stringify(seeded[k])}`,
+      )
+    }
+  }
 }
 
 const PHASES = ['idle', 'deploying', 'confirming', 'failed', 'unconfirmed']
 const BADGES = ['scheduled', 'draining', 'updating', null]
 
+/** Every reading the console can hold: 5 phases × 4 badges. */
+const READINGS = PHASES.flatMap((phase) => BADGES.map((badge) => ({ phase, badge })))
+
 /**
- * THE OWNER'S RULE AS A PROPERTY, over every combination that exists, so no
- * future rung can reintroduce the pair by covering a case the table missed.
+ * ═══ NO MIXING: A POLL IS THE WHOLE ANSWER ═══
+ *
+ * THE DEFECT THIS PROPERTY EXISTS FOR. `phase` and `badge` are two views of one
+ * maintenance window, and the chip used to resolve them SEPARATELY — the phase
+ * from the poll, the badge from the poll's `maintenance` block or else from the
+ * server-rendered seed. A payload carrying no `maintenance` block therefore
+ * produced a phase from one instant and a badge from another, and the cluster
+ * painted the contradiction: "update available" beside "updating". Fixing the
+ * one call site would have left nothing asserting the next one.
+ *
+ * So: over all 400 pairs, the seed may not influence the result by so much as
+ * one field once a poll exists. Both from one snapshot, or neither.
  */
-for (const phase of PHASES) {
-  const c = chipCluster(phase, 'draining')
-  if (c.update) {
+for (const polled of READINGS) {
+  const alone = chipCluster(polled, polled)
+  for (const seed of READINGS) {
+    const mixed = chipCluster(polled, seed)
+    for (const k of ['feed', 'update', 'phase', 'window']) {
+      if (mixed[k] !== alone[k]) {
+        failed++
+        console.error(
+          `  FAIL  the seed leaked into a polled cluster: poll=${polled.phase}/${polled.badge} ` +
+            `seed=${seed.phase}/${seed.badge} — ${k} ${JSON.stringify(alone[k])} became ${JSON.stringify(mixed[k])}`,
+        )
+      }
+    }
+  }
+}
+
+/**
+ * ═══ THE OWNER'S RULE, BOTH HALVES, AS A PROPERTY ═══
+ *
+ * A window badge that describes something HAPPENING NOW is never rendered
+ * beside `UpdateBadge`. `draining` is the half the owner reported; `updating`
+ * is the half they closed afterwards ("please close the 2nd"). Stated over
+ * every combination that exists so no future rung can reintroduce either pair
+ * by covering a case the table missed.
+ *
+ * `scheduled` IS DELIBERATELY NOT IN THIS SET — the owner ruled it stays
+ * ("first one is fine to leave"). The case table asserts that it still renders
+ * the update badge, so the two decisions cannot be collapsed by accident.
+ */
+const HAPPENING_NOW = ['draining', 'updating']
+
+for (const reading of READINGS) {
+  const c = chipCluster(reading, reading)
+  if (c.update && HAPPENING_NOW.includes(c.window)) {
     failed++
     console.error(
-      `  FAIL  draining rendered the update badge (phase=${phase}) — the owner's rule`,
+      `  FAIL  "${c.window}" rendered beside the update badge ` +
+        `(phase=${reading.phase}, badge=${reading.badge}) — the owner's rule`,
+    )
+  }
+  /** And it must not reach rung 4 by the seed door either. */
+  const s = chipCluster(null, reading)
+  if (s.update && HAPPENING_NOW.includes(s.window)) {
+    failed++
+    console.error(
+      `  FAIL  "${s.window}" beside the update badge from the SEED ` +
+        `(phase=${reading.phase}, badge=${reading.badge})`,
     )
   }
 }
@@ -208,7 +291,7 @@ for (const phase of PHASES) {
  */
 for (const phase of PHASES) {
   for (const badge of BADGES) {
-    const c = chipCluster(phase, badge)
+    const c = chipCluster({ phase, badge }, { phase, badge })
     if (c.phase !== null && c.window !== null) {
       failed++
       console.error(
@@ -245,12 +328,14 @@ for (const phase of PHASES) {
 if (failed) {
   console.error(`\nchip suppression: ${failed} case(s) failed.`)
   console.error(
-    'Only a stated deploy may put "Updating" in the header, and "update ' +
-      'available" never appears beside "draining" — see src/lib/serverPhase.ts',
+    'Only a stated deploy may put "Updating" in the header; "update available" ' +
+      'never appears beside "draining" or "updating"; and the cluster reads one ' +
+      'snapshot, never a field from each — see src/lib/serverPhase.ts',
   )
   process.exit(1)
 }
 console.log(
-  `chip suppression: ${cases.length} suppression cases and ` +
-    `${clusterCases.length} cluster cases match the contract`,
+  `chip suppression: ${cases.length} suppression cases, ` +
+    `${clusterCases.length} cluster cases and ` +
+    `${READINGS.length * READINGS.length} no-mixing pairs match the contract`,
 )

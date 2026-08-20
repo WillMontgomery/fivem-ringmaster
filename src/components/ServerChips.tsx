@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { FeedStatus } from '@/components/FeedStatus'
 import { UpdateBadge } from '@/components/UpdateBadge'
 import { Badge } from '@/components/ui/badge'
-import { phaseOf, useLiveState } from '@/lib/livePoll'
+import { badgeOf, phaseOf, useLiveState } from '@/lib/livePoll'
 import { chipCluster, type DeployPhase } from '@/lib/serverPhase'
 import { cn } from '@/lib/utils'
 
@@ -100,23 +100,29 @@ export function ServerChips({
 }) {
   const polled = useLiveState(live)
 
-  const m = polled?.maintenance
-  const badge = m ? m.badge : initialBadge
-
-  /**
-   * THE SAME READING THE MAINTENANCE PAGE AND THE TOAST USE, from the same
-   * payload. Not a second notion of "are we done": `phaseOf` is the one
-   * definition, and if this chip and that page ever disagree it is because they
-   * polled at different instants, not because they decided differently.
-   */
-  const phase = polled ? phaseOf(polled) : initialPhase
-
   /**
    * THE ONE DECISION, MADE ONCE, SOMEWHERE A GATE CAN REACH IT. Everything
    * below is a `&&` on a field of this object — no phase is re-tested and no
    * badge is re-inspected to decide whether a chip appears.
+   *
+   * TWO WHOLE READINGS GO IN, NOT FOUR LOOSE FIELDS, and that is the fix for
+   * the second door the owner's complaint came back through. This used to
+   * resolve the two independently — `polled?.maintenance ? … : initialBadge`
+   * for the badge, `polled ? phaseOf(polled) : initialPhase` for the phase — so
+   * a payload that carried no `maintenance` block took the phase from the POLL
+   * and the badge from the SERVER SEED. Two instants, one cluster, and
+   * "update available" beside "updating" whenever they disagreed. `phaseOf` and
+   * `badgeOf` now answer the same way about the same payload, and `chipCluster`
+   * picks one reading or the other rather than a field from each.
+   *
+   * THE SEED IS UNCHANGED AND STILL COVERS FIRST PAINT. `polled` is null only
+   * before the first tick, which is exactly the two seconds `initialBadge` and
+   * `initialPhase` were added for.
    */
-  const cluster = chipCluster(phase, badge)
+  const cluster = chipCluster(
+    polled ? { phase: phaseOf(polled), badge: badgeOf(polled) } : null,
+    { phase: initialPhase, badge: initialBadge },
+  )
 
   return (
     <>
