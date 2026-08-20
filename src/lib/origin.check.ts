@@ -23,8 +23,12 @@
  *      route added without the check is caught" case, and it is why the guard
  *      is in middleware rather than in a helper each route remembers to call.
  *   D. THE COOKIE — that `SameSite=None` cannot be produced without `Secure`,
- *      and that the three places issuing session cookies still derive both from
- *      `lib/handoff.ts` rather than spelling them out.
+ *      that the places issuing session cookies still derive both from
+ *      `lib/cookieFlags.ts` rather than spelling them out, and that EVERY file
+ *      in `src/` which writes a cookie at all derives them too. The last of
+ *      those is a WALK, not a list, and it is a walk because the list missed
+ *      one: `lib/prefs.ts` spelled `samesite=lax` next to `document.cookie` and
+ *      was never on it.
  *   E. THE FRAME HEADER — that `X-Frame-Options` is gone and `frame-ancestors`
  *      names the CEF scheme. Read from `next.config.mjs` as text, which is what
  *      that file supports; it proves the value shipped, not that a browser
@@ -36,7 +40,11 @@
  * "require Origin" fails the two game-box cases and nothing else, which is
  * exactly the regression that would otherwise reach a playtest as "the player
  * list is empty". Narrowing the matcher back to exclude `/api` fails all of C.
- * Hard-coding `sameSite: 'lax'` back into any cookie site fails D.
+ * Hard-coding `sameSite: 'lax'` back into any cookie site fails D — in EITHER
+ * spelling, which is the half that used to be missed: the attribute regex was
+ * case-sensitive and a `document.cookie` string says `samesite=lax` in
+ * lowercase, so the one real regression this section exists to catch walked
+ * straight through it.
  */
 
 process.env.DISCORD_CLIENT_ID ??= 'check-client-id'
@@ -473,21 +481,165 @@ expect('cookie: http AUTH_URL is not', secureCookies('http://localhost:3000'), f
 expect('cookie: an unparseable AUTH_URL fails towards Secure', secureCookies('nonsense'), true)
 
 /**
- * The three places a session-bearing cookie is issued must still DERIVE the
- * flags. A hard-coded `sameSite` in any of them is how the framed console
- * regresses to signed-out with nothing reporting it.
+ * Comments out, so that prose ABOUT `SameSite=Lax` — of which this repository
+ * has a great deal, most of it explaining why the value is no longer that — is
+ * never mistaken for a hard-coded one.
+ *
+ * BLOCK COMMENTS AND WHOLE-LINE `//` ONLY. A trailing `//` strip would cut into
+ * string and regex literals containing `//`, and the direction that error runs
+ * in is a check that stops seeing what it is looking for.
+ */
+function codeOf(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+}
+
+/**
+ * A `SameSite` value written out by hand, in either of the two spellings this
+ * codebase can produce it in.
+ *
+ * BOTH ARE CASE-INSENSITIVE, and the second one did not used to be. That is not
+ * a tidy-up: an object literal handed to a cookie API is `sameSite: 'lax'`, but
+ * a `document.cookie` assignment is a raw attribute string and the browser does
+ * not care about its case, so the code says `samesite=lax` in lowercase.
+ * `/SameSite=(Lax|None|Strict)/` without `i` matches the first and not the
+ * second, which is exactly how `lib/prefs.ts` kept the framed console prompting
+ * for first-run setup on every navigation with this check passing.
+ *
+ * THE QUOTE CHARACTER IS NOT PINNED EITHER. `ui/sidebar.tsx` came from a
+ * generator that writes double quotes.
+ */
+const HARD_CODED_SAMESITE = [
+  /sameSite\s*:\s*['"`](lax|none|strict)['"`]/i,
+  /samesite\s*=\s*(lax|none|strict)\b/i,
+]
+
+function hardCodedSameSite(code: string): boolean {
+  return HARD_CODED_SAMESITE.some((r) => r.test(code))
+}
+
+/**
+ * The functions a cookie site is allowed to have got its flags from — every
+ * export of `lib/cookieFlags.ts` that decides one.
+ *
+ * SPELLED IN FULL, INCLUDING THE PREFIXED ONE. `browserCookieAttributes` does
+ * not contain the substring `cookieAttributes` (the capital C), so a list that
+ * relied on that would have reported the two browser-side writers as deriving
+ * nothing — which is what it did, the first time this ran.
+ */
+const DERIVATIONS = [
+  'sessionSameSite',
+  'cookieAttributes',
+  'browserCookieAttributes',
+] as const
+
+/**
+ * The named cookie sites must still DERIVE the flags, and from the specific
+ * function named beside each. A hard-coded `sameSite` in any of them is how the
+ * framed console regresses to signed-out with nothing reporting it.
+ *
+ * `lib/prefs.ts` AND `app/layout.tsx` ARE ON THIS LIST NOW. They were not, and
+ * both wrote `samesite=lax` — the display-preference cookies, which the framed
+ * console therefore never sent back, so the server saw no stated timezone and
+ * re-offered first-run setup on every in-game navigation. They are the reason
+ * the walk below exists as well; a list only holds what somebody remembered.
  */
 for (const [file, needle] of [
   ['src/auth.ts', 'sessionSameSite'],
   ['src/app/api/handoff/redeem/route.ts', 'sessionSameSite'],
   ['src/app/api/session/keepalive/route.ts', 'sessionSameSite'],
+  ['src/lib/prefs.ts', 'browserCookieAttributes'],
+  ['src/app/layout.tsx', 'cookieAttributes'],
+  ['src/components/ui/sidebar.tsx', 'browserCookieAttributes'],
 ] as const) {
   const src = readFileSync(join(REPO_DIR, file), 'utf8')
   if (!src.includes(needle)) {
     fail('cookie', `${file} no longer derives SameSite from ${needle}()`)
   }
-  if (/sameSite:\s*'(lax|none|strict)'/i.test(src) || /SameSite=(Lax|None|Strict)\b/.test(src.replace(/^\s*\*.*$/gm, ''))) {
+  if (hardCodedSameSite(codeOf(src))) {
     fail('cookie', `${file} hard-codes a SameSite value`)
+  }
+}
+
+/**
+ * EVERY COOKIE WRITE IN `src/`, FOUND BY WALKING RATHER THAN BY LIST.
+ *
+ * THIS IS THE HALF THE LIST ABOVE CANNOT BE. The list is six paths somebody
+ * typed; the regression that reached a playtest was a seventh file that had
+ * never been on it, writing the same attribute string with the same mistake in
+ * it. Section C already makes this argument about routes and the middleware
+ * matcher — "a new route added without the check is caught" — and it is the
+ * same argument. A cookie written from a file nobody thought of is caught here
+ * without anybody thinking of it.
+ *
+ * A FILE COUNTS AS A COOKIE SITE if its code assigns `document.cookie`, passes
+ * a `sameSite:` option, or builds a `SameSite=` attribute. That deliberately
+ * over-collects: `lib/cookieFlags.ts` itself matches, and passes, which is the
+ * correct outcome for the one file allowed to know the spelling.
+ */
+const SELF_FILE = relative(REPO_DIR, fileURLToPath(import.meta.url))
+  .split(sep)
+  .join('/')
+
+function sourceFiles(dir: string): string[] {
+  const out: string[] = []
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) {
+      out.push(...sourceFiles(full))
+      continue
+    }
+    if (/\.tsx?$/.test(entry)) out.push(full)
+  }
+  return out
+}
+
+{
+  const WRITES_A_COOKIE = /document\.cookie\s*=|\bsameSite\s*:|\bSameSite\s*=/i
+  let sites = 0
+
+  for (const full of sourceFiles(SRC_DIR)) {
+    const rel = relative(REPO_DIR, full).split(sep).join('/')
+
+    /**
+     * THIS FILE IS EXEMPT, AND ONLY THIS FILE. It is the checker: the regexes
+     * above contain the exact strings they hunt for, so it matches itself and
+     * would report itself forever. It writes no cookie, which is the property
+     * that makes the exemption safe — and it is one named path, not a pattern
+     * that a future cookie site could fall into.
+     */
+    if (rel === SELF_FILE) continue
+
+    const code = codeOf(readFileSync(full, 'utf8'))
+    if (!WRITES_A_COOKIE.test(code)) continue
+    sites++
+
+    if (hardCodedSameSite(code)) {
+      fail(
+        'cookie',
+        `${rel} hard-codes a SameSite value. Cookie flags come from ` +
+          `lib/cookieFlags.ts — a Lax cookie is not sent in the pause-menu frame`,
+      )
+    }
+    if (!DERIVATIONS.some((d) => code.includes(d))) {
+      fail(
+        'cookie',
+        `${rel} writes a cookie without calling any of ` +
+          `${DERIVATIONS.map((d) => `${d}()`).join(' / ')}`,
+      )
+    }
+  }
+
+  /**
+   * A FLOOR ON WHAT WAS FOUND, for the reason section C states: a detector that
+   * silently stopped matching would report every cookie in the app as correct
+   * while looking at none of them. There were seven when this was written.
+   */
+  if (sites < 6) {
+    fail(
+      'cookie',
+      `only ${sites} cookie site(s) found in src/; there were 7 when this was ` +
+        `written, so the detector has probably stopped detecting`,
+    )
   }
 }
 

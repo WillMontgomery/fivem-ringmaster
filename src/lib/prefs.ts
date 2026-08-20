@@ -1,3 +1,4 @@
+import { browserCookieAttributes } from './cookieFlags'
 import { DISPLAY_LOCALE, FALLBACK_TIME_ZONE } from './time'
 
 /**
@@ -204,15 +205,30 @@ export const DEFAULT_PREFS: Prefs = {
  * closes. Both values are constrained to a known set before they get here — see
  * CANONICAL_TZ for why that matters at a `document.cookie` assignment.
  *
- * `Secure` is set from the actual protocol rather than a build-time flag, so
- * the same code is correct on a dev box over http and in production over https.
- * A `Secure` cookie on http is silently dropped, which would look exactly like
- * "the setting does not save".
+ * ═══ THE ATTRIBUTES ARE NOT SPELLED OUT HERE, AND THAT IS THE FIX ═══
+ *
+ * This line used to end `; samesite=lax`, and `Lax` IS NOT SENT IN A FRAMED
+ * CONSOLE. In the pause menu the top-level document is `nui://game/ui/root.html`
+ * and this console is a third-party context, so the browser withheld `rm_tz` on
+ * every request — the server read no stated zone, `shouldPrompt` came back true,
+ * and the first-run dialog opened again on every single navigation. The owner
+ * reported it as "changing between pages in-game results in the 'setup your
+ * console' popup coming up every time".
+ *
+ * SO IT TAKES THE SAME ANSWER AS THE SESSION COOKIE, from the same function —
+ * `lib/cookieFlags.ts`, where the reasoning for `None` and the reason `Secure`
+ * cannot be separated from it are both written. That module is imported rather
+ * than copied precisely because the copy is what was wrong: the rule was already
+ * correct in three places and this was the fourth, which was on nobody's list.
+ * `origin.check.ts` now walks for cookie writes instead of listing them.
+ *
+ * A DEV BOX OVER http IS UNAFFECTED. `browserCookieAttributes` reads
+ * `location.protocol` at write time, so `http://localhost:3000` still gets
+ * `samesite=lax` and no `Secure` — the only combination that works there.
  */
 export function writePrefCookie(name: string, value: string, maxAgeSeconds: number): void {
   if (typeof document === 'undefined') return
   if (!CANONICAL_TZ.test(value)) return
 
-  const secure = location.protocol === 'https:' ? '; secure' : ''
-  document.cookie = `${name}=${value}; path=/; max-age=${maxAgeSeconds}; samesite=lax${secure}`
+  document.cookie = `${name}=${value}${browserCookieAttributes(maxAgeSeconds)}`
 }

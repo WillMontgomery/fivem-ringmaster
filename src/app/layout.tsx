@@ -5,6 +5,7 @@ import { cookies } from 'next/headers'
 import { PrefsProvider } from '@/components/PrefsProvider'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { cookieAttributes } from '@/lib/cookieFlags'
 import {
   LEGACY_THEME_KEY,
   PREF_MAX_AGE_SECONDS,
@@ -59,15 +60,28 @@ export const metadata: Metadata = {
  * localStorage, the toggle reads the class off the DOM and shows the wrong
  * icon, and the first click writes the value that was already stored. "The
  * theme does nothing until you click it twice", on every hard navigation.
+ *
+ * AND THE COOKIE IT WRITES CARRIES THE SAME ATTRIBUTES AS EVERY OTHER ONE.
+ * `rm_theme` is the same cookie `lib/prefs.ts` writes, so a `samesite=lax`
+ * spelled out here would be the same third-party-context bug in the one code
+ * path that runs before any bundle exists — a migration that appears to work and
+ * whose cookie the framed console never sends back. This script cannot call
+ * `browserCookieAttributes`, so it is handed BOTH tails as literals and picks
+ * between them on the protocol it can read. Neither tail is written by hand.
  */
 function themeScript(themeCookieIsSet: boolean): string {
+  const attributes = {
+    https: JSON.stringify(cookieAttributes(PREF_MAX_AGE_SECONDS, true)),
+    http: JSON.stringify(cookieAttributes(PREF_MAX_AGE_SECONDS, false)),
+  }
+
   return `
 try {
   var stored = null;
   try { stored = localStorage.getItem(${JSON.stringify(LEGACY_THEME_KEY)}); } catch (e) {}
   var migrated = false;
   if (!${themeCookieIsSet} && (stored === 'dark' || stored === 'light')) {
-    document.cookie = ${JSON.stringify(THEME_COOKIE)} + '=' + stored + '; path=/; max-age=${PREF_MAX_AGE_SECONDS}; samesite=lax' + (location.protocol === 'https:' ? '; secure' : '');
+    document.cookie = ${JSON.stringify(THEME_COOKIE)} + '=' + stored + (location.protocol === 'https:' ? ${attributes.https} : ${attributes.http});
     migrated = true;
     if (stored === 'dark') document.documentElement.classList.add('dark');
   }

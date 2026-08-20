@@ -6,6 +6,7 @@ import { useRender } from "@base-ui/react/use-render"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { useIsMobile } from "@/hooks/use-mobile"
+import { browserCookieAttributes } from "@/lib/cookieFlags"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -82,14 +83,18 @@ function SidebarProvider({
         _setOpen(openState)
       }
 
-      // This sets the cookie to keep the sidebar state. `SameSite` and `Secure`
-      // are additions to the generated file: without them the cookie defaults
-      // to no SameSite at all and travels over plain http, which is a strange
-      // thing to ship in an admin console even for a boolean about a rail.
+      // This sets the cookie to keep the sidebar state. The attributes are an
+      // addition to the generated file: without them the cookie defaults to no
+      // SameSite at all and travels over plain http, which is a strange thing
+      // to ship in an admin console even for a boolean about a rail.
       // `AppShell` reads it back into `defaultOpen` — it was written and never
       // read for as long as this component has been installed.
-      const secure = location.protocol === "https:" ? "; secure" : ""
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}; samesite=lax${secure}`
+      //
+      // They come from `lib/cookieFlags` rather than being spelled out, and the
+      // spelled-out version was wrong in the same way `lib/prefs.ts` was: a
+      // `Lax` cookie is not sent in the pause-menu frame, so the rail reverted
+      // to its default on every in-game navigation.
+      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}${browserCookieAttributes(SIDEBAR_COOKIE_MAX_AGE)}`
     },
     [setOpenProp, open]
   )
