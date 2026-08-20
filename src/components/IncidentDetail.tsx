@@ -64,8 +64,8 @@ import { cn } from '@/lib/utils'
  *
  *   Ban        BanDialog — its own reason, its 15-character floor, the existing
  *              duration presets, the permanent checkbox, its own confirm step
- *   Kick       KickDialog — its own reason and confirm. Offered only while they
- *              are on the server, because there is nobody to kick otherwise
+ *   Kick       KickDialog — its own reason and confirm. NOT DRAWN AT ALL unless
+ *              they are on the server, because there is nobody to kick otherwise
  *   No action  ConfirmDialog — the one "are you sure" the rest of the console
  *              uses, with the reason inside it
  *
@@ -89,9 +89,10 @@ import { cn } from '@/lib/utils'
  * hover, which would have been the same words in the one place that cannot show
  * them.
  *
- * WHICH LEAVES TWO GREYED CONTROLS WITH NOTHING SAYING WHY: Ban on a player
- * already under one, and Kick on a player who has left. Recorded here rather
- * than worked around.
+ * WHICH LEAVES EXACTLY ONE GREYED CONTROL WITH NOTHING SAYING WHY: Ban, on a
+ * player already under a ban. Kick does not need one, because it is not drawn
+ * at all when there is nobody to kick — an absent control raises no question
+ * about why it is dead. Recorded here rather than worked around.
  */
 export function IncidentDetail({
   incident,
@@ -284,15 +285,32 @@ export function IncidentDetail({
                 <BanIcon />
                 Ban
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!subjectOnline}
-                onClick={() => setKickOpen(true)}
-              >
-                <LogOut />
-                Kick
-              </Button>
+              {/*
+                KICK IS ABSENT WHEN THERE IS NOBODY TO KICK, not greyed out.
+
+                "the 'kick' button should not be displayed if the offender is not
+                actively on the server" — the owner, playtest. It is the same
+                rule `PlayerActions` already follows on the profile page, off the
+                same fact: presence comes from the live snapshot, decided on the
+                server, and arrives here as `subjectOnline`.
+
+                HIDDEN RATHER THAN DISABLED IS THE POINT, and PlayerActions'
+                `kick` comment is where the reasoning is written out in full. In
+                short: a greyed control says "this action exists and is being
+                withheld from you", which is a claim about the admin. An absent
+                player is not that — there is simply nothing for the action to
+                act on. Nothing marks the gap.
+              */}
+              {subjectOnline && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setKickOpen(true)}
+                >
+                  <LogOut />
+                  Kick
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="sm"

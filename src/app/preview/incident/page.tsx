@@ -50,11 +50,16 @@ import { cn } from '@/lib/utils'
  *   ?subject=  the two facts that decide which verdicts are offered, in all four
  *              combinations —
  *                here      in the server, not banned: everything available
- *                gone      left mid-review: Kick is off and says why
- *                banned    already banned and not connected: only No action
+ *                gone      left mid-review: Kick is NOT DRAWN, and nothing marks
+ *                          the gap (owner: "the 'kick' button should not be
+ *                          displayed if the offender is not actively on the
+ *                          server"). Flip against `here` to see it go
+ *                banned    already banned and not connected: only No action, and
+ *                          a greyed Ban with nothing saying why — the one
+ *                          unexplained control the resolve bar has left
  *                both      already banned and STILL connected, which happens
  *                          when the kick that follows a ban fails. Ban off,
- *                          Kick on.
+ *                          Kick drawn.
  *
  *   ?scope=    with and without the `ban` scope. Without it the Resolve card
  *              does not render at all, and the page has to still be worth
