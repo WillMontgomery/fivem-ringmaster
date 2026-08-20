@@ -567,6 +567,13 @@ export function IncidentDetail({
               THE LAST CHANCE, SAYING WHAT BECOMES PERMANENT. Unlike a ban, which
               can at least be lifted, nothing about this outcome can be revisited
               — there is no edit screen and no re-resolve, by design.
+
+              AND THIS PARAGRAPH IS NOW THE COPY OF RECORD for all three verdict
+              boxes (owner, playtest: "copy and paste the same exact verbiage
+              from No Action"). `KickDialog` and `BanDialog` each render the same
+              sentence with their own verdict word in it, and each says so where
+              it does. Reword it here and those two are wrong until they are
+              changed with it.
             */}
             <p>
               The incident is closed with a verdict of{' '}

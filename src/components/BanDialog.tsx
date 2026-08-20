@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { postJson } from '@/lib/api'
+import { cn } from '@/lib/utils'
 
 /**
  * Issue a ban, in two deliberate steps.
@@ -237,7 +238,18 @@ export function BanDialog({
         {!confirming ? (
           <>
             <DialogHeader>
-              <DialogTitle>Ban {name}</DialogTitle>
+              {/*
+                THE DANGER ICON IS ON ALL THREE VERDICT BOXES NOW (owner,
+                playtest: "please use the same danger icon for 'no action' on
+                the kick/ban ones"). Kick had it, the no-action confirm has it
+                from `ConfirmDialog`, and this — the first thing an admin sees
+                when they choose Ban — was the one heading in the set with
+                nothing beside it.
+              */}
+              <DialogTitle className="flex items-center gap-2">
+                <AlertTriangle className="size-4 text-danger" />
+                Ban {name}
+              </DialogTitle>
               {/*
                 THE WARNING IS ONLY ON THE INCIDENT PATH, AND THAT IS THE POINT.
                 The reason has always been shown to the banned player; what is
@@ -260,7 +272,18 @@ export function BanDialog({
 
             <div className="space-y-4">
               <div className="space-y-1.5">
-                <Label htmlFor="ban-reason">Reason</Label>
+                {/*
+                  THE LABEL IS THE KICK DIALOG'S, and that is the one thing the
+                  owner asked to keep rather than to replace: "copy and paste
+                  the same exact verbiage from No Action — but for kicks and
+                  bans, keep the 'Reason (shown to the player)' text". The
+                  no-action box asks "Why? Only admins ever see this", which is
+                  the opposite claim and cannot be borrowed here. This field
+                  said only "Reason" while the kick's said who reads it, so the
+                  one fact that separates these two boxes from that one was
+                  missing from the louder of them.
+                */}
+                <Label htmlFor="ban-reason">Reason — shown to the player</Label>
                 <Textarea
                   id="ban-reason"
                   value={reason}
@@ -268,15 +291,18 @@ export function BanDialog({
                   rows={3}
                   placeholder="Aimbot through walls in match 3 — clip in #reports"
                 />
-                <p
-                  className={
-                    reasonOk
-                      ? 'text-xs text-muted-foreground'
-                      : 'text-xs text-warn'
-                  }
-                >
+                {/*
+                  THE SHORTFALL WORDING WAS ALREADY THE NO-ACTION CONFIRM'S;
+                  what differed was the satisfied half, which counted characters
+                  back at an admin who had already cleared the floor. The
+                  no-action line lost its satisfied half at playtest and says
+                  nothing once the field is long enough, so this one does too —
+                  and the reserved line keeps the confirm button from moving as
+                  the fifteenth character lands.
+                */}
+                <p className={cn('min-h-4 text-xs', !reasonOk && 'text-warn')}>
                   {reasonOk
-                    ? `${reason.trim().length} characters`
+                    ? null
                     : `At least ${MIN_REASON} characters (${reason.trim().length} so far).`}
                 </p>
               </div>
@@ -326,8 +352,14 @@ export function BanDialog({
             </div>
 
             <DialogFooter>
+              {/*
+                "GO BACK", NOT "CANCEL". The dismiss button reads "Go back" on
+                the no-action confirm, on the kick dialog and on this dialog's
+                own second step; this was the single place in the verdict set
+                where the same control had a different name.
+              */}
               <Button variant="ghost" onClick={() => close(false)}>
-                Cancel
+                Go back
               </Button>
               <Button
                 variant="destructive"
@@ -383,13 +415,24 @@ export function BanDialog({
                     here instead — a confirm step that only restated the ban
                     would be hiding the half of this action that cannot be
                     revisited at all. The ban itself can at least be lifted.
+
+                    IT IS THE NO-ACTION CONFIRM'S SENTENCE NOW, EXACTLY (owner,
+                    playtest: "copy and paste the same exact verbiage from No
+                    Action"). This one said "it" where that one says "this", and
+                    it carried a fourth clause the other two boxes have no
+                    equivalent of: "and lifting the ban later does not change
+                    it". That clause was true — it is the line above, restated
+                    from the verdict's side — but the ask was one wording across
+                    the three, and this was the only one that had grown an extra
+                    one. If it is wanted back it comes back as the owner's words
+                    on all three, not as this box's alone.
                   */}
                   {incidentId && (
                     <p className="rounded-md bg-muted/40 px-3 py-2 text-muted-foreground ring-1 ring-inset ring-border">
                       The incident is closed with a verdict of{' '}
                       <span className="font-medium text-foreground">banned</span>
-                      . Verdicts are final — it cannot be edited, re-resolved or
-                      reopened, and lifting the ban later does not change it.
+                      . Verdicts are final — this cannot be edited, re-resolved
+                      or reopened.
                     </p>
                   )}
             </div>

@@ -17,6 +17,7 @@ import {
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { postJson } from '@/lib/api'
+import { cn } from '@/lib/utils'
 
 /**
  * Kick a connected player, with a reason they actually see.
@@ -134,10 +135,19 @@ export function KickDialog({
                 The reason below is shown to {name} as they are dropped. Do not
                 name whoever reported them.
               </p>
+              {/*
+                THE SENTENCE IS THE NO-ACTION CONFIRM'S, WORD FOR WORD (owner,
+                playtest: "copy and paste the same exact verbiage from No
+                Action"). It read "it cannot be edited" here and "this cannot be
+                edited" there, which is one rule stated two ways on two dialogs
+                an admin picks between in the same breath. `IncidentDetail`'s
+                ConfirmDialog body is the copy of record; this and the ban's are
+                transcriptions of it and must not drift again.
+              */}
               <p>
                 The incident is closed with a verdict of{' '}
                 <span className="font-medium text-foreground">kicked</span>.
-                Verdicts are final — it cannot be edited, re-resolved or
+                Verdicts are final — this cannot be edited, re-resolved or
                 reopened.
               </p>
             </div>
@@ -153,16 +163,23 @@ export function KickDialog({
             rows={2}
             placeholder="Blocking the bus door — stop it"
           />
-          <p
-            className={
-              reasonOk
-                ? 'text-xs text-muted-foreground'
-                : 'text-xs text-warn'
-            }
-          >
+          {/*
+            THE SHORTFALL LINE IS THE NO-ACTION CONFIRM'S TOO, and so is its
+            silence once the floor is cleared. This box said "At least 5
+            characters — they see this, so it has to mean something." while the
+            other two counted "(0 so far)", and it answered a satisfied field
+            with a sentence where the other two say nothing. The floor is still
+            five and the satisfied half is gone, which is the same cut the owner
+            already made on the no-action line.
+
+            THE ROW KEEPS ITS HEIGHT for the reason it does over there: one
+            line of reserved space, so the dialog does not jump and move the
+            confirm button out from under the pointer.
+          */}
+          <p className={cn('min-h-4 text-xs', !reasonOk && 'text-warn')}>
             {reasonOk
-              ? 'They will see this as they are dropped.'
-              : `At least ${MIN_REASON} characters — they see this, so it has to mean something.`}
+              ? null
+              : `At least ${MIN_REASON} characters (${reason.trim().length} so far).`}
           </p>
         </div>
 
