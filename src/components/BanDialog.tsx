@@ -422,33 +422,22 @@ export function BanDialog({
                   )}
                   <p className="text-muted-foreground">“{reason.trim()}”</p>
                   {/*
-                    THE LAST CHANCE HAS TO SAY WHAT BECOMES PERMANENT (owner,
-                    2026-08-17: verdicts cannot be changed after the fact). There
-                    is no edit screen, no re-resolve and no appeal path in this
-                    console, so the sentence that would have been on one belongs
-                    here instead — a confirm step that only restated the ban
-                    would be hiding the half of this action that cannot be
-                    revisited at all. The ban itself can at least be lifted.
+                    THE VERDICT SENTENCE IS GONE FROM ALL THREE BOXES (owner, playtest
+                    2026-08-21). It read "The incident is closed with a verdict of X.
+                    Verdicts are final -- this cannot be edited, re-resolved or reopened."
 
-                    IT IS THE NO-ACTION CONFIRM'S SENTENCE NOW, EXACTLY (owner,
-                    playtest: "copy and paste the same exact verbiage from No
-                    Action"). This one said "it" where that one says "this", and
-                    it carried a fourth clause the other two boxes have no
-                    equivalent of: "and lifting the ban later does not change
-                    it". That clause was true — it is the line above, restated
-                    from the verdict's side — but the ask was one wording across
-                    the three, and this was the only one that had grown an extra
-                    one. If it is wanted back it comes back as the owner's words
-                    on all three, not as this box's alone.
+                    It was consolidated onto one wording across the three boxes earlier the
+                    same evening and then removed outright. That is not a reversal: the
+                    consolidation was about the three agreeing, and they still do -- at
+                    nothing.
+
+                    WHAT IS LOST, SO NOBODY RE-ADDS IT BY ACCIDENT. Finality is real and
+                    still enforced -- lib/incidents.ts allows only pending_review and
+                    resolved, a resolved case cannot be reopened, and a verdict cannot be
+                    rewritten. The confirm step no longer SAYS so. Ban and kick each keep
+                    their own consequence line and their reason field, which is what the
+                    owner kept when the rest went.
                   */}
-                  {incidentId && (
-                    <p className="rounded-md bg-muted/40 px-3 py-2 text-muted-foreground ring-1 ring-inset ring-border">
-                      The incident is closed with a verdict of{' '}
-                      <span className="font-medium text-foreground">banned</span>
-                      . Verdicts are final — this cannot be edited, re-resolved
-                      or reopened.
-                    </p>
-                  )}
             </div>
 
             <DialogFooter>

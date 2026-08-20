@@ -136,20 +136,22 @@ export function KickDialog({
                 name whoever reported them.
               </p>
               {/*
-                THE SENTENCE IS THE NO-ACTION CONFIRM'S, WORD FOR WORD (owner,
-                playtest: "copy and paste the same exact verbiage from No
-                Action"). It read "it cannot be edited" here and "this cannot be
-                edited" there, which is one rule stated two ways on two dialogs
-                an admin picks between in the same breath. `IncidentDetail`'s
-                ConfirmDialog body is the copy of record; this and the ban's are
-                transcriptions of it and must not drift again.
+                THE VERDICT SENTENCE IS GONE FROM ALL THREE BOXES (owner, playtest
+                2026-08-21). It read "The incident is closed with a verdict of X.
+                Verdicts are final -- this cannot be edited, re-resolved or reopened."
+
+                It was consolidated onto one wording across the three boxes earlier the
+                same evening and then removed outright. That is not a reversal: the
+                consolidation was about the three agreeing, and they still do -- at
+                nothing.
+
+                WHAT IS LOST, SO NOBODY RE-ADDS IT BY ACCIDENT. Finality is real and
+                still enforced -- lib/incidents.ts allows only pending_review and
+                resolved, a resolved case cannot be reopened, and a verdict cannot be
+                rewritten. The confirm step no longer SAYS so. Ban and kick each keep
+                their own consequence line and their reason field, which is what the
+                owner kept when the rest went.
               */}
-              <p>
-                The incident is closed with a verdict of{' '}
-                <span className="font-medium text-foreground">kicked</span>.
-                Verdicts are final — this cannot be edited, re-resolved or
-                reopened.
-              </p>
             </div>
           )}
         </DialogHeader>

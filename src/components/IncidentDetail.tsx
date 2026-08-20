@@ -559,28 +559,22 @@ export function IncidentDetail({
         body={
           <>
             {/*
-              THE OPENING SENTENCE IS GONE (owner, playtest) — it named the
-              subject and said they would not be kicked or banned and that
-              nothing is shown to them. What is left below is the one paragraph
-              that says what BECOMES TRUE rather than what does not happen.
+              THE VERDICT SENTENCE IS GONE FROM ALL THREE BOXES (owner, playtest
+              2026-08-21). It read "The incident is closed with a verdict of X.
+              Verdicts are final -- this cannot be edited, re-resolved or reopened."
 
-              THE LAST CHANCE, SAYING WHAT BECOMES PERMANENT. Unlike a ban, which
-              can at least be lifted, nothing about this outcome can be revisited
-              — there is no edit screen and no re-resolve, by design.
+              It was consolidated onto one wording across the three boxes earlier the
+              same evening and then removed outright. That is not a reversal: the
+              consolidation was about the three agreeing, and they still do -- at
+              nothing.
 
-              AND THIS PARAGRAPH IS NOW THE COPY OF RECORD for all three verdict
-              boxes (owner, playtest: "copy and paste the same exact verbiage
-              from No Action"). `KickDialog` and `BanDialog` each render the same
-              sentence with their own verdict word in it, and each says so where
-              it does. Reword it here and those two are wrong until they are
-              changed with it.
+              WHAT IS LOST, SO NOBODY RE-ADDS IT BY ACCIDENT. Finality is real and
+              still enforced -- lib/incidents.ts allows only pending_review and
+              resolved, a resolved case cannot be reopened, and a verdict cannot be
+              rewritten. The confirm step no longer SAYS so. Ban and kick each keep
+              their own consequence line and their reason field, which is what the
+              owner kept when the rest went.
             */}
-            <p>
-              The incident is closed with a verdict of{' '}
-              <span className="font-medium text-foreground">no action</span>.
-              Verdicts are final — this cannot be edited, re-resolved or
-              reopened.
-            </p>
 
             {/*
               THE REASON IS ASKED FOR IN HERE, not on the card behind it.
