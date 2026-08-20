@@ -100,6 +100,19 @@ export const tables = {
     return `${env().DDB_TABLE_PREFIX}players`
   },
   /**
+   * Pause-menu handoff tokens — one short-lived row per admin, see lib/handoff.
+   *
+   * A TABLE OF ITS OWN RATHER THAN A CORNER OF `sessions`, and the reason is
+   * about IAM rather than tidiness: if the mint direction is ever flipped so
+   * the game box mints locally, it needs `PutItem` on whatever holds these. On
+   * `ringmaster-sessions` that same grant would let it write a session row
+   * directly — forging an admin session without a token at all. The split is
+   * what keeps that grant expressible as something safe.
+   */
+  get handoff() {
+    return `${env().DDB_TABLE_PREFIX}handoff`
+  },
+  /**
    * Reverse index: identifier -> the licenses that have presented it.
    *
    * A SEPARATE TABLE because the question it answers cannot be asked of a

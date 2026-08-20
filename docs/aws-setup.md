@@ -24,7 +24,7 @@ permissions from an *instance role*, which the AWS SDK picks up automatically.
 Console → **DynamoDB** → make sure the region selector says **us-east-2 (Ohio)**
 → *Tables* → *Create table*.
 
-Create nine tables. For every one of them:
+Create ten tables. For every one of them:
 
 - **Capacity mode: On-demand.** The load is bursty and tiny between matches.
   Provisioned capacity would mean guessing a number and paying for it while
@@ -42,6 +42,31 @@ Create nine tables. For every one of them:
 | `ringmaster-maintenance` | `id` (String) | — | The scheduled maintenance window. **One item, `id = "current"`.** The game reads it for the drain gate. |
 | `ringmaster-players` | `license` (String) | — | This console's own player registry: identity, sessions, playtime |
 | `ringmaster-player-ids` | `id` (String) | — | Reverse index, identifier → the licenses that presented it. Answers "has this Discord account been here under another license", which a license-keyed table cannot. |
+| `ringmaster-handoff` | `discordId` (String) | — | Pause-menu handoff tokens (#23). **Add a TTL attribute named `expires`.** One short-lived row per admin. **Ringmaster only** — the game box needs nothing here; see the note below. |
+
+> **`ringmaster-handoff` is new (2026-08-20) and the console will not create it
+> for you.** Without it, the pause-menu handoff answers every mint with a 503
+> and every redeem with a bounce to the login page — which is the safe failure,
+> but it fails on every attempt and the cause is only visible as a
+> `ResourceNotFoundException` in `journalctl -u ringmaster`. Everything else in
+> the console is unaffected.
+>
+> **The TTL attribute is not optional.** These rows are created on every
+> pause-menu open that needs one and are normally deleted by being spent, but a
+> token that is minted and never redeemed — the admin changed their mind, the
+> frame never opened — has nothing to delete it. Without TTL they accumulate
+> forever. **The TTL is a janitor and not a security control**: DynamoDB deletes
+> expired items *typically* within 48 hours, so `src/lib/handoff.ts` enforces the
+> 90-second expiry itself and never trusts the row's presence to mean it is
+> live.
+>
+> **Why it is its own table rather than a corner of `ringmaster-sessions`**,
+> which already has TTL on `expires` and would have cost you nothing: if the
+> minting is ever moved to the game box, that box needs `PutItem` on wherever
+> these rows live — and on `ringmaster-sessions` the same grant would let it
+> write an Auth.js session row directly, forging an admin session without a
+> token at all. The split is what keeps that grant expressible as something
+> safe.
 
 > **Three of those nine were missing from this document until 2026-08-18**, and
 > the omission was not cosmetic: `ringmaster-maintenance`, `ringmaster-players`
@@ -114,17 +139,58 @@ Open `ringmaster-grants` → *Indexes* → *Create index*:
 > **they cannot log in at all.** That includes, awkwardly, the first admin.
 > `scripts/grant.mjs` therefore takes `--discord-id` explicitly.
 
-### TTL, on the two tables that need it
+### TTL, on the three tables that need it
 
-TTL makes DynamoDB delete expired rows for free, which is how sessions expire
-and how telemetry stops growing forever.
+TTL makes DynamoDB delete expired rows for free, which is how sessions expire,
+how telemetry stops growing forever, and how unspent handoff tokens age out.
 
-For `ringmaster-sessions` and `ringmaster-telemetry`: open the table → *Additional
-settings* → *Time to Live* → *Enable* → attribute name **`expires`**.
+For `ringmaster-sessions`, `ringmaster-telemetry` and `ringmaster-handoff`: open
+the table → *Additional settings* → *Time to Live* → *Enable* → attribute name
+**`expires`**.
 
-> Spelling matters — `expires`, lowercase. Auth.js writes that exact attribute.
-> A typo here fails silently: rows simply never expire, and you find out months
-> later from the bill.
+> Spelling matters — `expires`, lowercase. Auth.js writes that exact attribute,
+> and `src/lib/handoff.ts` writes the same one so there is one name to remember
+> rather than three. A typo here fails silently: rows simply never expire, and
+> you find out months later from the bill.
+
+### The game box needs NO new IAM for the pause-menu handoff
+
+**Worth stating explicitly, because an earlier sketch of #23 needed one and
+somebody will come looking for it.** The console mints these tokens itself, in
+answer to an authenticated request from the game server over the existing
+peered link — the game box never reads or writes `ringmaster-handoff`, so
+`FiveMGameServerRole` is unchanged. What the game box already has is a
+`GetItem` on `ringmaster-*` (section 3), which does cover this table; that is
+harmless, because the row stores a **sha256 of the token and never the token**,
+and a `GetItem` needs the key in hand. There is no `Scan` in the game's grant
+and nothing to enumerate.
+
+**If the minting is ever moved to the game box**, this is the statement it would
+need, and it is written here as a *hypothetical* rather than as an instruction —
+do not add it unless that change is actually made:
+
+```json
+{
+  "Sid": "GameServerMintHandoff",
+  "Effect": "Allow",
+  "Action": [
+    "dynamodb:PutItem"
+  ],
+  "Resource": [
+    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-handoff"
+  ]
+}
+```
+
+Note what that grant would mean before granting it: `PutItem` on this table is
+the power to create a credential that opens an admin session for **any Discord
+id already known to this console**, without the console's Discord role check
+ever running. Today that decision is made on the Ringmaster box, where the role
+check lives. Moving it is a real change in where authority sits, not a
+refactor.
+
+The Ringmaster box needs nothing new either — `RingmasterTableAccess` in
+section 2 already covers `ringmaster-*`.
 
 ### The game's own table, which Ringmaster reads
 

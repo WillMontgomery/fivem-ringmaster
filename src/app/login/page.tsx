@@ -2,6 +2,7 @@ import { Space_Grotesk } from 'next/font/google'
 import { redirect } from 'next/navigation'
 
 import { signIn } from '@/auth'
+import { FrameHandoffSignal } from '@/components/FrameHandoffSignal'
 import { LoginToast } from '@/components/LoginToast'
 import { REVOKED_DESCRIPTION, REVOKED_REASON } from '@/lib/revocation'
 import { currentAdmin } from '@/lib/session'
@@ -72,6 +73,12 @@ export default async function LoginPage({
         <div className="aurora-b absolute -right-48 top-0 size-[36rem] rounded-full bg-[oklch(0.60_0.19_235_/_40%)] blur-3xl" />
         <div className="aurora-c absolute -bottom-48 left-1/4 size-[38rem] rounded-full bg-[oklch(0.64_0.18_165_/_34%)] blur-3xl" />
       </div>
+
+      {/* Renders nothing. Tells a NUI parent that this open needs a handoff
+          token — see components/FrameHandoffSignal.tsx and lib/handoff.ts. This
+          page is where every signed-out path in the app converges, which is why
+          the signal is mounted here and nowhere else. */}
+      <FrameHandoffSignal />
 
       <div className="w-full max-w-sm">
         <div className="surface-edge rounded-2xl border border-border bg-card/70 p-8 shadow-xl backdrop-blur-xl">
