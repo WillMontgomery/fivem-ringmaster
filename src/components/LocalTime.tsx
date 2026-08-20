@@ -66,12 +66,19 @@ export function LocalTime({
    * height in one narrow column and no width at all.
    */
   utc = false,
+  /**
+   * Include seconds. Off everywhere but the artifact carousel — `lib/time`'s
+   * `FormatInstantOptions` says why, and why it is a flag here rather than a
+   * second component.
+   */
+  withSeconds = false,
   className,
 }: {
   ms: number
   withDate?: boolean
   withYear?: boolean
   utc?: boolean
+  withSeconds?: boolean
   className?: string
 }) {
   const { format, timeZone } = useFormatInstant()
@@ -91,7 +98,7 @@ export function LocalTime({
 
   return (
     <time className={className} dateTime={machineInstant(ms)}>
-      {format(ms, { withDate, withYear })}
+      {format(ms, { withDate, withYear, withSeconds })}
       {showUtc && (
         <span className="block text-muted-foreground/70">{utcIso(ms)}</span>
       )}

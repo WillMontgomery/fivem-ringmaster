@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { AppShell } from '@/components/AppShell'
 import { IncidentDetail } from '@/components/IncidentDetail'
 import { PageLoading } from '@/components/PageLoading'
+import { probe } from '@/lib/artifactStore'
 import { activeBanFor } from '@/lib/bans'
 import { can } from '@/lib/grants'
 import {
@@ -105,9 +106,27 @@ async function Body({
    * decision and takes the same scope as acting on a player. Reading one does
    * not.)
    */
-  const [canResolve, activeBan] = await Promise.all([
+  /**
+   * THE ARTIFACT PROBE JOINS THIS `Promise.all` RATHER THAN GETTING ITS OWN
+   * WAIT, and it is the reason this list grew from two to three.
+   *
+   * It is nine HEAD requests against S3 — headers, not pictures — fired in
+   * parallel by `probe()`, so the whole thing is one round trip's worth of
+   * latency alongside two reads that were already happening. Everything here is
+   * under the `Suspense` boundary above, so the shell has already streamed.
+   *
+   * ON THE SERVER BECAUSE IT HAS TO BE. The bucket blocks public access and the
+   * console's credentials are the EC2 instance role on this box; the browser has
+   * no way to ask S3 anything. It also keeps the S3 SDK out of the client
+   * bundle entirely — see `lib/artifactStore`.
+   *
+   * IT CANNOT FAIL THE PAGE. `probe()` swallows and logs; the worst outcome is
+   * an empty set, which is a state this page has to render correctly anyway.
+   */
+  const [canResolve, activeBan, artifacts] = await Promise.all([
     can(license, 'ban'),
     activeBanFor(incident.subjectLicense),
+    probe(incident.incidentId),
   ])
 
   const subjectOnline = players.some(
@@ -118,6 +137,7 @@ async function Body({
   return (
     <IncidentDetail
       incident={incident}
+      artifacts={artifacts}
       canResolve={canResolve}
       subjectOnline={subjectOnline}
       subjectBanned={subjectBanned}

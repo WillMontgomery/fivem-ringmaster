@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
 import { IncidentDetail } from '@/components/IncidentDetail'
+import type { Artifact } from '@/lib/artifacts'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 import {
   AUTO_CLOSE_RESOLUTION,
@@ -109,7 +110,6 @@ const BASE_INCIDENT: Incident = {
   summary: 'Reported for cheating',
   note: 'shot me through the wall of the pharmacy twice',
   linkedLicense: null,
-  captureKeys: [],
   events: [
     {
       at: BASE - 3 * HOUR,
@@ -302,6 +302,115 @@ const SCOPE_CASES = { resolve: true, readonly: false } satisfies Record<
 
 type ScopeKey = keyof typeof SCOPE_CASES
 
+/**
+ * ═══ THE ARTIFACT AXIS ═══
+ *
+ * NO REAL ARTIFACT HAS EVER EXISTED. The bucket was created on 2026-08-20 and
+ * is empty; producing one frame needs a live FiveM server, a client with
+ * `screenshot-basic` running, a reported player who has not disconnected, and
+ * S3 — none of which is in this repo's harness. So every shape below is a
+ * fixture, and this axis is the only place the carousel can be looked at at all.
+ *
+ * WHY THESE FIVE:
+ *
+ *   full   all nine — three timed (immediately, +5s, +10s) then six
+ *          corroborations. The ceiling, and the only case where the counter,
+ *          both arrows and every dot are exercised at once.
+ *   gaps   01, 04, 07. GAPS ARE THE NORMAL CASE, not the degraded one: the
+ *          capture runs on the subject's own machine and each frame fails
+ *          independently. This must look like a three-frame set, not like a
+ *          nine-frame set with holes in it.
+ *   one    a single frame. The boundary that deletes the counter and every
+ *          control, and the one most likely to be got wrong by a carousel that
+ *          assumes it can always step.
+ *   none   nothing. Renders as an em-dash under the header and NOTHING ELSE —
+ *          no sentence, no icon, no explanation (owner, 2026-08-20: "we don't
+ *          need helper text to convey that. it's assumed").
+ *   aged   nothing, on a case opened 200 days ago — past the bucket's 180-day
+ *          expiry, so its frames are gone rather than never taken.
+ *
+ * `none` AND `aged` MUST RENDER IDENTICALLY, and that is the point of shipping
+ * both. The console does not tell the four causes of an empty set apart, so
+ * flipping between these two and seeing nothing change is the check.
+ */
+const DAY = 24 * HOUR
+
+const ARTIFACT_CASES = {
+  full: Array.from({ length: 9 }, (_, i) => ({
+    index: i + 1,
+    capturedAt:
+      BASE -
+      3 * HOUR +
+      // 01/02/03 at 0s, +5s, +10s; corroborations every 90s after that.
+      (i < 3 ? i * 5_000 : 10_000 + (i - 2) * 90_000),
+  })),
+  gaps: [
+    { index: 1, capturedAt: BASE - 3 * HOUR },
+    { index: 4, capturedAt: BASE - 3 * HOUR + 47_000 },
+    { index: 7, capturedAt: BASE - 3 * HOUR + 214_000 },
+  ],
+  one: [{ index: 1, capturedAt: BASE - 3 * HOUR }],
+  none: [],
+  aged: [],
+} satisfies Record<string, Artifact[]>
+
+type ArtifactKey = keyof typeof ARTIFACT_CASES
+
+/** Only `aged` moves the clock; every other case sits where the fixture put it. */
+const ARTIFACT_AGE_SHIFT: Record<ArtifactKey, number> = {
+  full: 0,
+  gaps: 0,
+  one: 0,
+  none: 0,
+  aged: -200 * DAY,
+}
+
+/**
+ * Push a whole case back in time, timeline and all.
+ *
+ * EVERY TIMESTAMP MOVES BY THE SAME DELTA, because shifting only `openedAt`
+ * would produce a case whose opening event happened after the note on it — a
+ * shape no real row can have, and the harness's whole job is to avoid showing
+ * one.
+ */
+function shifted(incident: Incident, by: number): Incident {
+  if (by === 0) return incident
+  return {
+    ...incident,
+    openedAt: incident.openedAt + by,
+    events: incident.events.map((e) => ({ ...e, at: e.at + by })),
+    resolvedAt: incident.resolvedAt ? incident.resolvedAt + by : incident.resolvedAt,
+  }
+}
+
+/**
+ * A stand-in for a frame, drawn rather than fetched.
+ *
+ * TRANSPARENTLY SYNTHETIC, like every other fixture in this directory — a
+ * screenshot of this page must not be mistakable for a real player's screen.
+ * It is deliberately a flat panel with a number on it and the word PREVIEW, not
+ * a plausible game frame.
+ *
+ * 16:9 BECAUSE THAT IS WHAT `screenshot-basic` RETURNS — the client's own
+ * framebuffer. The carousel's aspect box is sized for it and the fit only means
+ * anything if the fixture is the same shape as the real thing.
+ */
+const PREVIEW_FRAMES: Record<number, string> = Object.fromEntries(
+  Array.from({ length: 9 }, (_, i) => [i + 1, previewFrame(i + 1)]),
+)
+
+function previewFrame(index: number): string {
+  const n = String(index).padStart(2, '0')
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">` +
+    `<rect width="640" height="360" fill="#1c2333"/>` +
+    `<rect x="8" y="8" width="624" height="344" fill="none" stroke="#3d4a63" stroke-width="2" stroke-dasharray="10 8"/>` +
+    `<text x="320" y="176" fill="#6f819f" font-family="monospace" font-size="86" text-anchor="middle">${n}</text>` +
+    `<text x="320" y="228" fill="#4d5c78" font-family="monospace" font-size="22" text-anchor="middle" letter-spacing="6">PREVIEW</text>` +
+    `</svg>`
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`
+}
+
 /** One row of preview toggles. Keeps the other axes where they are. */
 function Axis({
   name,
@@ -355,8 +464,9 @@ async function Preview({
   const state = pick(sp.state, STATE_CASES, 'pending' as StateKey)
   const subject = pick(sp.subject, SUBJECT_CASES, 'here' as SubjectKey)
   const scope = pick(sp.scope, SCOPE_CASES, 'resolve' as ScopeKey)
+  const artifacts = pick(sp.artifacts, ARTIFACT_CASES, 'full' as ArtifactKey)
 
-  const params = { state, subject, scope }
+  const params = { state, subject, scope, artifacts }
   const now = BASE + 5 * 60_000
 
   return (
@@ -386,6 +496,12 @@ async function Preview({
             current={scope}
             params={params}
           />
+          <Axis
+            name="artifacts"
+            keys={Object.keys(ARTIFACT_CASES)}
+            current={artifacts}
+            params={params}
+          />
           {/*
             The two booleans printed as values rather than inferred from which
             buttons happen to be grey. A disabled button and a missing sentence
@@ -404,7 +520,9 @@ async function Preview({
         </nav>
 
         <IncidentDetail
-          incident={STATE_CASES[state]}
+          incident={shifted(STATE_CASES[state], ARTIFACT_AGE_SHIFT[artifacts])}
+          artifacts={ARTIFACT_CASES[artifacts]}
+          artifactSrcOverride={PREVIEW_FRAMES}
           canResolve={SCOPE_CASES[scope]}
           subjectOnline={SUBJECT_CASES[subject].online}
           subjectBanned={SUBJECT_CASES[subject].banned}

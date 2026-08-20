@@ -73,6 +73,23 @@ export interface FormatInstantOptions {
    * already stated once for a whole block of times.
    */
   withZone?: boolean
+  /**
+   * Include seconds.
+   *
+   * OFF EVERYWHERE EXCEPT THE ARTIFACT CAROUSEL, and it exists because that one
+   * surface is unreadable without it. An incident's three timed frames are taken
+   * immediately, at +5s and at +10s; at minute resolution all three are labelled
+   * with the same string, so stepping through them looks like a control that
+   * does not work.
+   *
+   * A FLAG ON THIS FORMATTER RATHER THAN A SECOND FORMATTER. #34 is explicit
+   * that the carousel must reuse `LocalTime` rather than growing a private time
+   * path, and a console with two ideas about how a timestamp reads is exactly
+   * what that instruction is protecting against. Everywhere else keeps minutes:
+   * seconds on an audit row are noise in a column that is already fighting for
+   * width.
+   */
+  withSeconds?: boolean
 }
 
 /**
@@ -99,8 +116,14 @@ function formatterFor(
   withDate: boolean,
   withYear: boolean,
   withZone: boolean,
+  withSeconds: boolean,
 ): Intl.DateTimeFormat {
-  const key = `${locale}|${timeZone}|${withDate ? 1 : 0}|${withYear ? 1 : 0}|${withZone ? 1 : 0}`
+  /**
+   * EVERY ARGUMENT THAT CHANGES THE OUTPUT IS IN THE KEY. Adding an option and
+   * forgetting this line is the silent bug: the first caller through would seed
+   * the cache and every later caller would get somebody else's formatter.
+   */
+  const key = `${locale}|${timeZone}|${withDate ? 1 : 0}|${withYear ? 1 : 0}|${withZone ? 1 : 0}|${withSeconds ? 1 : 0}`
   const hit = formatters.get(key)
   if (hit) return hit
 
@@ -111,6 +134,7 @@ function formatterFor(
     day: withDate ? 'numeric' : undefined,
     hour: '2-digit',
     minute: '2-digit',
+    second: withSeconds ? '2-digit' : undefined,
     hour12: false,
     timeZoneName: withZone ? 'short' : undefined,
   }
@@ -144,7 +168,12 @@ function formatterFor(
 export function formatInstant(
   ms: number | null | undefined,
   prefs: TimeFormatPrefs,
-  { withDate = true, withYear = true, withZone = true }: FormatInstantOptions = {},
+  {
+    withDate = true,
+    withYear = true,
+    withZone = true,
+    withSeconds = false,
+  }: FormatInstantOptions = {},
 ): string {
   if (!isRenderableInstant(ms)) return '—'
 
@@ -155,6 +184,7 @@ export function formatInstant(
       withDate,
       withYear,
       withZone,
+      withSeconds,
     ).format(ms)
   } catch {
     return '—'

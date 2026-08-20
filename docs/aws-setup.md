@@ -728,9 +728,19 @@ surprised by it:**
   artifacts gone. The verdict, the audit rows and the resolution text survive —
   only the images go.
 - The console must therefore never present a missing artifact as meaningful.
-  `captureKeys`' own comment already says this and it now matters more:
-  *"EMPTY IS NORMAL AND IS NOT EVIDENCE OF ANYTHING."* An old case with no
-  frames is an old case, not an innocent one.
+  The sentence this was always argued from — *"EMPTY IS NORMAL AND IS NOT
+  EVIDENCE OF ANYTHING"* — was the comment on `Incident.captureKeys`. **That
+  field has been deleted** (owner, 2026-08-20: "yeah let's not have captureKeys
+  if we don't need it"); it could never be populated, because the game's grant on
+  `ringmaster-incidents` is `PutItem` conditional on the id being absent. The
+  sentence moved to `src/lib/artifacts.ts`, which is where the console now
+  decides what an empty set means. An old case with no frames is an old case,
+  not an innocent one.
+- **The page does not say which of the four it was**, and does not work it out.
+  The owner ruled the distinction unnecessary on 2026-08-20 — "we don't need
+  helper text to convey that. it's assumed" — so an aged-out case and a case
+  that was never captured render identically, and there is deliberately no age
+  arithmetic in the console to tell them apart.
 - The upside, and it is real: this is the only thing in the system that
   automatically stops holding pictures of players' screens. Retention that
   expires is easier to defend than retention that does not.

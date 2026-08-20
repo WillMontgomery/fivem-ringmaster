@@ -239,13 +239,25 @@ export interface Incident {
   closedByBan?: ClosedByBan | null
 
   /**
-   * S3 keys for capture frames, when the subject was still in the match.
+   * ═══ THERE IS NO ARTIFACT FIELD ON THIS ROW, AND THAT IS DELIBERATE ═══
    *
-   * EMPTY IS NORMAL AND IS NOT EVIDENCE OF ANYTHING. The capture uploads from
-   * the subject's own machine, so it can fail or be blocked — an incident with
-   * no frames must never read as one where nothing was happening.
+   * `captureKeys?: string[]` used to sit here. It was removed on the owner's
+   * instruction, 2026-08-20: "yeah let's not have captureKeys if we don't need
+   * it."
+   *
+   * WHY A FIELD WAS WORSE THAN NO FIELD. Its only writer was the game, which
+   * set it to `[]` at filing time and could never add to it — the game's grant
+   * on `ringmaster-incidents` is `PutItem` conditional on the id being absent,
+   * so it can file a case and cannot reach inside one. Nothing read it. An
+   * always-empty list that looks authoritative is a trap for the next person,
+   * who reads `captureKeys.length === 0` and concludes there are no frames.
+   *
+   * WHERE THE FRAMES ACTUALLY COME FROM: `lib/artifacts.ts`. The keys are fixed
+   * and enumerable by design, so the console probes S3 for them instead. That
+   * module also carries the sentence this field's comment existed for —
+   * "EMPTY IS NORMAL AND IS NOT EVIDENCE OF ANYTHING" — because the reasoning
+   * outlived the field and is now the carousel's governing rule.
    */
-  captureKeys?: string[]
 }
 
 /**
@@ -429,7 +441,6 @@ export async function open(input: {
   linkedLicense?: string | null
   /** Opens straight to resolved — the system handled it and nobody need look. */
   autoResolved?: boolean
-  captureKeys?: string[]
 }): Promise<Incident> {
   const now = Date.now()
   const resolved = input.autoResolved === true
@@ -447,7 +458,6 @@ export async function open(input: {
     summary: input.summary,
     note: input.note ?? null,
     linkedLicense: input.linkedLicense ?? null,
-    captureKeys: input.captureKeys ?? [],
     events: [
       {
         at: now,

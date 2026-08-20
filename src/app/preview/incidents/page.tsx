@@ -88,7 +88,6 @@ function row(input: {
     summary: input.summary,
     note: null,
     linkedLicense: null,
-    captureKeys: [],
     events: [
       {
         at,

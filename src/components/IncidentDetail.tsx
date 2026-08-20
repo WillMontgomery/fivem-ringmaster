@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 
 import { BanDialog, MIN_REASON } from '@/components/BanDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { IncidentArtifacts } from '@/components/IncidentArtifacts'
 import { KickDialog } from '@/components/KickDialog'
 import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
@@ -16,6 +17,7 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { postJson } from '@/lib/api'
+import type { Artifact } from '@/lib/artifacts'
 import { incidentHeadline, verdictTone } from '@/lib/incidentChip'
 import { labelFor } from '@/lib/labels'
 import type {
@@ -73,6 +75,8 @@ import { cn } from '@/lib/utils'
  */
 export function IncidentDetail({
   incident,
+  artifacts,
+  artifactSrcOverride,
   canResolve,
   subjectOnline,
   subjectBanned,
@@ -81,6 +85,20 @@ export function IncidentDetail({
   verdictLabel,
 }: {
   incident: Incident
+  /**
+   * The frames this case has in the bucket, as the server found them.
+   *
+   * PASSED IN RATHER THAN FETCHED HERE, and not optional. Finding them means
+   * nine authenticated HEADs against S3, which belongs on the server — and a
+   * defaulted `?? []` would make "nobody looked" and "there are none" the same
+   * value, which is the exact confusion that got `captureKeys` deleted.
+   */
+  artifacts: Artifact[]
+  /**
+   * Forwarded straight to `IncidentArtifacts`, which explains why it exists.
+   * `/preview/incident` is its only caller; nothing real passes it.
+   */
+  artifactSrcOverride?: Record<number, string>
   canResolve: boolean
   /**
    * On the server right now. Decides whether Kick is even offered — the console
@@ -244,29 +262,26 @@ export function IncidentDetail({
         </div>
       </Card>
 
-      {/* CAPTURES. Absent is normal — the upload comes from the subject's own
-          machine and can fail or be blocked, so an incident with no frames must
-          never read as one where nothing was happening. */}
-      <Card className="surface-edge gap-0 overflow-hidden py-0">
-        <header className="border-b border-border bg-card/60 px-4 py-2.5 text-sm">
-          Captures
-        </header>
-        <div className="p-4">
-          {incident.captureKeys && incident.captureKeys.length > 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {incident.captureKeys.length} frame
-              {incident.captureKeys.length === 1 ? '' : 's'} stored. Viewing is not
-              wired up yet.
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground/70">
-              No captures. This does not mean nothing was happening — the upload
-              runs on the reported player&apos;s own machine and can fail or be
-              blocked.
-            </p>
-          )}
-        </div>
-      </Card>
+      {/*
+        ARTIFACTS. This was a placeholder card reading "N frames stored. Viewing
+        is not wired up yet", counting a field that could never be non-empty.
+        Both are gone: the field (see `lib/incidents`) and the placeholder.
+
+        THE FRAMES ARE FOUND ON THE SERVER, not here — `probe()` in
+        `lib/artifactStore` runs in the page above this component and hands down
+        what it found. This card is handed data and nothing else, which is what
+        keeps the S3 SDK and the bucket name out of the client bundle.
+
+        ITS EMPTY STATE HAS NO WORDS, on purpose, and `IncidentArtifacts`
+        explains why at length. The one-line version: an empty set has four
+        unrelated causes and none of them is about the accused, so the console
+        says nothing rather than picking one.
+      */}
+      <IncidentArtifacts
+        incidentId={incident.incidentId}
+        frames={artifacts}
+        srcOverride={artifactSrcOverride}
+      />
 
       <Card className="surface-edge gap-0 overflow-hidden py-0">
         <header className="border-b border-border bg-card/60 px-4 py-2.5 text-sm">
