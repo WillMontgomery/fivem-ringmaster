@@ -47,6 +47,7 @@ import {
 import { activityDeadline, hasSessionCookie } from '@/lib/activity'
 import * as incidents from '@/lib/incidents'
 import { ensureDriver, maintenanceView } from '@/lib/maintenanceDriver'
+import { FrameEscape } from '@/components/FrameEscape'
 import { isFramedClient } from '@/lib/framed'
 import { readPrefs } from '@/lib/prefs'
 import { deployPhase } from '@/lib/serverPhase'
@@ -896,6 +897,12 @@ export async function AppShell({
         {/* Watches for a pointer or a key and ends the session when neither
             has happened for two hours. Renders nothing. */}
         {signedIn && <IdleGuard deadline={deadline} />}
+
+        {/* Escape inside the pause-menu frame takes the whole overlay down.
+            Renders nothing, and does nothing at all in a browser tab. The game
+            cannot bind this itself: a cross-origin frame does not forward key
+            events, so the key has to be sent from the side that receives it. */}
+        {inGame && <FrameEscape />}
 
         {/* Asked on every login until it is answered, because the answer is
             what dismisses it. This renders on all thirteen routes, so a prompt
