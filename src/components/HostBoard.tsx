@@ -1,9 +1,7 @@
 'use client'
 
 import {
-  ArrowDownToLine,
   ArrowUpCircle,
-  ArrowUpFromLine,
   Check,
   Cpu,
   GitCommitHorizontal,
@@ -32,12 +30,6 @@ type View = ReturnType<typeof hostView>
  * on its own timer; this just reads the latest window, so the page stays
  * responsive even when the box across the country is slow to answer.
  */
-
-function human(bytesPerSec: number): string {
-  if (bytesPerSec < 1024) return `${Math.round(bytesPerSec)} B/s`
-  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`
-  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
-}
 
 function duration(sec: number): string {
   if (sec < 60) return `${Math.round(sec)}s`
@@ -128,8 +120,36 @@ export function HostBoard({ initial }: { initial: View }) {
 
   return (
     <div className="space-y-4">
-      {/* Status row: the facts that answer "is it up and current". */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/*
+        SIX FACTS IN ONE GRID, WHERE THERE USED TO BE TWO ROWS OF FOUR.
+
+        THE ROW THAT WENT: Processor, Memory, Inbound and Outbound, each
+        printing the latest value of a series as text, directly above
+        `HostCharts` plotting those same four series. The owner, on reading it:
+        "on the Host page we don't need cards for processor, memory,
+        inbound/outbound when our graphs show literally the exact same info".
+
+        WHAT THE ARGUMENT ACTUALLY REACHES, WHICH IS NOT ALL OF IT. Inbound and
+        Outbound carried a byte rate and nothing else, and the network chart
+        draws both rates against a labelled axis, so those two are gone outright.
+        Processor and Memory each carried a SECOND reading the charts cannot
+        show: both of those charts are percentages of a ceiling they never name,
+        so the core count and the absolute GB behind the percentage exist
+        nowhere else on the page. Those cards are therefore REDUCED to the half
+        that is not duplicated and moved up here, beside `Disk free` — which has
+        no chart at all — rather than deleted with the row that held them.
+
+        THE COST, SAID PLAINLY RATHER THAN PATCHED WITH A CAPTION: the live
+        percentage is no longer readable as text. It is the right-hand end of a
+        line on a fixed 0-100 axis, and the exact figure is one hover or one
+        arrow key away. That is what `accessibilityLayer` on those charts is
+        paying for, and it is the trade the owner asked for.
+
+        THREE COLUMNS, NOT FOUR, because six cards in a four-wide grid leave two
+        stranded on a half-empty second row. At three the split lands on the
+        seam that is already there: is it up and current, then what the box is.
+      */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <StatCard icon={Power} label="FXServer" tone={s?.running ? 'var(--live)' : 'var(--danger)'}>
           {s ? (
             <span className={s.running ? 'text-live' : 'text-danger'}>
@@ -206,49 +226,39 @@ export function HostBoard({ initial }: { initial: View }) {
           )}
         </StatCard>
 
+        {/*
+          NO TONE ON THESE TWO ANY MORE. `--chart-1` and `--chart-2` on the icon
+          were there to tie a card to the series it restated; a core count is
+          not a series, and a colour claiming otherwise points at a line that no
+          longer says the same thing. They take the muted icon the rest of the
+          machine facts beside them take.
+        */}
+        <StatCard icon={Cpu} label="Processor">
+          <span className="font-mono">{last ? `${last.cores} cores` : '—'}</span>
+        </StatCard>
+
+        {/*
+          USED AND TOTAL, IN BYTES, WHICH IS THE PART THE MEMORY CHART HAS NO WAY
+          TO DRAW. Its axis is 0-100% of a ceiling it never states, so "64%" on
+          a 16 GB box and "64%" on a 64 GB box are the same picture and very
+          different facts. The percentage itself is not repeated here.
+        */}
+        <StatCard icon={MemoryStick} label="Memory">
+          <span className="font-mono">
+            {last && last.memTotalKb > 0
+              ? `${((last.memTotalKb - last.memAvailKb) / 1024 / 1024).toFixed(1)} / ${(last.memTotalKb / 1024 / 1024).toFixed(1)} GB`
+              : '—'}
+          </span>
+        </StatCard>
+
+        {/* NO CHART DRAWS DISK. `do_telemetry` reports it and this is its only
+            reader, so this card is not a duplicate of anything. */}
         <StatCard icon={HardDrive} label="Disk free">
           <span className="font-mono">
             {last && last.diskTotalKb > 0
               ? `${Math.round((last.diskAvailKb / last.diskTotalKb) * 100)}%`
               : '—'}
           </span>
-        </StatCard>
-      </div>
-
-      {/*
-        The four sparklines that were here are now three interactive area charts
-        in `HostCharts` — processor, memory, and network in/out — to the owner's
-        count. Hover or arrow-key to read a value; one range selector governs all
-        three.
-
-        THE CURRENT READINGS MOVED, THEY DID NOT DISAPPEAR. Each sparkline used
-        to print its own latest value and unit in its corner ("8 cores",
-        "10.2 / 16.0 GB"); the charts do not, so those readings become the stat
-        row below rather than being dropped. Same numbers, same words, one row up.
-      */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard icon={Cpu} label="Processor" tone="var(--chart-1)">
-          <span className="font-mono">{last ? `${Math.round(last.cpuPct)}%` : '—'}</span>
-          <span className="ml-2 align-middle text-xs text-muted-foreground/60">
-            {last ? `${last.cores} cores` : ''}
-          </span>
-        </StatCard>
-
-        <StatCard icon={MemoryStick} label="Memory" tone="var(--chart-2)">
-          <span className="font-mono">{last ? `${Math.round(last.memPct)}%` : '—'}</span>
-          <span className="ml-2 align-middle text-xs text-muted-foreground/60">
-            {last && last.memTotalKb > 0
-              ? `${((last.memTotalKb - last.memAvailKb) / 1024 / 1024).toFixed(1)} / ${(last.memTotalKb / 1024 / 1024).toFixed(1)} GB`
-              : ''}
-          </span>
-        </StatCard>
-
-        <StatCard icon={ArrowDownToLine} label="Inbound" tone="var(--chart-3)">
-          <span className="font-mono">{last ? human(last.rxRate) : '—'}</span>
-        </StatCard>
-
-        <StatCard icon={ArrowUpFromLine} label="Outbound" tone="var(--chart-4)">
-          <span className="font-mono">{last ? human(last.txRate) : '—'}</span>
         </StatCard>
       </div>
 
