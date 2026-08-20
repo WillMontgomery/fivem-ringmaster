@@ -2,7 +2,15 @@
 
 import { Gauge, Search, ShieldAlert, Users } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 
 import {
   Command,
@@ -32,6 +40,41 @@ import {
  */
 
 const MAX_RESULTS = 10
+
+/**
+ * The palette is prerendered like any other client component, and React warns
+ * about `useLayoutEffect` on the server. cmdk picks between the two the same
+ * way and for the same reason.
+ */
+const useIsomorphicLayoutEffect =
+  typeof window === 'undefined' ? useEffect : useLayoutEffect
+
+/**
+ * What cmdk matches its selection against.
+ *
+ * Selecting an item means setting the palette's value to a string that is
+ * `===` to the item's own `value`, so the row and the selection have to be
+ * computed by the same function or they drift and nothing is ever selected.
+ * cmdk trims item values, so this trims too.
+ */
+function playerValue(p: SearchPlayer): string {
+  return (p.license ?? p.name).trim()
+}
+
+/**
+ * The keys cmdk moves the selection with: arrows, Home/End, and the vim
+ * bindings it turns on by default (`vimBindings` defaults to true).
+ */
+function movesSelection(e: ReactKeyboardEvent): boolean {
+  const k = e.key
+  return (
+    k === 'ArrowDown' ||
+    k === 'ArrowUp' ||
+    k === 'Home' ||
+    k === 'End' ||
+    (e.ctrlKey && (k === 'n' || k === 'j' || k === 'p' || k === 'k'))
+  )
+}
 
 /**
  * Open the palette from anywhere, optionally with the box already filled in.
@@ -76,12 +119,35 @@ export function PlayerSearch({
   const [players, setPlayers] = useState<SearchPlayer[]>([])
 
   /**
+   * The query `players` is the answer to — `null` before the first response.
+   *
+   * WITHOUT THIS THERE IS NO WAY TO TELL a settled list from one the admin has
+   * already typed past. The rows on screen lag the box by the debounce plus a
+   * round trip, and for that window the list is somebody else's answer.
+   */
+  const [answered, setAnswered] = useState<string | null>(null)
+
+  /** cmdk's selection, controlled. See the enforcement effect below. */
+  const [selected, setSelected] = useState('')
+  /** Set once the admin has moved the selection off the top result. */
+  const moved = useRef(false)
+  /** The top result the enforcement effect last acted on. */
+  const lastTop = useRef<string | null>(null)
+
+  /**
    * Seed on open, not on every render. Deps are `[open, seed]` deliberately:
    * once the palette is up, typing changes `query` and must not be undone by
    * this effect, so `query` is not a dependency.
+   *
+   * The rows from the last time it was open survive in `players`, so the
+   * answer is invalidated here too — otherwise ⌘K, Enter would open whoever
+   * happened to be top of a list from ten minutes ago.
    */
   useEffect(() => {
-    if (open) setQuery(seed)
+    if (!open) return
+    setQuery(seed)
+    setAnswered(null)
+    moved.current = false
   }, [open, seed])
 
   /**
@@ -112,7 +178,11 @@ export function PlayerSearch({
         )
         if (!res.ok || !alive) return
         const data = (await res.json()) as { players?: SearchPlayer[] }
+        // Checked again after the parse: `alive` can flip while the body is
+        // being read, and a superseded response must not replace the rows.
+        if (!alive) return
         setPlayers(data.players ?? [])
+        setAnswered(query)
       } catch {
         /* an empty palette is a fine failure mode */
       }
@@ -139,6 +209,69 @@ export function PlayerSearch({
   // Filtered and capped by the endpoint; see api/players/search.
   const matches = players.slice(0, MAX_RESULTS)
 
+  /** Are the rows on screen the answer to what is in the box right now? */
+  const fresh = answered === query
+
+  /**
+   * THE TOP RESULT IS ALWAYS A PLAYER, NEVER A "GO TO" ENTRY.
+   *
+   * The list is mixed — players, then three fixed navigation entries — and
+   * something had to decide what "top" means across the two. It means the
+   * first player, and when there is no player it means nothing at all.
+   *
+   * The alternative, "first row in the list whatever it is", is what cmdk does
+   * on its own and is exactly the bug: type a name the console has never seen,
+   * press Enter expecting nothing to happen, and get moved to Live players
+   * instead. Enter is for the thing you searched for. The navigation entries
+   * are still one ArrowDown away, which is how you get to a page you did not
+   * search for on purpose rather than by accident.
+   *
+   * Empty while the list is stale, so a half-typed query cannot fire on the
+   * previous query's rows.
+   */
+  const top = fresh ? matches[0] : undefined
+  const topValue = top ? playerValue(top) : ''
+
+  /**
+   * KEEPING cmdk's SELECTION ON THE TOP RESULT.
+   *
+   * WHAT WAS WRONG. cmdk auto-selects the first item, but only ever when
+   * nothing is selected yet — its item registration reads
+   * `state.current.value || selectFirstItem()`. The "Go to" group is mounted
+   * for the whole life of the palette, so its three items register while the
+   * player list is still empty and `value` is `"live players"` before a single
+   * result exists. Every result set that arrives afterwards mounts into a
+   * palette that already has a selection, so cmdk leaves it alone: the rows
+   * appear and the highlight stays on a navigation link. Enter went to `/`.
+   *
+   * `shouldFilter={false}` is why cmdk's other hook does not save it either.
+   * On a search change cmdk schedules `selectFirstItem`, which picks the first
+   * item in DOM order *at that instant* — which, with results a debounce and a
+   * round trip behind the box, is the previous query's row.
+   *
+   * SO THE SELECTION IS DERIVED FROM THE RESULTS RATHER THAN LEFT TO CMDK,
+   * and enforced rather than merely set, because cmdk keeps voting: it will
+   * re-run `selectFirstItem` on the next keystroke and land on a stale row or
+   * a navigation entry. Reacting to `topValue` alone loses that argument, so
+   * this runs on every commit and puts the selection back.
+   *
+   * IT STOPS ENFORCING THE MOMENT THE ADMIN TAKES OVER. `moved` is set by the
+   * arrow keys and by the mouse below, and cleared whenever the top result
+   * changes — which every keystroke guarantees, because a changed query makes
+   * the list stale and drives `topValue` through `''` on the way past.
+   *
+   * A LAYOUT EFFECT, NOT AN EFFECT, so the correction lands in the same paint
+   * as cmdk's own choice. As a passive effect this shows one frame of a
+   * highlighted navigation link on every keystroke.
+   */
+  useIsomorphicLayoutEffect(() => {
+    if (lastTop.current !== topValue) {
+      lastTop.current = topValue
+      moved.current = false
+    }
+    if (!moved.current && selected !== topValue) setSelected(topValue)
+  })
+
   return (
     <CommandDialog
       open={open}
@@ -155,7 +288,28 @@ export function PlayerSearch({
         against license as well as name — letting cmdk re-rank would quietly
         drop exact identifier matches that do not look name-shaped.
       */}
-      <Command shouldFilter={false}>
+      <Command
+        shouldFilter={false}
+        value={selected}
+        onValueChange={setSelected}
+        /*
+          Both handlers record that the selection is the admin's now, so the
+          effect above stops putting it back. cmdk moves the selection from
+          inside its own keydown handler and from an item's `onPointerMove`,
+          and neither is distinguishable from its automatic selection by the
+          time `onValueChange` fires — the gesture has to be caught here.
+        */
+        onKeyDown={(e: ReactKeyboardEvent) => {
+          if (movesSelection(e)) moved.current = true
+        }}
+        onPointerMove={(e: ReactPointerEvent) => {
+          // Only over a row: a mouse resting anywhere else in the palette must
+          // not freeze the selection while the admin carries on typing.
+          if ((e.target as Element).closest?.('[cmdk-item]')) {
+            moved.current = true
+          }
+        }}
+      >
       <CommandInput
         placeholder="Search players by name or license…"
         value={query}
@@ -207,10 +361,16 @@ export function PlayerSearch({
             {matches.map((p) => (
               <CommandItem
                 key={p.license ?? p.name}
-                value={p.license ?? p.name}
-                onSelect={() =>
+                value={playerValue(p)}
+                onSelect={() => {
+                  // The selection should already be empty while the rows are
+                  // stale, so this should be unreachable. It is here because
+                  // "should" is doing a lot of work in that sentence and the
+                  // failure it guards against is opening the wrong player's
+                  // profile on a console that can ban them.
+                  if (!fresh) return
                   go(`/players/${encodeURIComponent(p.license ?? '')}`)
-                }
+                }}
               >
                 <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
                   {p.name.slice(0, 2).toUpperCase()}
