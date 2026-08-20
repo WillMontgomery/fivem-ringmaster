@@ -77,7 +77,13 @@ export function PlayerActions({
    * history must not take the kick button away or turn Ban into Lift ban.
    */
   banned: boolean
-  /** On the server right now — decides whether a kick is even possible. */
+  /**
+   * On the server right now.
+   *
+   * Decides whether the kick button EXISTS — not whether it is enabled; see
+   * `kick` below. Also picks which of the two ban tooltips is true, because a
+   * ban on somebody connected removes them and a ban on somebody absent waits.
+   */
   online: boolean
   canBan: boolean
 }) {
@@ -90,22 +96,43 @@ export function PlayerActions({
    * EVERY CONDITION ON THE KICK BUTTON, IN ONE PLACE, AND THEY ARE TWO
    * DIFFERENT QUESTIONS.
    *
-   *   shown    "the kick button should not be displayed on the profile page
-   *            when a ban is in place" — the owner. HIDDEN, not disabled: a
-   *            banned player is not somebody you kick, so there is no action
-   *            being withheld and nothing to grey out. Note the asymmetry with
-   *            the line below — `banned` removes the control, everything else
-   *            only stops it working.
-   *   enabled  the two conditions that were already here. `online`, because
-   *            there is nobody to remove otherwise, and `canBan`, because
-   *            kicking takes the scope. Both stay DISABLED-with-a-reason rather
-   *            than hidden, which is what they have always been.
+   *   shown    THERE IS SOMEBODY TO KICK. Two ways there is not, and both
+   *            HIDE rather than grey out:
+   *
+   *            `!banned` — "the kick button should not be displayed on the
+   *            profile page when a ban is in place" — the owner. A banned
+   *            player is not somebody you kick, so there is no action being
+   *            withheld and nothing to explain.
+   *
+   *            `online` — "let's remove the 'kick' button from the profile page
+   *            if the user is offline" — the owner, and it MOVED HERE FROM
+   *            `enabled`. It used to draw a dead button over an absent player.
+   *            An action with no target is not an action being withheld either;
+   *            it is one that does not exist right now, and a greyed control
+   *            with a caption under it was the console explaining an absence
+   *            nobody asked about. Nothing marks the gap.
+   *
+   *   enabled  `canBan`, and only that. It is the one condition that is
+   *            genuinely about the ADMIN rather than the player: the action
+   *            exists, there is somebody it would apply to, and this account
+   *            may not take it. That stays DISABLED-with-a-reason on hover,
+   *            because a permission you do not have is worth knowing about in a
+   *            way that an empty seat is not.
+   *
+   * THE DISTINCTION THE TWO LINES DRAW, since it is the whole shape of this:
+   * the state of the PLAYER decides whether the control is there at all, and
+   * the scope of the ADMIN decides whether it works.
    *
    * A banned player who is somehow still connected is a transient state —
    * `/api/bans` kicks them in the same request — and it resolves towards the
    * button being irrelevant either way.
+   *
+   * `ProfileView`'s loading skeleton COUNTS THESE BUTTONS and must be changed
+   * with this line. Both `banned` and `online` are known without waiting for
+   * Discord, so the skeleton can draw the right number rather than drawing two
+   * and resolving to one.
    */
-  const kick = { shown: !banned, enabled: online && canBan }
+  const kick = { shown: !banned && online, enabled: canBan }
 
   const lift = async () => {
     try {
@@ -121,15 +148,14 @@ export function PlayerActions({
     <>
       <div className="flex items-center gap-2">
         {/*
-          Kick is disabled when they are not here, because there is nothing to
-          kick — and it says so on hover rather than being mysteriously greyed
-          out. Without the `ban` scope both buttons disable the same way and
-          say why, which is where the removed "you can see this record but not
-          act on it" paragraph went.
-
-          AND IT IS ABSENT ALTOGETHER WHILE A BAN IS IN FORCE — see `kick`
-          above. Nothing marks the gap: a caption or a ghost button explaining
+          KICK IS ABSENT ALTOGETHER WHENEVER THERE IS NOBODY TO KICK — while a
+          ban is in force, and while the player is offline. See `kick` above for
+          both. Nothing marks either gap: a caption or a ghost button explaining
           the absence would be text nobody asked for.
+
+          WHAT IS LEFT ON HOVER IS THE SCOPE. Without `ban` this button and the
+          one beside it disable the same way and say why, which is where the
+          removed "you can see this record but not act on it" paragraph went.
         */}
         {kick.shown && (
           <Tooltip>
@@ -148,12 +174,17 @@ export function PlayerActions({
                 Kick
               </Button>
             </TooltipTrigger>
+            {/*
+              NO "not connected" BRANCH ANY MORE, and it is not an oversight:
+              `kick.shown` now requires `online`, so this tooltip is only ever
+              read over a player who is here. A branch for the offline case
+              would be unreachable text asserting something the button's own
+              presence contradicts.
+            */}
             <TooltipContent side="bottom">
-              {!canBan
-                ? 'Kicking needs the ban scope, which this account does not have.'
-                : online
-                  ? 'Remove them from the server now. Does not ban.'
-                  : `${name} is not connected — there is nobody to kick.`}
+              {canBan
+                ? 'Remove them from the server now. Does not ban.'
+                : 'Kicking needs the ban scope, which this account does not have.'}
             </TooltipContent>
           </Tooltip>
         )}

@@ -4,6 +4,7 @@ import { Ban as BanIcon, Loader2, ShieldOff } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { useFormatInstant } from '@/components/PrefsProvider'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -54,6 +55,14 @@ export function ModerationBoard({
   const [reason, setReason] = useState('')
   const [days, setDays] = useState('')
   const [busy, setBusy] = useState(false)
+
+  /**
+   * The row whose lift is being confirmed, exactly as `ModerationLog` holds it.
+   *
+   * THE ROW AND NOT A BOOLEAN, because the dialog names the player it is about
+   * and a flag cannot say which of a dozen rows was clicked.
+   */
+  const [lifting, setLifting] = useState<Ban | null>(null)
 
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 30_000)
@@ -111,6 +120,33 @@ export function ModerationBoard({
     setBusy(false)
   }
 
+  /**
+   * ═══ LIFTING ASKS FIRST, AND THE ASK IS A CLICKJACKING CONTROL ═══
+   *
+   * NOT UX POLITENESS, AND NOT A SPARE CLICK SOMEBODY MAY TIDY AWAY. Since
+   * 68b3f37 `next.config.mjs` serves `frame-ancestors 'self' https: nui:` so
+   * the game's pause menu can frame this console. The NUI origin CANNOT be
+   * pinned — CSP3 allows a wildcard only as a whole leftmost label, and
+   * `host-char` admits no underscore, which FiveM resource names routinely
+   * contain — so any HTTPS page on the internet may frame this console. That
+   * was accepted on one stated condition: NOTHING DESTRUCTIVE IS ONE CLICK. A
+   * ban needs fifteen typed characters and a confirm, a kick five, and the
+   * maintenance actions are multi-step. Clickjacking steals a click; it cannot
+   * type a paragraph. `next.config.mjs` names this file as one of the two holes
+   * in that argument, and this is that hole closing.
+   *
+   * IT IS ALSO AN INCONSISTENCY CLOSING RATHER THAN A NEW GESTURE. One action
+   * had three call sites and only this one was unguarded — `ModerationLog` and
+   * `PlayerActions` both already route the lift through `ConfirmDialog`, with
+   * this title, these labels and this body. The dialog below is their wording,
+   * not a third variant.
+   *
+   * NO TYPED REASON, DELIBERATELY. A lift is not a ban. The property being
+   * defended is only that a STOLEN CLICK CANNOT COMPLETE THE ACTION, and a
+   * second deliberate click on a dialog that was not there before does that.
+   * Escalating further would make the reversible action cost more than the
+   * destructive one it reverses.
+   */
   const doLift = async (b: Ban) => {
     await toast
       .promise(postJson('/api/bans/lift', { license: b.license }), {
@@ -129,140 +165,168 @@ export function ModerationBoard({
   const past = rows.filter((b) => !isActive(b, now))
 
   return (
-    <div className="space-y-4">
-      {canBan && (
-        <Card className="surface-edge gap-0 px-5 py-4">
-          <h2 className="text-sm font-medium">Issue a ban</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Recorded against the license. It takes effect the next time that
-            player connects — it does not remove anyone who is online now.
-          </p>
+    <>
+      <div className="space-y-4">
+        {canBan && (
+          <Card className="surface-edge gap-0 px-5 py-4">
+            <h2 className="text-sm font-medium">Issue a ban</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Recorded against the license. It takes effect the next time that
+              player connects — it does not remove anyone who is online now.
+            </p>
 
-          <div className="mt-4 grid gap-3 md:grid-cols-[2fr_1fr]">
-            <div className="space-y-1.5">
-              <label htmlFor="ban-license" className="text-xs uppercase tracking-wider text-muted-foreground">
-                License
+            <div className="mt-4 grid gap-3 md:grid-cols-[2fr_1fr]">
+              <div className="space-y-1.5">
+                <label htmlFor="ban-license" className="text-xs uppercase tracking-wider text-muted-foreground">
+                  License
+                </label>
+                <Input
+                  id="ban-license"
+                  value={license}
+                  onChange={(e) => setLicense(e.target.value)}
+                  placeholder="license:0123abcd…"
+                  className="font-mono text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label htmlFor="ban-days" className="text-xs uppercase tracking-wider text-muted-foreground">
+                  Days (blank = permanent)
+                </label>
+                <Input
+                  id="ban-days"
+                  value={days}
+                  onChange={(e) => setDays(e.target.value)}
+                  inputMode="numeric"
+                  placeholder="7"
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-1.5">
+              <label htmlFor="ban-reason" className="text-xs uppercase tracking-wider text-muted-foreground">
+                Reason — shown to the player
               </label>
-              <Input
-                id="ban-license"
-                value={license}
-                onChange={(e) => setLicense(e.target.value)}
-                placeholder="license:0123abcd…"
-                className="font-mono text-sm"
+              <Textarea
+                id="ban-reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={2}
+                placeholder="Aimbot, match 3 — clip in #reports"
               />
             </div>
-            <div className="space-y-1.5">
-              <label htmlFor="ban-days" className="text-xs uppercase tracking-wider text-muted-foreground">
-                Days (blank = permanent)
-              </label>
-              <Input
-                id="ban-days"
-                value={days}
-                onChange={(e) => setDays(e.target.value)}
-                inputMode="numeric"
-                placeholder="7"
-              />
+
+            <div className="mt-3 flex justify-end">
+              <Button onClick={submit} disabled={busy || !license.trim() || reason.trim().length < 3}>
+                {busy ? <Loader2 className="animate-spin" /> : <BanIcon />}
+                Issue ban
+              </Button>
             </div>
-          </div>
-
-          <div className="mt-3 space-y-1.5">
-            <label htmlFor="ban-reason" className="text-xs uppercase tracking-wider text-muted-foreground">
-              Reason — shown to the player
-            </label>
-            <Textarea
-              id="ban-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              rows={2}
-              placeholder="Aimbot, match 3 — clip in #reports"
-            />
-          </div>
-
-          <div className="mt-3 flex justify-end">
-            <Button onClick={submit} disabled={busy || !license.trim() || reason.trim().length < 3}>
-              {busy ? <Loader2 className="animate-spin" /> : <BanIcon />}
-              Issue ban
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      <Card className="surface-edge gap-0 overflow-hidden py-0">
-        <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
-          <span className="text-sm">Active bans</span>
-          <span className="text-xs text-muted-foreground">{active.length}</span>
-        </header>
-
-        {active.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-muted-foreground">
-            Nobody is banned.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border/60">
-            {active.map((b) => (
-              <li key={b.license} className="flex items-center gap-4 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm">
-                      {b.playerName ?? 'Unknown player'}
-                    </span>
-                    <Badge className="border-0 bg-danger/10 text-xs uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
-                      {b.expiresAt === null ? 'permanent' : `until ${when(b.expiresAt)}`}
-                    </Badge>
-                  </div>
-                  <code className="block truncate font-mono text-xs text-muted-foreground/60">
-                    {b.license}
-                  </code>
-                  <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                    {b.reason}
-                  </p>
-                </div>
-                <div className="shrink-0 text-right text-xs text-muted-foreground">
-                  <div>{when(b.at)}</div>
-                  <div className="text-muted-foreground/60">by {b.byName}</div>
-                </div>
-                {canBan && (
-                  <Button variant="ghost" size="sm" onClick={() => doLift(b)}>
-                    <ShieldOff />
-                    Lift
-                  </Button>
-                )}
-              </li>
-            ))}
-          </ul>
+          </Card>
         )}
-      </Card>
 
-      {past.length > 0 && (
         <Card className="surface-edge gap-0 overflow-hidden py-0">
           <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
-            <span className="text-sm">Lifted and expired</span>
-            <span className="text-xs text-muted-foreground">{past.length}</span>
+            <span className="text-sm">Active bans</span>
+            <span className="text-xs text-muted-foreground">{active.length}</span>
           </header>
-          <ul className="divide-y divide-border/60">
-            {past.map((b) => (
-              <li key={b.license} className="flex items-center gap-4 px-4 py-2.5 opacity-70">
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm">
-                    {b.playerName ?? 'Unknown player'}
+
+          {active.length === 0 ? (
+            <p className="px-4 py-10 text-center text-sm text-muted-foreground">
+              Nobody is banned.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border/60">
+              {active.map((b) => (
+                <li key={b.license} className="flex items-center gap-4 px-4 py-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm">
+                        {b.playerName ?? 'Unknown player'}
+                      </span>
+                      <Badge className="border-0 bg-danger/10 text-xs uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
+                        {b.expiresAt === null ? 'permanent' : `until ${when(b.expiresAt)}`}
+                      </Badge>
+                    </div>
+                    <code className="block truncate font-mono text-xs text-muted-foreground/60">
+                      {b.license}
+                    </code>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {b.reason}
+                    </p>
                   </div>
-                  <code className="block truncate font-mono text-xs text-muted-foreground/60">
-                    {b.license}
-                  </code>
-                </div>
-                <span
-                  className={cn(
-                    'shrink-0 text-xs uppercase tracking-wider',
-                    b.liftedAt ? 'text-info' : 'text-muted-foreground',
+                  <div className="shrink-0 text-right text-xs text-muted-foreground">
+                    <div>{when(b.at)}</div>
+                    <div className="text-muted-foreground/60">by {b.byName}</div>
+                  </div>
+                  {canBan && (
+                    <Button variant="ghost" size="sm" onClick={() => setLifting(b)}>
+                      <ShieldOff />
+                      Lift
+                    </Button>
                   )}
-                >
-                  {b.liftedAt ? `lifted by ${b.liftedByName ?? 'unknown'}` : 'expired'}
-                </span>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          )}
         </Card>
-      )}
-    </div>
+
+        {past.length > 0 && (
+          <Card className="surface-edge gap-0 overflow-hidden py-0">
+            <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
+              <span className="text-sm">Lifted and expired</span>
+              <span className="text-xs text-muted-foreground">{past.length}</span>
+            </header>
+            <ul className="divide-y divide-border/60">
+              {past.map((b) => (
+                <li key={b.license} className="flex items-center gap-4 px-4 py-2.5 opacity-70">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm">
+                      {b.playerName ?? 'Unknown player'}
+                    </div>
+                    <code className="block truncate font-mono text-xs text-muted-foreground/60">
+                      {b.license}
+                    </code>
+                  </div>
+                  <span
+                    className={cn(
+                      'shrink-0 text-xs uppercase tracking-wider',
+                      b.liftedAt ? 'text-info' : 'text-muted-foreground',
+                    )}
+                  >
+                    {b.liftedAt ? `lifted by ${b.liftedByName ?? 'unknown'}` : 'expired'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        )}
+      </div>
+
+      <ConfirmDialog
+        open={lifting !== null}
+        onOpenChange={(v) => !v && setLifting(null)}
+        title="Lift this ban?"
+        confirmLabel="Confirm lift"
+        busyLabel="Lifting…"
+        onConfirm={async () => {
+          if (lifting) await doLift(lifting)
+          setLifting(null)
+        }}
+        body={
+          <>
+            <p>
+              <span className="font-medium text-foreground">
+                {lifting?.playerName ?? lifting?.license}
+              </span>{' '}
+              will be able to join again immediately.
+            </p>
+            <p className="text-muted-foreground">
+              The ban record is kept, with your name against the lift — nothing
+              is deleted.
+            </p>
+          </>
+        }
+      />
+    </>
   )
 }

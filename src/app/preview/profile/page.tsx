@@ -50,9 +50,10 @@ import { thresholdFor } from '@/lib/xp'
  *                `banned-temp` counts down and was issued by `system`, `served`
  *                is a real ban that has run out — no chip at all, which is the
  *                case the owner asked for and the one a harness that only ever
- *                passed `bans: []` could never show. `banned-online` is the pair
- *                for the Kick button's rule: connected AND banned, so a missing
- *                Kick is the ban hiding it rather than absence disabling it
+ *                passed `bans: []` could never show. `offline` and
+ *                `banned-online` pull the Kick button's two hiding rules apart:
+ *                it is drawn only for a player who is present AND not banned,
+ *                and each of those cases isolates one half of that
  *   ?names=      the names the "Other names" row is built from: never renamed,
  *                renamed twice, and enough to fill the line
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
@@ -744,18 +745,27 @@ type AdminKey = keyof typeof ADMIN_CASES
 
 const MOD_CASES = {
   online: { online: true, canBan: true, ban: null },
+  /**
+   * ABSENT, AND THEREFORE NO KICK BUTTON AT ALL.
+   *
+   * "let's remove the 'kick' button from the profile page if the user is
+   * offline" — the owner. THIS CASE USED TO DRAW A DEAD BUTTON with a tooltip
+   * saying nobody was there to kick, and it is the fixture that proves the
+   * button is now gone rather than greyed. One button in the bar, not two.
+   */
   offline: { online: false, canBan: true, ban: null },
   banned: { online: false, canBan: true, ban: ACTIVE_BAN },
   'banned-temp': { online: false, canBan: true, ban: TEMP_BAN },
   /**
-   * BANNED AND STILL CONNECTED, which is the case the Kick button's new rule is
-   * actually about.
+   * BANNED AND STILL CONNECTED, and it is the case that keeps the two hiding
+   * rules from being confused for one.
    *
-   * "the kick button should not be displayed on the profile page when a ban is
-   * in place" — the owner. On every other banned case here the player is offline
-   * too, so the button was already disabled and its disappearance proves nothing.
-   * This one is the pair that separates "hidden because banned" from "disabled
-   * because absent": online, kickable in every other respect, and NO Kick button.
+   * `kick.shown` is `!banned && online` — TWO reasons the button can be absent,
+   * and `banned` and `offline` above each satisfy both at once, so a missing
+   * Kick on either proves only that at least one rule fired. This one holds
+   * `online` TRUE and bans anyway: the player is kickable in every other
+   * respect, so the absence here can only be the ban. Without it, deleting
+   * `!banned` from that expression would still look right in the harness.
    *
    * It is a real state and a short-lived one — `/api/bans` kicks a connected
    * player in the same request that bans them, so a profile opened in between,

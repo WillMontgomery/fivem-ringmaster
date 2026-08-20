@@ -2259,14 +2259,21 @@ function ProfileSkeleton({
           </div>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            {/* ONE PRESENCE FIELD, BECAUSE THE REAL HEADER NOW DRAWS EXACTLY
+                ONE. It used to draw two here and that was right at the time —
+                an offline player got First seen AND Last seen. The pair is now
+                complementary (see the ternary in `IdentityCard`), so whichever
+                way it resolves it is a single block, and a skeleton still
+                drawing two would promise a column that never arrives and drop
+                it out of a right-aligned group when Discord answers — the exact
+                jump this skeleton exists to prevent.
+
+                NO COUNT PROP FOR IT, unlike `moderationButtons`: that one is
+                genuinely 0, 1 or 2, and this one is always 1. */}
             <div className="flex gap-6">
               <div className="space-y-1.5">
                 <Skeleton className="h-3 w-16" />
                 <Skeleton className="h-4 w-28" />
-              </div>
-              <div className="space-y-1.5">
-                <Skeleton className="h-3 w-16" />
-                <Skeleton className="h-4 w-20" />
               </div>
             </div>
             {moderationButtons > 0 && (
@@ -2489,6 +2496,30 @@ export function ProfileView({
    */
   const chromeState = useDiscordChrome()
 
+  /**
+   * ON THE SERVER RIGHT NOW — ONE SPELLING OF IT, FOR THE WHOLE COMPONENT.
+   *
+   * There are two ways to ask this question in this file's inputs and they are
+   * the SAME FACT from the same variable: `p.live` is the presence snapshot, and
+   * `moderation.online` is `live !== null` computed at the call site — see
+   * `players/[license]/page.tsx`, which derives both from one `live`, and the
+   * preview harness, which says so out loud ("the ONLINE NOW chip and the kick
+   * button both read the same fact, so they move together").
+   *
+   * `p.live` IS THE ONE TO READ, and not by preference. `moderation` is optional
+   * — omitted entirely by callers that must not offer the buttons — so a header
+   * field gated on `moderation.online` would blink out for a viewer who merely
+   * cannot moderate, which is a permission deciding a biographical fact. `p.live`
+   * is always there, and it is already what the ONLINE NOW chip below reads.
+   *
+   * WHICH LEAVES `moderation.online` READ IN EXACTLY ONE PLACE — the prop handed
+   * to `PlayerActions`, whose own contract it is. It is not a rival reading and
+   * cannot disagree; a field passed by both call sites and read by neither would
+   * be the worse outcome. If that prop ever loses `online`, this const is what
+   * the kick button should be given.
+   */
+  const online = p.live !== null
+
   const kd = p.stats && p.stats.deaths > 0
     ? (p.stats.kills / p.stats.deaths).toFixed(2)
     : '—'
@@ -2500,9 +2531,18 @@ export function ProfileView({
   if (chromeState.status === 'loading') {
     return (
       <ProfileSkeleton
-        // Kick is not drawn while a ban is in force, so the bar is one button
-        // short there — and `banned` is known without Discord. See PlayerActions.
-        moderationButtons={moderation === undefined ? 0 : banned ? 1 : 2}
+        // THE SAME CONDITION `PlayerActions` DRAWS FROM, kept in step by hand
+        // because the skeleton cannot ask the component that has not rendered.
+        //
+        // Ban-or-lift is always there, so the count is one plus kick, and kick
+        // needs BOTH a player who is not banned and one who is connected —
+        // `kick.shown` over there is `!banned && online`. Neither input waits on
+        // Discord: `banned` is the server's `bans.isActive`, and `online` is the
+        // presence snapshot (see its own comment above). So the skeleton draws
+        // the number that is about to appear rather than always two, and an
+        // offline or banned player's bar no longer jumps from two buttons to one
+        // when Discord answers.
+        moderationButtons={moderation === undefined ? 0 : !banned && online ? 2 : 1}
         actionsTaken={p.actionsTaken.length > 0}
       />
     )
@@ -2618,17 +2658,43 @@ export function ProfileView({
           </div>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            {/*
+                ═══ ONE PRESENCE FIELD, AND WHICH ONE IS DECIDED BY WHETHER THEY
+                    ARE HERE ═══
+
+                LAST SEEN IS MEANINGLESS WHILE THEY ARE HERE. "2 minutes ago"
+                next to "Online now" is either confusing or wrong, and the badge
+                already answers the question better.
+
+                AND FIRST SEEN IS THE HALF THE OWNER ASKED FOR NEXT: "when the
+                player is disconnected, please do not show the 'first seen'
+                timestamp or text". On a disconnected player the live question is
+                when they were last here; when they first arrived is background,
+                and printing both makes the reader pick.
+
+                SO IT IS A TERNARY AND NOT TWO CONDITIONS. The two fields answer
+                one question — "when does this person's presence matter" — and
+                they are exactly complementary: online shows First seen, offline
+                shows Last seen, never both and never neither. Written as two
+                independent gates the pair could drift into showing two fields or
+                none, and the reason each is hidden would live in a different
+                place from the reason the other is shown.
+
+                THE CLUSTER CANNOT GAIN A HOLE, which is the layout half of this.
+                `gap-6` only paints BETWEEN children, so a single child leaves no
+                trailing space and the moderation buttons keep their position in
+                the right-aligned group. Nothing is rendered in the hidden
+                field's place — no dash, no caption.
+            */}
             <div className="flex gap-6 text-right">
-              <div>
-                <div className="text-xs uppercase tracking-wider text-muted-foreground">
-                  First seen
+              {online ? (
+                <div>
+                  <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                    First seen
+                  </div>
+                  <div className="mt-1 text-sm"><LocalTime ms={p.firstSeen} /></div>
                 </div>
-                <div className="mt-1 text-sm"><LocalTime ms={p.firstSeen} /></div>
-              </div>
-              {/* LAST SEEN IS MEANINGLESS WHILE THEY ARE HERE. "2 minutes ago"
-                  next to "Online now" is either confusing or wrong, and the
-                  badge already answers the question better. */}
-              {!p.live && (
+              ) : (
                 <div>
                   <div className="text-xs uppercase tracking-wider text-muted-foreground">
                     Last seen
@@ -2649,6 +2715,11 @@ export function ProfileView({
                 // THE SAME BOOLEAN THE CHIP ABOVE READS. Not a second reading of
                 // `p.ban` — see the `moderation` prop.
                 banned={banned}
+                // `moderation.online` and the `online` const above are the SAME
+                // FACT — see that comment. This site keeps reading the prop so
+                // the field is not left passed-but-unread by both call sites,
+                // which is its own defect. The header pair cannot do the same,
+                // because it must still render when `moderation` is absent.
                 online={moderation.online}
                 canBan={moderation.canBan}
               />
