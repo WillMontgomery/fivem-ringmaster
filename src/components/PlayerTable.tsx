@@ -1,7 +1,7 @@
 'use client'
 
 import { ArrowDown, ArrowUp, ChevronsUpDown, Search, X } from 'lucide-react'
-import { useId, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { openPlayerSearch } from '@/components/PlayerSearch'
 import { PlayerRowView } from '@/components/PlayerRow'
@@ -13,11 +13,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import type { PlayerRow as Player } from '@/lib/ingest'
 import { stateKey } from '@/lib/playerState'
 import { cn } from '@/lib/utils'
@@ -102,122 +97,74 @@ const COLUMNS: Column[] = [
  * ALL MEANS ALL: every row in the snapshot, no exceptions, so its count always
  * equals the population of the table it sits above — and In match plus Lobby
  * always equals it too, because they are one predicate and its negation.
+ *
+ * A LABEL AND A COUNT, AND NOTHING ELSE. Each of these carried a `title` — a
+ * one-line explanation rendered as both a tooltip and an `sr-only` element —
+ * until the owner ruled: "We don't need descriptors for those tabs." The field
+ * is gone from the type, not merely unset, so there is nothing to quietly
+ * repopulate. See `FilterChip` for why it was removed rather than blanked.
  */
 const FILTERS: Array<{
   key: 'all' | 'in-match' | 'lobby'
   label: string
-  /**
-   * The chip's explanation — "In match" has to say which states it holds.
-   *
-   * Rendered by `FilterChip` in two places at once: a tooltip for the mouse and
-   * an `sr-only` element for everyone else. Edit it here; the chip is the only
-   * consumer. NOT a DOM `title` attribute — `docs/hover-text.md` rule 6 bans
-   * those outright, and this is a plain object field that never reaches an
-   * element as an attribute.
-   */
-  title: string
   match: (p: Player) => boolean
 }> = [
-  {
-    key: 'all',
-    label: 'All',
-    title: 'Everyone connected, whatever they are doing',
-    match: () => true,
-  },
-  {
-    key: 'in-match',
-    label: 'In match',
-    // THE OWNER'S OWN ENUMERATION, IN THEIR ORDER AND THEIR WORDS: "'in match'
-    // should include dead/in the air/down/alive". `FilterChip` requires a
-    // description — it is the `aria-describedby` target, so rule 1's DOM floor
-    // has to be met — and rule 8 says the words may not be invented, so the
-    // words are theirs. "down", not "downed", for the same reason.
-    title: 'Dead, in the air, down, or alive',
-    match: (p) => p.matchId !== null,
-  },
-  {
-    key: 'lobby',
-    label: 'Lobby',
-    title: 'Connected but not in a match',
-    match: (p) => p.matchId === null,
-  },
+  { key: 'all', label: 'All', match: () => true },
+  { key: 'in-match', label: 'In match', match: (p) => p.matchId !== null },
+  { key: 'lobby', label: 'Lobby', match: (p) => p.matchId === null },
 ]
 
 /**
- * One filter chip, with its explanation attached in both directions at once.
+ * One filter chip: a label, a count, a real `<button>`.
  *
- * THE TWO HALVES ARE ONE COMPONENT ON PURPOSE. This is the only site in the
- * console where a tooltip is strictly better than putting the words on screen:
- * three chips sit in a row and their explanations are a line each, so inlining
- * them would be a sentence where a toolbar belongs. These are also
- * real `<button>`s, so the popup opens on `:focus-visible` — verified with an
- * actual Tab press — which the native `title` never did.
+ * NO DESCRIPTION, BY INSTRUCTION. The owner: "We don't need descriptors for
+ * those tabs." This used to render each chip's explanation twice over — a Base
+ * UI tooltip for the mouse, and an `sr-only` element pointed at with
+ * `aria-describedby` for everyone else — because rule 1 of `docs/hover-text.md`
+ * will not let a fact live on hover alone. With no fact left to place, the
+ * entire apparatus went with it: the tooltip, the `sr-only` span, the
+ * `aria-describedby`, the `useId`, and the `title` field on `FILTERS` that fed
+ * all of them.
  *
- * BUT A TOOLTIP ALONE IS A REGRESSION HERE. The native `title` this replaces was
- * announced by screen readers, and Base UI's popup carries no `role="tooltip"`
- * and no `aria-describedby` at all (verified in 1.7.0), so it is never
- * associated with the button and never announced. Shipping only the popup would
- * quietly take the explanation away from the readers who most needed it.
+ * DELETED RATHER THAN EMPTIED, which is the part worth not undoing. An
+ * `aria-describedby` pointing at an absent or blank element is WORSE than no
+ * attribute: the screen reader announces nothing, and an audit reads a broken
+ * reference where the truth is a deliberate absence. A `TooltipContent` holding
+ * an empty string is the same mistake with a mouse — a popup that opens to show
+ * a blank pill. So there is no `description` prop left to thread `''` through;
+ * the type cannot express the empty case because the case does not exist.
  *
- * So the string is rendered twice and neither copy can be deleted without
- * noticing the other. There is no lint rule standing behind this; the component
- * boundary is the enforcement.
- *
- * THE `sr-only` SPAN SITS OUTSIDE THE BUTTON, and that placement is the whole
- * trick. Inside, it would join the button's accessible name — the "All" chip
- * would announce as "All 12 Everyone connected, whatever they are doing" — so it
- * lives outside and is pointed at with `aria-describedby`, which is the
- * attribute for "extra detail, read after the name".
- *
- * AND NOT `aria-label`. Overwriting the name with `${label}, ${count}. ${title}`
- * is the tempting one-liner and it breaks WCAG 2.5.3 Label in Name: the
- * accessible name would no longer contain the visible text verbatim, so
- * "click All" stops working for anyone driving this by voice.
+ * IF A DESCRIPTION IS EVER ASKED FOR AGAIN it must be the owner's own words
+ * (rule 8), and it does NOT go in `aria-label`: appending it to the visible name
+ * breaks WCAG 2.5.3 Label in Name, and "click All" stops working for anyone
+ * driving this by voice. It goes back the way it left — an `sr-only` element
+ * OUTSIDE the button so it cannot join the accessible name, plus a tooltip.
  */
 function FilterChip({
   label,
   count,
-  description,
   active,
   onSelect,
 }: {
   label: string
   count: number
-  description: string
   active: boolean
   onSelect: () => void
 }) {
-  const id = useId()
-
   return (
-    <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              aria-describedby={id}
-              onClick={onSelect}
-              className={cn(
-                'rounded-md px-2 py-1 text-xs transition-colors',
-                active
-                  ? 'bg-primary/15 text-primary'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            />
-          }
-        >
-          {label}
-          <span className="ml-1.5 tabular-nums opacity-50">{count}</span>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">{description}</TooltipContent>
-      </Tooltip>
-      {/* `sr-only` is `position: absolute`, so this is not a flex item and adds
-          no gap to the chip row it sits in. */}
-      <span id={id} className="sr-only">
-        {description}
-      </span>
-    </>
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'rounded-md px-2 py-1 text-xs transition-colors',
+        active
+          ? 'bg-primary/15 text-primary'
+          : 'text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {label}
+      <span className="ml-1.5 tabular-nums opacity-50">{count}</span>
+    </button>
   )
 }
 
@@ -318,7 +265,6 @@ export function PlayerTable({
               key={f.key}
               label={f.label}
               count={players.filter(f.match).length}
-              description={f.title}
               active={filter === f.key}
               onSelect={() => setFilter(f.key)}
             />

@@ -31,18 +31,30 @@ This is not a stylistic preference. In Base UI 1.7.0, verified in
   never fires for touch or pen. Neither component reaches a phone.
 - Both also wire `useFocus`, so on a genuinely focusable trigger the popup
   **does** open on `:focus-visible`. Confirmed with a real Tab press on a filter
-  chip. On an inert `<span>` trigger it cannot, because nothing focuses.
+  chip, back when the filter chips still had a tooltip to open. On an inert
+  `<span>` trigger it cannot, because nothing focuses.
 - But the popup carries **no `role="tooltip"` and no `aria-describedby`** — zero
   occurrences in either package. It is never associated with its trigger, so a
   screen reader is told nothing by it, open or closed.
 
 So the popup serves sighted mouse users, plus sighted keyboard users where the
 trigger is a real control. It is never the only copy of anything.
-`PlayerTable`'s `FilterChip` is the worked example: the string renders twice, in
-one component, so neither half can be deleted without seeing the other — and
-there `aria-describedby` points at the `sr-only` copy, never at the popup, which
-is what makes the chip announce as "All 26, Everyone connected, whatever they
-are doing".
+`ProfileView`'s `Face` is the worked example: one sentence, built once and
+rendered twice — into the popup, and into an `sr-only` span beside the trigger.
+
+**`PlayerTable`'s `FilterChip` used to be the example here, and is not any
+more.** It was this console's only `aria-describedby`, pointing each chip at its
+own `sr-only` copy so it announced as "All 26, Everyone connected, whatever they
+are doing". The owner then cut the descriptions outright — *"We don't need
+descriptors for those tabs"* — and the tooltip, the `sr-only` span and the
+`aria-describedby` went with them, because **an `aria-describedby` aimed at a
+blank or absent element is a broken reference, not a kindness**: the reader
+hears nothing and an audit sees a defect where the truth is a deliberate
+absence. A grep for `aria-describedby=` now returns nothing at all.
+
+That is rule 8 outranking rule 1, in the order this document already sets out:
+rule 1 governs where a string goes *once it exists*. When the answer is that it
+should not exist, the wiring goes too — it is not emptied and left in place.
 
 ### 2. If the words fit next to the thing, put them there
 
@@ -185,6 +197,12 @@ What that has already cost, so the next person does not restore it by reflex:
   deleted with it.
 - "Actions taken" uses `ProfileView`'s house `Empty` when it has no rows, like
   the four other panels on that page. It does not explain what it would contain.
+- **The live table's filter chips carry no description at all** — "We don't need
+  descriptors for those tabs". `All`, `In match` and `Lobby` are a label and a
+  count. The `title` field is gone from `FILTERS`, not merely unset, and
+  `FilterChip` has no `description` prop to thread an empty string through. This
+  one cost the document its own worked example, above; that is the rule working,
+  not a gap in it.
 
 When a state genuinely has no honest wording, the answer is to **report it and
 wait**, not to write something reasonable-sounding. A hover card asserting a
@@ -202,7 +220,7 @@ for is worse than a blank.
 | `IncidentQueue.tsx` | inline — `3d ago` (it read `3d waiting` until the owner asked for "ago") |
 | `ProfileView.tsx` placement badge | conditional `Tooltip` + `sr-only` |
 | `ProfileView.tsx` survived | inline — `12m 4s alive` |
-| `PlayerTable.tsx` filter chips | `Tooltip` + `sr-only` / `aria-describedby` |
+| `PlayerTable.tsx` filter chips | `Tooltip` + `sr-only` / `aria-describedby`, then **deleted** — see rule 8 |
 | `AppShell.tsx` maintenance badge | `sr-only xl:not-sr-only` |
 | `MaintenancePanel.tsx` revert | visible sentence under the button |
 | `ui/sidebar.tsx` rail | deleted |

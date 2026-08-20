@@ -22,9 +22,17 @@
  * But the popup gets no `role="tooltip"` and no `aria-describedby` anywhere in
  * this package, so it is never associated with its trigger and a screen reader
  * is told nothing by it. Any fact worth showing must ALSO exist in the DOM —
- * visible, or `sr-only` and pointed at with `aria-describedby`. `PlayerTable`'s
- * `FilterChip` is the worked example, and note that its `aria-describedby`
- * points at the `sr-only` copy, never at the popup.
+ * visible, or as an `sr-only` sibling of the trigger. `ProfileView`'s `Face` is
+ * the worked example: one sentence, built once and rendered twice, into the
+ * popup and into an `sr-only` span beside it.
+ *
+ * THERE IS NO `aria-describedby` LEFT IN THIS CONSOLE, which is a fact rather
+ * than an oversight. `PlayerTable`'s `FilterChip` was the single site that wired
+ * one, and it went when the owner cut the filter chips' descriptions ("We don't
+ * need descriptors for those tabs"): an `aria-describedby` aimed at a blank or
+ * absent element is a broken reference, not a courtesy. If a description ever
+ * returns on a FOCUSABLE trigger, that is the wiring to restore; on an inert
+ * one, a sibling `sr-only` span is the whole mechanism.
  *
  * AND THE NATIVE `title` ATTRIBUTE IS NOT THE CHEAP VERSION OF THIS FILE. It is
  * banned on DOM elements; it cannot be selected, focused, or read aloud, and it
