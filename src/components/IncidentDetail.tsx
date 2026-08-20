@@ -509,13 +509,12 @@ export function IncidentDetail({
         onConfirm={resolveNoAction}
         body={
           <>
-            <p>
-              <span className="font-medium text-foreground">
-                {incident.subjectName}
-              </span>{' '}
-              will not be kicked or banned, and nothing is shown to them.
-            </p>
             {/*
+              THE OPENING SENTENCE IS GONE (owner, playtest) — it named the
+              subject and said they would not be kicked or banned and that
+              nothing is shown to them. What is left below is the one paragraph
+              that says what BECOMES TRUE rather than what does not happen.
+
               THE LAST CHANCE, SAYING WHAT BECOMES PERMANENT. Unlike a ban, which
               can at least be lifted, nothing about this outcome can be revisited
               — there is no edit screen and no re-resolve, by design.
@@ -524,7 +523,7 @@ export function IncidentDetail({
               The incident is closed with a verdict of{' '}
               <span className="font-medium text-foreground">no action</span>.
               Verdicts are final — this cannot be edited, re-resolved or
-              reopened. If the behaviour continues, that is a new incident.
+              reopened.
             </p>
 
             {/*
@@ -548,9 +547,22 @@ export function IncidentDetail({
                 rows={2}
                 placeholder="Watched two matches from spectate — nothing unusual"
               />
-              <p className={reasonOk ? 'text-xs' : 'text-xs text-warn'}>
+              {/*
+                THE SATISFIED HALF OF THIS LINE IS GONE (owner, playtest): it
+                read "This is what the next person reading their history finds."
+                Only the shortfall is left, which is a count rather than a
+                sentence — the thing standing between the admin and a disabled
+                confirm button.
+
+                THE ROW KEEPS ITS HEIGHT, which is why this is an empty element
+                rather than no element. `min-h-4` is one `text-xs` line, so the
+                dialog does not jump by a line the moment the fifteenth
+                character is typed and move the confirm button out from under
+                the pointer.
+              */}
+              <p className={cn('min-h-4 text-xs', !reasonOk && 'text-warn')}>
                 {reasonOk
-                  ? 'This is what the next person reading their history finds.'
+                  ? null
                   : `At least ${MIN_REASON} characters (${resolution.trim().length} so far).`}
               </p>
             </div>
