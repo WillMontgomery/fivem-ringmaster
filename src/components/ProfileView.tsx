@@ -2201,10 +2201,47 @@ function SkeletonFigures({ n, className }: { n: number; className: string }) {
   )
 }
 
+/**
+ * Where the breadcrumb points, and what it says.
+ *
+ * ONE SHAPE, TWO CALL SITES — the skeleton and the page — because the two were
+ * a copied `<Link href="/">Back to live players</Link>` and a breadcrumb that
+ * moves has to move in both. A profile that says "back to incident" while
+ * loading and "back to live players" once Discord answers is worse than either.
+ */
+interface BackTo {
+  href: string
+  label: string
+}
+
+/**
+ * THE DEFAULT IS THE BEHAVIOUR THIS PAGE HAS ALWAYS HAD, and it stays the
+ * default rather than becoming one case of two. Every route into a profile
+ * except one — search, the live table, the audit log, the moderation list, a
+ * pasted URL — leads back to the live players table, and none of them passes
+ * anything.
+ */
+const BACK_TO_LIVE: BackTo = { href: '/', label: 'Back to live players' }
+
+function BackLink({ to = BACK_TO_LIVE }: { to?: BackTo }) {
+  return (
+    <Link
+      href={to.href}
+      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+    >
+      <ArrowLeft className="size-3.5" />
+      {to.label}
+    </Link>
+  )
+}
+
 function ProfileSkeleton({
+  backTo,
   moderationButtons,
   actionsTaken,
 }: {
+  /** The same breadcrumb the loaded page will draw. See {@link BackTo}. */
+  backTo?: BackTo
   /**
    * How many buttons the moderation bar will have: 0 (no bar at all), 1 (a ban
    * is in force, so Kick is not drawn) or 2.
@@ -2225,13 +2262,7 @@ function ProfileSkeleton({
         Loading this profile. Waiting for Discord.
       </p>
 
-      <Link
-        href="/"
-        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" />
-        Back to live players
-      </Link>
+      <BackLink to={backTo} />
 
       {/* IDENTITY. The band is always drawn here even though a player with no
           banner and no accent will not have one — this is the state where we do
@@ -2439,6 +2470,7 @@ export function ProfileView({
   p,
   now,
   banned = false,
+  backTo,
   moderation,
   categoryLabel = {},
   verdictLabel = {},
@@ -2447,6 +2479,20 @@ export function ProfileView({
   now: number
   /** Currently banned — shown beside the name, where identity is confirmed. */
   banned?: boolean
+  /**
+   * WHERE THE BREADCRUMB GOES BACK TO. Absent is the ordinary case and means
+   * the live players table, which is what this page has always done.
+   *
+   * "Clicking on the player's profile in the incident page takes me to the
+   * player's profile page - great! But the breadcrumbs there say 'back to live
+   * players' and it should instead take me back to the incident" — the owner,
+   * playtest. A profile has one URL and several ways in, so the origin travels
+   * in the link and the SERVER decides whether to honour it: see
+   * `lib/profileLink`, where the check that the named incident actually links
+   * to this profile lives. Nothing in this component validates anything, and it
+   * must not start — it is handed a decision, not a claim.
+   */
+  backTo?: BackTo
   /**
    * What the moderation buttons in the top bar need to know (#22 item 1).
    *
@@ -2531,6 +2577,11 @@ export function ProfileView({
   if (chromeState.status === 'loading') {
     return (
       <ProfileSkeleton
+        // THE BREADCRUMB IS KNOWN BEFORE DISCORD IS. It comes from the server
+        // with the page, so the skeleton draws the one that is about to appear
+        // rather than "Back to live players" swapping to "Back to incident" the
+        // moment Discord answers — the same argument as the button count below.
+        backTo={backTo}
         // THE SAME CONDITION `PlayerActions` DRAWS FROM, kept in step by hand
         // because the skeleton cannot ask the component that has not rendered.
         //
@@ -2565,13 +2616,7 @@ export function ProfileView({
 
   return (
     <div className="space-y-4">
-      <Link
-        href="/"
-        className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft className="size-3.5" />
-        Back to live players
-      </Link>
+      <BackLink to={backTo} />
 
       {/* Identity. First, because every other panel is worthless if this is
           the wrong person.

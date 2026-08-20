@@ -12,6 +12,11 @@ import * as incidents from '@/lib/incidents'
 import { can } from '@/lib/grants'
 import * as players from '@/lib/players'
 import type { Profile } from '@/lib/profile'
+import {
+  fromIncidentParam,
+  incidentHref,
+  linksToProfile,
+} from '@/lib/profileLink'
 import { currentAdmin } from '@/lib/session'
 import { levelFor } from '@/lib/xp'
 import { liveView } from '@/lib/state'
@@ -78,14 +83,22 @@ const ID_ORDER = ['license', 'license2', 'discord', 'fivem', 'xbl', 'live', 'ste
 
 export default async function PlayerProfilePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ license: string }>
+  /**
+   * ONE PARAMETER IS READ AND IT IS NOT BELIEVED — see `backTo` below and
+   * `lib/profileLink`. Everything else in the query string is ignored, which is
+   * what keeps a profile's URL a profile's URL.
+   */
+  searchParams: Promise<Record<string, string | string[] | undefined>>
 }) {
   const admin = await currentAdmin()
   if (!admin) redirect('/login')
 
   const { license: raw } = await params
   const license = decodeURIComponent(raw)
+  const fromIncident = fromIncidentParam(await searchParams)
 
   const now = Date.now()
   const view = liveView(now)
@@ -93,7 +106,7 @@ export default async function PlayerProfilePage({
   // The real snapshot, not a fixture: are they on the server right now?
   const live = view.players.find((p) => p.license === license) ?? null
 
-  const [ban, canBan, record, game, matches, log, against, filed] =
+  const [ban, canBan, record, game, matches, log, against, filed, origin] =
     await Promise.all([
       bans.banFor(license),
       can(admin.license, 'ban'),
@@ -109,7 +122,43 @@ export default async function PlayerProfilePage({
       audit.forPlayer(license),
       incidents.forSubject(license),
       incidents.filedBy(license),
+      /**
+       * THE CASE THE URL CLAIMS SENT US HERE, fetched only when it claims one.
+       *
+       * A GetItem on a key, in a batch that already holds two table scans, so
+       * it costs nothing in wall time — and `null` when there is no `?from=`,
+       * which is every other way into this page.
+       *
+       * IT IS FETCHED IN ORDER TO BE CHECKED. `linksToProfile` below is the
+       * whole point; see `lib/profileLink` for why a query parameter naming an
+       * incident cannot be rendered as a link on the strength of naming one.
+       */
+      fromIncident ? incidents.get(fromIncident) : Promise.resolve(null),
     ])
+
+  /**
+   * WHERE THE BREADCRUMB GOES BACK TO (owner, playtest: "Clicking on the
+   * player's profile in the incident page takes me to the player's profile page
+   * - great! But the breadcrumbs there say 'back to live players' and it should
+   * instead take me back to the incident").
+   *
+   * `undefined` IS THE ORDINARY ANSWER and means "the live players table", which
+   * is what every other route into this page gets and what the profile has
+   * always done. Three ways to land there: no `?from=` at all, a `from` naming
+   * an incident that does not exist, and — the one that matters — a `from`
+   * naming a real incident that has no link to THIS profile.
+   *
+   * THAT LAST CHECK IS WHY THE READ EXISTS. Nothing can prove where a reader
+   * came from, so this proves the next best thing: that the incident named
+   * actually carries a link to this profile, and is therefore a page they could
+   * have arrived from. A hand-typed `?from=<somebody else's case>` gets the
+   * ordinary breadcrumb rather than a false trail, and never an error — a stale
+   * link in a pasted URL is not the reader's fault.
+   */
+  const backTo =
+    origin && linksToProfile(origin, license)
+      ? { href: incidentHref(origin.incidentId), label: 'Back to incident' }
+      : undefined
 
   // The Discord id is the newest sighting, not the first: somebody who changed
   // accounts should show the face attached to the one they use now.
@@ -411,6 +460,7 @@ export default async function PlayerProfilePage({
             p={profile}
             now={now}
             banned={bannedNow}
+            backTo={backTo}
             categoryLabel={incidents.CATEGORY_LABEL}
             verdictLabel={incidents.VERDICT_LABEL}
             // `ban` NO LONGER TRAVELS HERE. Whether it is in force is

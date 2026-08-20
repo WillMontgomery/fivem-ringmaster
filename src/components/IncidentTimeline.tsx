@@ -20,6 +20,7 @@ import {
   TimelineTitle,
 } from '@/components/ui/timeline'
 import { labelFor } from '@/lib/labels'
+import { profileHref } from '@/lib/profileLink'
 import {
   MATCH_EVENT_LABEL,
   MATCH_PROGRESS_LABEL,
@@ -73,6 +74,13 @@ export function IncidentTimeline({
   now,
 }: {
   incident: MatchFields & {
+    /**
+     * WHERE THE NAMES ON THIS LIST LEAD BACK TO. Every kill links both parties
+     * to their profile, and each of those links carries this so the breadcrumb
+     * there returns to this case rather than to the live table. See
+     * `lib/profileLink`.
+     */
+    incidentId: string
     /**
      * ZERO ON THE OFFSET AXIS. Every `+2:14` and `-1:30` on this list is
      * measured from here — see `matchOffset`, and the owner's instruction in
@@ -148,7 +156,12 @@ export function IncidentTimeline({
             row.source === 'console' ? (
               <ConsoleRow key={`c-${row.index}`} event={row.event} span={span} />
             ) : (
-              <MatchRow key={`m-${row.index}`} entry={row.entry} span={span} />
+              <MatchRow
+                key={`m-${row.index}`}
+                entry={row.entry}
+                span={span}
+                from={incident.incidentId}
+              />
             ),
           )}
         </Timeline>
@@ -198,9 +211,12 @@ function ConsoleRow({
 function MatchRow({
   entry,
   span,
+  from,
 }: {
   entry: MatchTimelineEntry
   span: MatchSpan
+  /** The incident these names should lead back to. See `lib/profileLink`. */
+  from: string
 }) {
   const bracket = entry.kind === 'match_start' || entry.kind === 'match_end'
 
@@ -210,7 +226,7 @@ function MatchRow({
       <TimelineContent>
         <TimelineTitle>
           {entry.kind === 'kill' ? (
-            <Kill entry={entry} />
+            <Kill entry={entry} from={from} />
           ) : (
             <span className="font-medium">
               {labelFor(MATCH_EVENT_LABEL, entry.kind)}
@@ -255,7 +271,7 @@ function Offset({ at, span }: { at: number; span: MatchSpan }) {
  * dash and a one-word label, which is the shape the console's own note rows
  * already use one row above.
  */
-function Kill({ entry }: { entry: MatchTimelineEntry }) {
+function Kill({ entry, from }: { entry: MatchTimelineEntry; from: string }) {
   const line = killLine(entry)
   const weapon = line.weapon ? <Weapon weapon={line.weapon} /> : null
 
@@ -263,7 +279,8 @@ function Kill({ entry }: { entry: MatchTimelineEntry }) {
     <>
       {line.killer ? (
         <>
-          <Party party={line.killer} /> killed <Party party={line.victim} />
+          <Party party={line.killer} from={from} /> killed{' '}
+          <Party party={line.victim} from={from} />
           {line.weapon && (
             <>
               {' '}
@@ -273,7 +290,7 @@ function Kill({ entry }: { entry: MatchTimelineEntry }) {
         </>
       ) : (
         <>
-          <Party party={line.victim} />
+          <Party party={line.victim} from={from} />
           {/*
             THE WEAPON WINS OVER THE CAUSE WHEN IT IS AN UNAUTHORIZED ONE, so a
             claim the game made explicitly cannot be hidden behind a cause
@@ -302,13 +319,13 @@ function Kill({ entry }: { entry: MatchTimelineEntry }) {
   )
 }
 
-function Party({ party }: { party: TimelineParty }) {
+function Party({ party, from }: { party: TimelineParty; from: string }) {
   if (party.license === null) {
     return <span className="font-medium">{party.name}</span>
   }
   return (
     <Link
-      href={`/players/${encodeURIComponent(party.license)}`}
+      href={profileHref(party.license, from)}
       className="font-medium underline underline-offset-2"
     >
       {party.name}

@@ -40,7 +40,7 @@ import { thresholdFor } from '@/lib/xp'
  * issue and the widest string the curve can ever produce, so the fix stays
  * checkable.
  *
- * EIGHT INDEPENDENT AXES, because they are independent in life:
+ * NINE INDEPENDENT AXES, because they are independent in life:
  *
  *   ?state=      match history — played / legacy / never / unreadable
  *   ?incidents=  0, 1, 5, 6 and 43 rows, for the tabs and the page boundary
@@ -66,6 +66,9 @@ import { thresholdFor } from '@/lib/xp'
  *   ?taken=      the "Actions taken" panel, built by running real audit-shaped
  *                rows through the real `actionsTakenFrom`. `some` contains two
  *                separate double-count traps; see RAW_TAKEN
+ *   ?back=       the breadcrumb: the live table, or the incident that sent you
+ *                here. Flip it against `?discord=loading`, because the skeleton
+ *                draws one too and the two must agree
  *
  * THE DISCORD AXIS IS THE ONE THAT CANNOT BE REACHED ANY OTHER WAY. Every other
  * state on this page needs a live session and an AWS credential; the Discord
@@ -743,6 +746,40 @@ const ADMIN_CASES = {
 
 type AdminKey = keyof typeof ADMIN_CASES
 
+/**
+ * ═══ THE BREADCRUMB, WHICH DEPENDS ON HOW YOU GOT HERE ═══
+ *
+ * "Clicking on the player's profile in the incident page takes me to the
+ * player's profile page - great! But the breadcrumbs there say 'back to live
+ * players' and it should instead take me back to the incident" — the owner,
+ * playtest.
+ *
+ * BOTH STATES ARE UNREACHABLE HERE OTHERWISE. On a real console this is decided
+ * on the server: the incident page puts `?from=<case>` on its profile links and
+ * `/players/[license]` honours it only after checking that the incident named
+ * really does link to that profile. Reproducing that needs a live incident, so
+ * the harness passes the DECISION — the same `backTo` the real page computes —
+ * rather than the parameter, which would be a second implementation of the check
+ * this page exists to look at rather than to re-derive.
+ *
+ *   live      undefined, which is what every other route into a profile gets
+ *   incident  what the incident page produces, pointing at a case id
+ *
+ * WHAT THIS CANNOT SHOW is a `?from=` that is refused — a hand-typed case id
+ * that names a real incident with no link to this player. It renders exactly as
+ * `live`, which is the design, and the check that makes it so is unit-shaped
+ * rather than visual: `linksToProfile` in lib/profileLink.
+ */
+const BACK_CASES = {
+  live: undefined,
+  incident: {
+    href: '/incidents/aaaaaaaa-0000-4000-8000-000000000001',
+    label: 'Back to incident',
+  },
+} satisfies Record<string, { href: string; label: string } | undefined>
+
+type BackKey = keyof typeof BACK_CASES
+
 const MOD_CASES = {
   online: { online: true, canBan: true, ban: null },
   /**
@@ -1296,8 +1333,9 @@ async function Preview({
   const names = pick(sp.names, NAME_CASES, 'renamed' as NameKey)
   const admin = pick(sp.admin, ADMIN_CASES, 'yes' as AdminKey)
   const taken = pick(sp.taken, TAKEN_CASES, 'some' as TakenKey)
+  const back = pick(sp.back, BACK_CASES, 'live' as BackKey)
 
-  const params = { state, incidents, xp, mod, discord, names, admin, taken }
+  const params = { state, incidents, xp, mod, discord, names, admin, taken, back }
   const { matches, stats } = MATCH_CASES[state]
   const p = fixture(matches, stats, xp, incidents, mod, discord, names, taken)
   const now = BASE + 5 * 60_000
@@ -1353,6 +1391,16 @@ async function Preview({
           current={taken}
           params={params}
         />
+        {/* The breadcrumb at the top of the page, in its two states. It is drawn
+            by the SKELETON as well, so flip this against `?discord=loading` —
+            both must say the same thing, or the crumb changes under the reader
+            the moment Discord answers. */}
+        <Axis
+          name="back"
+          keys={Object.keys(BACK_CASES)}
+          current={back}
+          params={params}
+        />
         {/*
           The accent's actual numbers, printed rather than eyeballed. This is
           the only place the clamp and the derived foreground are visible as
@@ -1380,6 +1428,7 @@ async function Preview({
         p={p}
         now={now}
         banned={banRow !== null && isActive(banRow, now)}
+        backTo={BACK_CASES[back]}
         categoryLabel={CATEGORY_LABEL}
         verdictLabel={VERDICT_LABEL}
         moderation={{

@@ -29,6 +29,7 @@ import type {
   VerdictAction,
 } from '@/lib/incidents'
 import type { ProfileMatch } from '@/lib/profile'
+import { profileHref } from '@/lib/profileLink'
 import { cn } from '@/lib/utils'
 
 /**
@@ -340,6 +341,17 @@ export function IncidentDetail({
           )}
         </div>
 
+        {/*
+          EVERY PROFILE LINK ON THIS PAGE CARRIES THE INCIDENT WITH IT — these
+          three, and both parties of every kill in the timeline below.
+
+          "Clicking on the player's profile in the incident page takes me to the
+          player's profile page - great! But the breadcrumbs there say 'back to
+          live players' and it should instead take me back to the incident" —
+          the owner, playtest. `profileHref` puts the case id in the URL and the
+          profile page decides what to do with it; see `lib/profileLink` for why
+          the parameter is checked rather than believed.
+        */}
         <div className="mt-4 grid gap-3 border-t border-border/60 pt-3 sm:grid-cols-3">
           <div>
             {/*
@@ -354,7 +366,7 @@ export function IncidentDetail({
               Against
             </div>
             <Link
-              href={`/players/${encodeURIComponent(incident.subjectLicense)}`}
+              href={profileHref(incident.subjectLicense, incident.incidentId)}
               className="mt-1 block text-sm underline underline-offset-2"
             >
               {incident.subjectName}
@@ -366,7 +378,7 @@ export function IncidentDetail({
             </div>
             {incident.reporterLicense ? (
               <Link
-                href={`/players/${encodeURIComponent(incident.reporterLicense)}`}
+                href={profileHref(incident.reporterLicense, incident.incidentId)}
                 className="mt-1 block text-sm underline underline-offset-2"
               >
                 {incident.reporterName}
@@ -388,7 +400,7 @@ export function IncidentDetail({
                 Also involves
               </div>
               <Link
-                href={`/players/${encodeURIComponent(incident.linkedLicense)}`}
+                href={profileHref(incident.linkedLicense, incident.incidentId)}
                 className="mt-1 block text-sm underline underline-offset-2"
               >
                 Linked profile
