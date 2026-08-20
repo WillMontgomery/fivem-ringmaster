@@ -616,30 +616,58 @@ the peering.
 
 ## 6. S3 bucket for incident screenshots
 
-**Still not needed, and worth being precise about why.** Incidents themselves
-have shipped — the game files them, the console queues and resolves them — but
-the *screenshot* half of M5 has not: nothing in this repo constructs an
-`S3Client` or a presigned URL, and no IAM statement anywhere below or above
-mentions S3. Create the bucket when the capture path is built, not before.
-Listed here so it is not a surprise later.
+**The bucket exists as of 2026-08-20.** The operator created it and configured
+IAM on both roles. The code does not use it yet — see #34 (Artifacts) — but this
+is no longer a thing to build later.
 
-S3 → *Create bucket*, in **us-east-2**:
+| | |
+|---|---|
+| **Bucket** | `royale-incidents-bucket` |
+| **Region** | us-east-2 (co-located with the game box, which is the writer) |
+| **Public access** | Blocked |
+| **Lifecycle** | 180-day expiry — see below |
 
-- Name: something globally unique, e.g. `royale-incidents-<something>`
-- **Block all public access: ON.** Images reach the browser through presigned
-  URLs, never public reads.
+The name is fixed and may be hard-coded (operator, 2026-08-20). It is not a
+secret: the bucket blocks public access, so knowing the name grants nothing
+without credentials, and `check-secrets` has no reason to object. Prefer a
+single named constant over a literal repeated at each call site — the one thing
+that would make a future rename expensive.
 
-**No expiry lifecycle rule** (decided 2026-08-09). An earlier draft proposed
-deleting objects after 90 days on the reasoning that these are pictures of
-players' screens. The operator's objection is the stronger one: an incident
-whose evidence has silently evaporated is worse than useless — you open a report
-from eighteen months ago during an appeal or a pattern investigation and half of
-it is gone, with nothing to say why.
+**Direction of access, which the IAM already reflects:**
 
-If storage cost ever becomes the concern, **the answer is a storage class, not a
-deletion**. A lifecycle rule transitioning objects to *Glacier Instant
-Retrieval* after 90 days keeps every image readable on demand at roughly a fifth
-of the price. That satisfies the cost worry without ever losing evidence.
+- **Game box** (`FiveMGameServerRole`) — `s3:PutObject` only. It writes evidence
+  and can neither read it back nor erase it.
+- **Ringmaster** (`RingmasterAppRole`) — `s3:GetObject` only, and no
+  `ListBucket`: the console learns which frames belong to an incident from
+  DynamoDB, so it never needs to enumerate the bucket.
+
+Images reach the browser through **short-lived presigned GETs** issued by the
+console, never public reads.
+
+**180-day expiry lifecycle rule** (decided 2026-08-20 by the operator, and it
+reverses what this section said before — the reversal is deliberate, not drift).
+
+The earlier position, kept here because the reasoning is still true and someone
+will hit it: an incident whose evidence has silently evaporated is worse than
+useless — you open a report from eighteen months ago during an appeal or a
+pattern investigation and half of it is gone, with nothing to say why. The
+alternative offered was a storage class rather than a deletion (Glacier Instant
+Retrieval at roughly a fifth of the price, everything still readable).
+
+The operator chose expiry anyway. **What that means in practice, so nobody is
+surprised by it:**
+
+- **Bans are permanent and verdicts cannot be changed.** An appeal or a pattern
+  investigation opened more than 180 days after the incident will find the
+  artifacts gone. The verdict, the audit rows and the resolution text survive —
+  only the images go.
+- The console must therefore never present a missing artifact as meaningful.
+  `captureKeys`' own comment already says this and it now matters more:
+  *"EMPTY IS NORMAL AND IS NOT EVIDENCE OF ANYTHING."* An old case with no
+  frames is an old case, not an innocent one.
+- The upside, and it is real: this is the only thing in the system that
+  automatically stops holding pictures of players' screens. Retention that
+  expires is easier to defend than retention that does not.
 
 > Worth knowing what this trades away: screenshots of players' screens are then
 > retained indefinitely. If a player ever asks for their data to be deleted, that
