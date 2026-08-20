@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import {
   LogOut,
   CalendarClock,
@@ -47,6 +47,7 @@ import {
 import { activityDeadline, hasSessionCookie } from '@/lib/activity'
 import * as incidents from '@/lib/incidents'
 import { ensureDriver, maintenanceView } from '@/lib/maintenanceDriver'
+import { isFramedClient } from '@/lib/framed'
 import { readPrefs } from '@/lib/prefs'
 import { deployPhase } from '@/lib/serverPhase'
 import { currentAdmin } from '@/lib/session'
@@ -523,6 +524,10 @@ export async function AppShell({
 
   const jar = await cookies()
   const prefs = readPrefs(jar)
+  // Whether this render is the pause-menu console. Used for exactly one
+  // decision, below -- see lib/framed.ts, which is emphatic that a self-
+  // reported header may never gate a permission, a session or a write.
+  const inGame = isFramedClient(await headers())
 
   /**
    * The off-main banner has to be true on every page, which means the SSH poll
@@ -895,8 +900,15 @@ export async function AppShell({
         {/* Asked on every login until it is answered, because the answer is
             what dismisses it. This renders on all thirteen routes, so a prompt
             with any other exit remounts on the next navigation — which is
-            exactly what "More settings" used to do. See PrefsDialog. */}
-        {signedIn && prefs.shouldPrompt && (
+            exactly what "More settings" used to do. See PrefsDialog.
+
+            NOT IN THE PAUSE MENU. A modal that has to be answered before the
+            console can be used is wrong on top of a live match, and what it
+            asks for — a search through four hundred timezones — is not why
+            anybody opened the Admin tab. Settings carries both controls, so
+            an in-game admin loses nothing they cannot reach from a browser;
+            until they do, times render in UTC with the zone named. */}
+        {signedIn && prefs.shouldPrompt && !inGame && (
           <PrefsDialog initialTheme={prefs.theme} />
         )}
 
