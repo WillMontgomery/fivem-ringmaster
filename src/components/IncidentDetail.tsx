@@ -291,6 +291,8 @@ export function IncidentDetail({
       */}
       <IncidentArtifacts
         incidentId={incident.incidentId}
+        subjectName={incident.subjectName}
+        reportedAt={incident.openedAt}
         frames={artifacts}
         srcOverride={artifactSrcOverride}
       />

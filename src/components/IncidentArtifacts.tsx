@@ -64,12 +64,60 @@ import { cn } from '@/lib/utils'
  * runs in the page, the signing runs in the route, and neither the S3 SDK nor
  * the bucket name is reachable from this file.
  */
+/**
+ * What this frame is, in the owner's words.
+ *
+ * THE WORDING IS THEIRS AND IS NOT PARAPHRASED: "[offender]'s screen at report
+ * time" or "[offender]'s screen at report time +5s". It replaced a bare
+ * timestamp, which said when the photograph was taken and never what it was of.
+ *
+ * THE OFFSET IS DERIVED, NEVER HARDCODED. The three timed frames land at 0, +5s
+ * and +10s, but every corroboration adds another whenever it arrives -- the
+ * console's own fixtures carry +47s and +214s -- so a switch on the frame index
+ * would be right for three frames and wrong for the rest.
+ *
+ * SECONDS THROUGHOUT, INCLUDING THE LARGE ONES. `+214s` rather than `+3m34s`,
+ * because seconds-since-the-report is the number an admin is actually comparing
+ * across frames, and because a second unit is a format the owner did not ask
+ * for.
+ *
+ * NO CAPTURE TIME, NO CLAIM ABOUT ONE. A frame whose object carried no
+ * `captured-at` gets the subject and nothing else. "At report time" would be a
+ * guess, and it would be the one caption a reviewer might rely on.
+ */
+export function artifactCaption(
+  subjectName: string,
+  reportedAt: number,
+  capturedAt: number | null,
+): string {
+  const whose = `${subjectName}'s screen`
+  if (capturedAt === null || !Number.isFinite(capturedAt)) return whose
+
+  // Rounded, then floored at zero. A frame stamped a hair before the report is
+  // clock jitter between two writes, not a photograph from before the incident.
+  const seconds = Math.max(0, Math.round((capturedAt - reportedAt) / 1000))
+  return seconds === 0
+    ? `${whose} at report time`
+    : `${whose} at report time +${seconds}s`
+}
+
 export function IncidentArtifacts({
   incidentId,
+  subjectName,
+  reportedAt,
   frames,
   srcOverride,
 }: {
   incidentId: string
+  /** The player the case is about. The caption is about THEIR screen. */
+  subjectName: string
+  /**
+   * When the report was filed -- `incident.openedAt`. The zero point every
+   * caption counts from, and the reason the offsets are not stored: the game
+   * writes absolute times so a corrected clock re-renders the whole set rather
+   * than leaving baked-in offsets behind.
+   */
+  reportedAt: number
   /**
    * The frames that exist, in capture order, as `lib/artifactStore.probe` found
    * them. SPARSE BY DESIGN — 01 and 04 present while 02 and 03 are not is the
@@ -253,17 +301,9 @@ export function IncidentArtifacts({
             suspicion, and not the upload's. That distinction belongs in this
             comment and not on the page.
           */}
-          <LocalTime
-            ms={current.capturedAt ?? NaN}
-            /*
-              SECONDS, WHICH NO OTHER SURFACE ASKS FOR. The three timed frames
-              are taken immediately, at +5s and at +10s — at minute resolution
-              all three carry the same label and stepping between them looks
-              like a control that does nothing.
-            */
-            withSeconds
-            className="text-sm tabular-nums"
-          />
+          <p className="text-sm">
+            {artifactCaption(subjectName, reportedAt, current.capturedAt)}
+          </p>
 
           {total > 1 && (
             <div className="flex items-center gap-1">
