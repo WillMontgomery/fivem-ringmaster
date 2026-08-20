@@ -32,13 +32,24 @@ import { cn } from '@/lib/utils'
 /**
  * One incident, and the decision about it.
  *
+ * ═══ THE ORDER OF THIS PAGE IS THE OWNER'S, FROM A PLAYTEST ═══
+ *
+ *   report bar   what this is, who it is against, who filed it — and the three
+ *                resolve buttons, right-aligned in the same row
+ *   timeline     "Directly under the 'player report' section should be the
+ *                timeline section"
+ *   verdict      only once it is closed
+ *   artifacts    last. It was second.
+ *
  * THE TIMELINE IS THE RECORD. State says where it ended up; the timeline says
  * who looked and what they concluded, which is the thing that matters when the
  * same player turns up again.
  *
- * RESOLVING IS ONE-WAY, and the UI says so before you do it rather than after.
- * If the behaviour continues that is a new incident — which is the design, not
- * a limitation, because it keeps the queue strictly shrinking.
+ * RESOLVING IS ONE-WAY. It is not said on the page any more — the owner asked
+ * for no helper text in the resolve bar and for the sentence about it to come
+ * out of the confirm dialog as well — but it is still the rule, enforced by a
+ * conditional update in `lib/incidents` that refuses to run twice, and it is
+ * still why the queue can only shrink.
  *
  * ═══ RESOLVING IS NOW A CHOICE OF THREE, NOT A SENTENCE (#28) ═══
  *
@@ -65,14 +76,22 @@ import { cn } from '@/lib/utils'
  * second spelling of "banned" anywhere in the log.
  *
  * NO ACTION IS NOT STYLED AS A FAILURE, on purpose. It sits with the other two,
- * same size, no warning colour, and its own confirm says plainly that deciding
- * nothing happened is a decision. A verdict UI that makes dismissal feel like
+ * same size, no warning colour. A verdict UI that makes dismissal feel like
  * losing produces admins who ban to feel finished.
  *
- * WHAT IS UNAVAILABLE SAYS SO IN THE MARKUP, NOT ON HOVER. `docs/hover-text.md`
- * is explicit: a disabled button eats pointer events, so a tooltip on one
- * deletes the explanation in exactly the state that needed explaining. The
- * reason a button is off is a visible sentence under the row.
+ * ═══ WHAT IS UNAVAILABLE NO LONGER SAYS SO, AND THAT WAS ASKED FOR ═══
+ *
+ * This bar used to carry a visible sentence under it for each button that was
+ * off — the arrangement `docs/hover-text.md` prescribes, because a disabled
+ * button eats pointer events and a tooltip on one deletes the explanation in
+ * exactly the state that needed explaining. The owner asked for the bar to carry
+ * no helper text at all, so those sentences are gone rather than moved onto
+ * hover, which would have been the same words in the one place that cannot show
+ * them.
+ *
+ * WHICH LEAVES TWO GREYED CONTROLS WITH NOTHING SAYING WHY: Ban on a player
+ * already under one, and Kick on a player who has left. Recorded here rather
+ * than worked around.
  */
 export function IncidentDetail({
   incident,
@@ -222,6 +241,68 @@ export function IncidentDetail({
               </p>
             )}
           </div>
+
+          {/*
+            ═══ THE RESOLVE BUTTONS LIVE IN THIS BAR NOW (owner, playtest) ═══
+
+            "The resolve buttons should be at the top of the page like in the
+            'player report' bar, akin to our profile page. No helper text is
+            needed there either."
+
+            They were a card of their own at the BOTTOM of the page, under the
+            heading "Resolve", with a paragraph of explanation above them and two
+            more underneath. The profile page settled this shape first (#22 item
+            1): the moderation buttons are part of the identity bar, right-
+            aligned, and the row reads left to right as "who is this, and what do
+            you want to do about it". This is the same row on the same argument.
+
+            NO PROSE CAME WITH THEM, WHICH IS THE OTHER HALF OF THE INSTRUCTION.
+            The intro paragraph is gone, and so are the two sentences that
+            explained a disabled button — see the note on the Ban button for what
+            that costs and what it replaced.
+
+            `justify-between` WAS ALREADY HERE with one child in it. This is the
+            thing it was left waiting for.
+          */}
+          {pending && canResolve && (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {/*
+                BAN IS DISABLED RATHER THAN HIDDEN while one is already in force,
+                and it now carries no sentence saying so. That is the owner's
+                instruction above rather than an oversight: the paragraph that
+                explained it was helper text in the place they asked for none.
+                The fact itself is not only here — a player under a ban wears the
+                chip for it on their profile, which the name in this bar links
+                to.
+              */}
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={subjectBanned}
+                onClick={() => setBanOpen(true)}
+              >
+                <BanIcon />
+                Ban
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!subjectOnline}
+                onClick={() => setKickOpen(true)}
+              >
+                <LogOut />
+                Kick
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setNoneOpen(true)}
+              >
+                <CircleSlash />
+                No action
+              </Button>
+            </div>
+          )}
         </div>
 
         <div className="mt-4 grid gap-3 border-t border-border/60 pt-3 sm:grid-cols-3">
@@ -283,104 +364,21 @@ export function IncidentDetail({
       </Card>
 
       {/*
-        ARTIFACTS. This was a placeholder card reading "N frames stored. Viewing
-        is not wired up yet", counting a field that could never be non-empty.
-        Both are gone: the field (see `lib/incidents`) and the placeholder.
-
-        THE FRAMES ARE FOUND ON THE SERVER, not here — `probe()` in
-        `lib/artifactStore` runs in the page above this component and hands down
-        what it found. This card is handed data and nothing else, which is what
-        keeps the S3 SDK and the bucket name out of the client bundle.
-
-        ITS EMPTY STATE HAS NO WORDS, on purpose, and `IncidentArtifacts`
-        explains why at length. The one-line version: an empty set has four
-        unrelated causes and none of them is about the accused, so the console
-        says nothing rather than picking one.
-      */}
-      <IncidentArtifacts
-        incidentId={incident.incidentId}
-        subjectName={incident.subjectName}
-        reportedAt={incident.openedAt}
-        frames={artifacts}
-        srcOverride={artifactSrcOverride}
-      />
-
-      {/*
         THE TIMELINE MOVED OUT OF THIS FILE (#30) and grew a second writer. It
         was the console's own `events` in a bare `<ul>`; it is now those merged
         with the match the game recorded around this incident — the brackets,
         every kill inside them, and whether the match ever reported an end. Two
         attributes, two writers, one list, sorted here because DynamoDB's
         `list_append` does not order. See `IncidentTimeline`.
+
+        IT SITS DIRECTLY UNDER THE REPORT BAR (owner, playtest: "Directly under
+        the 'player report' section should be the timeline section"). It used to
+        be second, behind the artifacts; the artifacts are last now. The reading
+        order that produces is what happened, then what was decided, then the
+        pictures — rather than the pictures before the account of what they are
+        pictures of.
       */}
       <IncidentTimeline incident={incident} now={now} />
-
-      {pending && canResolve && (
-        <Card className="surface-edge gap-0 px-5 py-4">
-          <h2 className="text-sm font-medium">Resolve</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Choose what happens to {incident.subjectName}. This is permanent —
-            the verdict cannot be edited or re-resolved and the incident cannot
-            be reopened. If the behaviour continues, that is a new incident.
-          </p>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <Button
-              variant="destructive"
-              size="sm"
-              disabled={subjectBanned}
-              onClick={() => setBanOpen(true)}
-            >
-              <BanIcon />
-              Ban
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!subjectOnline}
-              onClick={() => setKickOpen(true)}
-            >
-              <LogOut />
-              Kick
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setNoneOpen(true)}
-            >
-              <CircleSlash />
-              No action
-            </Button>
-          </div>
-
-          {/*
-            EVERY DISABLED BUTTON HAS ITS SENTENCE HERE, visible, in the markup.
-            Not a tooltip — a disabled button does not fire pointer events, so a
-            tooltip on one explains nothing in the only state that needed
-            explaining (docs/hover-text.md, and PlayerActions is listed there as
-            a site that worked around it badly).
-          */}
-          <div className="mt-2.5 space-y-1 text-xs text-muted-foreground">
-            {!subjectOnline && (
-              <p>
-                {incident.subjectName} has left the server, so there is nobody to
-                kick. A ban still applies the next time they try to join.
-              </p>
-            )}
-            {subjectBanned && (
-              <p>
-                {incident.subjectName} is already banned, so this cannot issue a
-                second one. Closing with{' '}
-                <span className="font-medium text-foreground">no action</span>{' '}
-                records that nothing further was done about this report — it does
-                not lift the existing ban, and it is the honest answer when the
-                ban came from somewhere else.
-              </p>
-            )}
-          </div>
-
-        </Card>
-      )}
 
       {!pending && (
         <Card className="surface-edge gap-0 px-5 py-4">
@@ -437,6 +435,34 @@ export function IncidentDetail({
           </p>
         </Card>
       )}
+
+      {/*
+        ARTIFACTS, AND THEY ARE LAST NOW (owner, playtest). This was a
+        placeholder card reading "N frames stored. Viewing is not wired up yet",
+        counting a field that could never be non-empty. Both are gone: the field
+        (see `lib/incidents`) and the placeholder.
+
+        IT WAS THE SECOND THING ON THE PAGE and is the last. A carousel is the
+        heaviest thing here and the slowest to read; the account of what
+        happened belongs above the pictures of it, not below them.
+
+        THE FRAMES ARE FOUND ON THE SERVER, not here — `probe()` in
+        `lib/artifactStore` runs in the page above this component and hands down
+        what it found. This card is handed data and nothing else, which is what
+        keeps the S3 SDK and the bucket name out of the client bundle.
+
+        ITS EMPTY STATE HAS NO WORDS, on purpose, and `IncidentArtifacts`
+        explains why at length. The one-line version: an empty set has four
+        unrelated causes and none of them is a statement about the accused, so
+        the console says nothing rather than picking one.
+      */}
+      <IncidentArtifacts
+        incidentId={incident.incidentId}
+        subjectName={incident.subjectName}
+        reportedAt={incident.openedAt}
+        frames={artifacts}
+        srcOverride={artifactSrcOverride}
+      />
 
       <BanDialog
         license={incident.subjectLicense}
