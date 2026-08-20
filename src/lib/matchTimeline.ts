@@ -26,7 +26,7 @@
  *
  * 2. EVERY STORED TIME IS ABSOLUTE MILLISECONDS. Nothing on the row is
  *    relative. `+2:14` is a thing this console computes at render time from
- *    `matchStartedAt` — see {@link matchOffset} — and never a thing it reads.
+ *    `openedAt` — see {@link matchOffset} — and never a thing it reads.
  *
  * 3. RED ONLY ON AN EXPLICIT `weaponIssued === false`. Absent and `true` are
  *    both ordinary. This is not defensiveness, it is two real populations:
@@ -206,35 +206,70 @@ export function mergeTimeline(
 }
 
 /**
- * How far into the match this happened. `+2:14`.
+ * The window an offset may be quoted in, and the instant it counts from.
  *
- * COMPUTED, NEVER READ — rule 2. Null when there is no start to measure from,
- * and null for anything before the start, because a negative offset into a
- * match is not a fact about the match; it is a clock this console should not be
- * doing arithmetic on in front of an admin.
- *
- * AND NULL FOR ANYTHING AFTER THE MATCH, which is the case that matters on a
- * merged list. The console's own rows share this axis: an incident is RESOLVED
- * hours or days after the match it was filed during, and `+182:14` presented as
- * a position in a twenty-minute match is a number that is arithmetically true
- * and factually nonsense. `bound` is `matchEndedAt ?? matchEndsBy` — the last
- * instant that can honestly be inside the match — and with no bound at all
- * nothing is excluded.
+ * TWO DIFFERENT JOBS, WHICH IS WHY THEY ARE THREE FIELDS RATHER THAN TWO. The
+ * MATCH decides whether a row can be placed at all — `startedAt` and `bound`
+ * are its two ends. The INCIDENT decides where zero is. Collapsing them, which
+ * is what this was before, is precisely the thing the owner asked to stop.
  */
-export function matchOffset(
-  at: unknown,
-  startedAt: unknown,
-  bound?: unknown,
-): string | null {
-  const t = num(at)
-  const start = num(startedAt)
-  if (t === null || start === null || t < start) return null
+export interface OffsetSpan {
+  /**
+   * The zero point: `incident.openedAt`.
+   *
+   * "all the timestamps should be relative to the incident being opened, not
+   * the match starting" — the owner, playtest. It USED to be `startedAt`, and
+   * the reason that was wrong is the reason an admin opens the page: the kills
+   * worth reading are the ones that provoked the report, so the number that
+   * matters is how long BEFORE the report each happened.
+   */
+  origin: unknown
+  /** `matchStartedAt`. Nothing before the match is placed inside it. */
+  startedAt: unknown
+  /** `matchEndedAt ?? matchEndsBy`. Nothing after the match is either. */
+  bound: unknown
+}
 
-  const end = num(bound)
+/**
+ * How far this sits from the moment the incident was opened. `+2:14`, `-1:30`.
+ *
+ * COMPUTED, NEVER READ — rule 2.
+ *
+ * ═══ A NEGATIVE IS THE POINT, NOT AN EDGE CASE ═══
+ *
+ * An incident is filed AFTER whatever provoked it, so most of the interesting
+ * rows on this list happened before its zero. `-1:30` reads "a minute and a
+ * half before the report", and `+0:00` is the report itself. The sign is
+ * always printed, on both sides, so no row is ambiguous about which way it
+ * points.
+ *
+ * THE MATCH IS STILL THE WINDOW, and that has not changed. Only rows inside
+ * `[startedAt, bound]` get an offset at all, because an offset is a position
+ * in a match: an incident is RESOLVED hours or days later, and `+182:14` on a
+ * twenty-minute match is a number that is arithmetically true and factually
+ * nonsense. `bound` is `matchEndedAt ?? matchEndsBy` — the last instant that
+ * can honestly be inside the match — and with no bound at all nothing is
+ * excluded at that end. With no `startedAt` there is no match to be inside, so
+ * nothing gets an offset; that is what a report filed in the lobby looks like.
+ *
+ * SUB-SECOND TRUNCATES TOWARDS ZERO, on both sides, which is why the sign and
+ * the magnitude are computed separately. A single `Math.floor` over a signed
+ * difference rounds a row 1.999s BEFORE the report to `-0:02` — away from
+ * zero, and inconsistent with the `+0:01` the same distance after it.
+ */
+export function matchOffset(at: unknown, span: OffsetSpan): string | null {
+  const t = num(at)
+  const origin = num(span.origin)
+  const start = num(span.startedAt)
+  if (t === null || origin === null || start === null || t < start) return null
+
+  const end = num(span.bound)
   if (end !== null && t > end) return null
 
-  const s = Math.floor((t - start) / 1000)
-  return `+${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+  const delta = t - origin
+  const s = Math.floor(Math.abs(delta) / 1000)
+  const sign = delta < 0 ? '-' : '+'
+  return `${sign}${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
 // ---------------------------------------------------------------------------

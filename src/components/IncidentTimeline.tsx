@@ -32,6 +32,7 @@ import {
   type ConsoleTimelineEvent,
   type MatchFields,
   type MatchTimelineEntry,
+  type OffsetSpan,
   type TimelineParty,
   type WeaponPart,
 } from '@/lib/matchTimeline'
@@ -71,7 +72,15 @@ export function IncidentTimeline({
   incident,
   now,
 }: {
-  incident: MatchFields & { events: ConsoleTimelineEvent[] }
+  incident: MatchFields & {
+    /**
+     * ZERO ON THE OFFSET AXIS. Every `+2:14` and `-1:30` on this list is
+     * measured from here — see `matchOffset`, and the owner's instruction in
+     * `OffsetSpan.origin`.
+     */
+    openedAt: number
+    events: ConsoleTimelineEvent[]
+  }
   /**
    * PASSED IN, NEVER READ FROM THE CLOCK HERE — the same rule `ago()` states in
    * `lib/duration`. It decides one thing: whether a match with no recorded end
@@ -90,11 +99,15 @@ export function IncidentTimeline({
   const dropped = killDiscrepancy(incident)
 
   /**
-   * The last instant that can honestly be inside this match — the recorded end,
-   * or the deadline while there is no recorded end. Rows past it get no offset;
-   * see `matchOffset`.
+   * WHERE ZERO IS, AND WHERE THE RULER STOPS AT BOTH ENDS.
+   *
+   * `origin` is when the incident was opened — the owner's instruction, see
+   * `OffsetSpan`. The other two are the match: `bound` is the last instant that
+   * can honestly be inside it, the recorded end or the deadline while there is
+   * no recorded end. Rows outside the pair get no offset at all.
    */
   const span = {
+    origin: incident.openedAt,
     startedAt: incident.matchStartedAt,
     bound: incident.matchEndedAt ?? incident.matchEndsBy,
   }
@@ -151,11 +164,8 @@ const CONSOLE_EVENT_LABEL: Record<string, string> = {
   resolved: 'Resolved',
 }
 
-/** The window offsets are measured against. See `matchOffset`. */
-interface MatchSpan {
-  startedAt: number | null | undefined
-  bound: number | null | undefined
-}
+/** Where zero is, and the window offsets may be quoted in. See `matchOffset`. */
+type MatchSpan = OffsetSpan
 
 function ConsoleRow({
   event,
@@ -217,11 +227,13 @@ function MatchRow({
 }
 
 /**
- * How far into the match. Rendered only where there is a start to measure from,
- * and never for anything before it — `matchOffset` returns null for both.
+ * How far from the moment the incident was opened, positive or negative.
+ *
+ * Rendered only for rows inside the match — `matchOffset` returns null for
+ * anything outside it, and for a case with no match at all.
  */
 function Offset({ at, span }: { at: number; span: MatchSpan }) {
-  const offset = matchOffset(at, span.startedAt, span.bound)
+  const offset = matchOffset(at, span)
   if (offset === null) return null
   return <span className="text-muted-foreground/70"> · {offset}</span>
 }

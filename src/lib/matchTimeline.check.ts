@@ -53,7 +53,11 @@
  *   `mergeTimeline` stops comparing `at`          3 cases, section 3
  *   `matchProgress` stops testing the deadline    2 cases, section 4
  *   `killLine` compares names before licenses     2 cases, section 6
- *   `matchOffset` stops testing the bound         1 case,  section 7
+ *   `matchOffset` counts from the match start    13 cases, sections 7a and 7b
+ *   `matchOffset` always prints a plus            6 cases, section 7b
+ *   `matchOffset` stops bounding by the match     3 cases, sections 7a and 7b
+ *   `matchOffset` stops testing the bound         2 cases, sections 7a and 7b
+ *   one signed floor instead of sign + magnitude  1 case,  section 7b
  *   the component inlines the red class           1 case,  section 8
  *   a second component reads the issued flag      1 case,  section 8
  *
@@ -82,6 +86,7 @@ import {
   type ConsoleTimelineEvent,
   type MatchFields,
   type MatchTimelineEntry,
+  type OffsetSpan,
 } from './matchTimeline'
 
 /**
@@ -502,8 +507,21 @@ check(
 // 7. OFFSETS. Computed here, never stored.
 // ---------------------------------------------------------------------------
 
-console.log('7. how far into the match')
+console.log('7a. how far from the report, when the report IS the match start')
 
+/*
+ * ═══ THE ORIGIN MOVED AND THE WINDOW DID NOT ═══
+ *
+ * "all the timestamps should be relative to the incident being opened, not the
+ * match starting" — the owner, playtest. Zero is now `openedAt`.
+ *
+ * THESE TWELVE CASES ARE THE ORIGINAL TWELVE, UNCHANGED IN EXPECTATION, and
+ * that is deliberate rather than lazy: they are run with `origin === startedAt`,
+ * where the new rule and the old one must agree exactly. Everything they were
+ * ever about — the padding, the truncation, both ends of the match window, an
+ * absent start — is still a live rule, so they are kept rather than rewritten,
+ * and 7b below is where the origin actually moves.
+ */
 const offsetCases: Array<[string, number, unknown, unknown, string | null]> = [
   ['the start itself', START, START, null, '+0:00'],
   ['two minutes and fourteen seconds', START + 134_000, START, null, '+2:14'],
@@ -522,9 +540,94 @@ const offsetCases: Array<[string, number, unknown, unknown, string | null]> = [
 ]
 
 for (const [label, at, startedAt, bound, expected] of offsetCases) {
-  const got = matchOffset(at, startedAt, bound)
+  const got = matchOffset(at, { origin: startedAt, startedAt, bound })
   check(`matchOffset: ${label} -> ${expected}`, got === expected, got)
 }
+
+// ---------------------------------------------------------------------------
+
+console.log('7b. the report is not the match start, so half the list is negative')
+
+/*
+ * THE ORDINARY SHAPE OF A REAL CASE: the match had been running for four
+ * minutes when somebody pressed report. Everything the reporter is complaining
+ * about is therefore BEFORE zero, which is the whole reason the owner asked for
+ * this axis to move.
+ */
+const FILED = START + 4 * MIN
+const CAP = START + 20 * MIN
+
+/** The window every 7b case shares, so only the instant under test varies. */
+const span = { origin: FILED, startedAt: START, bound: CAP }
+
+const originCases: Array<[string, number, OffsetSpan, string | null]> = [
+  ['the report itself is zero', FILED, span, '+0:00'],
+
+  // ── BEFORE THE REPORT. The half that did not exist until now. ─────────────
+  ['a kill a minute before the report', FILED - 60_000, span, '-1:00'],
+  ['the match start, four minutes before it', START, span, '-4:00'],
+  ['seconds are zero padded on the negative side too', FILED - 61_000, span, '-1:01'],
+  ['two minutes and fourteen seconds before', FILED - 134_000, span, '-2:14'],
+
+  // ── AFTER THE REPORT. ────────────────────────────────────────────────────
+  ['a kill a minute after the report', FILED + 60_000, span, '+1:00'],
+  ['and one at the very end of the match', CAP, span, '+16:00'],
+
+  // ── TRUNCATION IS SYMMETRIC, which a single Math.floor over a signed
+  //    difference gets wrong: it renders this one as -0:02. ────────────────
+  ['sub-second truncates towards zero before the report', FILED - 1_999, span, '-0:01'],
+  ['and after it, the same distance the same way', FILED + 1_999, span, '+0:01'],
+
+  // ── THE WINDOW IS STILL THE MATCH, NOT THE ORIGIN. Both of these are
+  //    perfectly ordinary distances from the report and neither is inside the
+  //    match, so neither is placed. ───────────────────────────────────────────
+  ['before the match started, though after nothing else', START - 1, span, null],
+  ['past the bound — the admin resolved it days later', CAP + 1, span, null],
+  [
+    'no match at all: a report filed in the lobby gets no offsets',
+    FILED,
+    { origin: FILED, startedAt: null, bound: null },
+    null,
+  ],
+  [
+    'no origin to measure from is no offset, not an offset from the start',
+    FILED,
+    { origin: null, startedAt: START, bound: CAP },
+    null,
+  ],
+  [
+    'an unusable origin is the same answer',
+    FILED,
+    { origin: Number.NaN, startedAt: START, bound: CAP },
+    null,
+  ],
+]
+
+for (const [label, at, s, expected] of originCases) {
+  const got = matchOffset(at, s)
+  check(`matchOffset: ${label} -> ${expected}`, got === expected, got)
+}
+
+/*
+ * THE SIGN IS ALWAYS PRINTED, on both sides, and it is the only thing telling a
+ * reader which way a row points. Asserted as a shape rather than only as
+ * strings so that a format change has to come here and say so.
+ */
+check(
+  'matchOffset: every offset before the report carries a leading minus',
+  matchOffset(FILED - 30_000, span)?.startsWith('-') === true,
+  matchOffset(FILED - 30_000, span),
+)
+check(
+  'matchOffset: every offset after it carries a leading plus',
+  matchOffset(FILED + 30_000, span)?.startsWith('+') === true,
+  matchOffset(FILED + 30_000, span),
+)
+check(
+  'matchOffset: zero is a plus, not a minus and not bare',
+  matchOffset(FILED, span) === '+0:00',
+  matchOffset(FILED, span),
+)
 
 // ---------------------------------------------------------------------------
 // 8. THE GREP. Which files are allowed to make the claim at all.
@@ -649,6 +752,23 @@ console.log(
 console.log(
   `  progress states   ${(['none', 'ended', 'running', 'unreported', 'unknown'] as const)
     .map((s) => `${s}=${MATCH_PROGRESS_LABEL[s] ?? '(no chip)'}`)
+    .join('  ')}`,
+)
+/*
+ * THE RULER, PRINTED. A match that started four minutes before the report, read
+ * left to right: the start, a kill before it, the report, a kill after it, the
+ * end. If the origin ever slides back to the match start this line goes all
+ * plus and says so out loud.
+ */
+console.log(
+  `  offsets           ${[
+    ['match start', START],
+    ['a kill', FILED - 90_000],
+    ['REPORT', FILED],
+    ['a kill', FILED + 45_000],
+    ['match end', CAP],
+  ]
+    .map(([label, at]) => `${String(label)}=${matchOffset(at as number, span) ?? '—'}`)
     .join('  ')}`,
 )
 console.log(`  event shape       ${JSON.stringify(EVENTS_ARE_ASSIGNABLE)}`)
