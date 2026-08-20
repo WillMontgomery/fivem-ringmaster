@@ -115,6 +115,8 @@ export interface ConsoleTimelineEvent {
 
 /** The match attributes on an incident row. Every one of them optional. */
 export interface MatchFields {
+  /** The game's match number. See {@link matchRecordFor} for why it is not a key. */
+  matchId?: number | null
   matchStartedAt?: number | null
   matchEndedAt?: number | null
   matchEndsBy?: number | null
@@ -334,6 +336,75 @@ export function killDiscrepancy(m: MatchFields): { shown: number; seen: number }
   const seen = num(m.matchKillsSeen)
   if (seen === null) return null
   return { shown: (m.matchTimeline ?? []).filter(isKill).length, seen }
+}
+
+// ---------------------------------------------------------------------------
+// What the subject actually did in that match
+// ---------------------------------------------------------------------------
+
+/**
+ * The two fields the join needs off a match-history row.
+ *
+ * RESTATED STRUCTURALLY, like {@link ConsoleTimelineEvent} above and for the
+ * same reason: `ProfileMatch` lives in `lib/profile` and `GameMatch` in
+ * `lib/gameProfile`, which reaches DynamoDB. This module imports nothing, and
+ * the generic below hands the caller back its OWN row type rather than this
+ * one, so nothing is narrowed on the way through.
+ */
+export interface MatchRecordRow {
+  matchId: number
+  endedAt: number
+}
+
+/**
+ * The row in this player's history that IS the match this incident was filed
+ * during. Null when there is no such row, which is ordinary.
+ *
+ * ═══ WHY THIS IS NOT `rows.find(r => r.matchId === incident.matchId)` ═══
+ *
+ * THE MATCH NUMBER IS NOT A KEY. It counts up from the game server's boot, so
+ * two restarts apart a player can hold two history rows both numbered 412 — one
+ * from this afternoon, one from March. Matching on it alone puts March's
+ * placement and kills on this afternoon's incident, on a page somebody bans
+ * people from, and nothing about the result would look wrong.
+ *
+ * SO THE MATCH WINDOW BREAKS THE TIE. `matchStartedAt` is on the incident row,
+ * written by the game at filing time; a match cannot have ended before it
+ * started, so any candidate whose `endedAt` precedes it is a different match
+ * wearing the same number. Of what survives, the EARLIEST end is this one —
+ * anything later is a subsequent match that reached the same number again.
+ *
+ * AND WHEN IT CANNOT TELL, IT SAYS NOTHING. Two candidates and no
+ * `matchStartedAt` to place them by is a genuine ambiguity, and a console that
+ * picks one is a console guessing on a moderation page. Null is the honest
+ * answer and the section renders it as an em dash, exactly like no row at all.
+ *
+ * NULL IS NOT "THEY DID NOTHING", and every caller has to keep that straight.
+ * The rows are written when a match ENDS, so a case filed mid-match has none
+ * yet; the history read is bounded, so an old enough incident is past the end
+ * of it; and a report filed in the lobby has no match to look for.
+ */
+export function matchRecordFor<T extends MatchRecordRow>(
+  incident: MatchFields,
+  rows: readonly T[] | null | undefined,
+): T | null {
+  const id = num(incident.matchId)
+  if (id === null) return null
+
+  const start = num(incident.matchStartedAt)
+  const candidates = (rows ?? []).filter((r) => {
+    if (num(r?.matchId) !== id) return false
+    if (start === null) return true
+    const ended = num(r?.endedAt)
+    return ended !== null && ended >= start
+  })
+
+  const [only] = candidates
+  if (only === undefined) return null
+  if (candidates.length === 1) return only
+  if (start === null) return null
+
+  return candidates.reduce((best, r) => (r.endedAt < best.endedAt ? r : best), only)
 }
 
 // ---------------------------------------------------------------------------

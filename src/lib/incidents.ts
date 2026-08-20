@@ -261,6 +261,22 @@ export interface Incident {
    * died before it could say". Without it an unfinished match reads as running
    * forever. `matchProgress` is the one reader.
    */
+  /**
+   * THE GAME'S OWN MATCH NUMBER, and the join key to the player's history.
+   *
+   * WRITTEN SINCE THE MATCH FIELDS EXISTED — `buildIncidentItem` in the
+   * gamemode's br_ddb puts it on the row in the same `PutItem` that files the
+   * case. This console simply never read it, which is why the incident page
+   * could show every kill in a match and not one thing the subject did in it.
+   * `matchRecordFor` in `lib/matchTimeline` is the only reader.
+   *
+   * NOT UNIQUE ACROSS RESTARTS, which is the trap. It counts up from the
+   * server's boot, so a player who has been here across two restarts can hold
+   * two rows numbered 412 — from different days, with different results. The
+   * join therefore never matches on this alone; `matchStartedAt` above is what
+   * separates them, and the case is pinned by `check:timeline`.
+   */
+  matchId?: number | null
   matchStartedAt?: number | null
   /** Null until the match-end write lands. Absent is not the same as null. */
   matchEndedAt?: number | null

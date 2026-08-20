@@ -6,6 +6,7 @@ import { IncidentDetail } from '@/components/IncidentDetail'
 import { PageLoading } from '@/components/PageLoading'
 import { probe } from '@/lib/artifactStore'
 import { activeBanFor } from '@/lib/bans'
+import { gameMatchesFor } from '@/lib/gameProfile'
 import { can } from '@/lib/grants'
 import {
   CATEGORY_LABEL,
@@ -15,6 +16,7 @@ import {
   queue,
   type Incident,
 } from '@/lib/incidents'
+import { matchRecordFor } from '@/lib/matchTimeline'
 import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
 
@@ -26,6 +28,19 @@ import { liveView } from '@/lib/state'
  * or when it happened, because both of those can be edited and a URL cannot.
  */
 export const dynamic = 'force-dynamic'
+
+/**
+ * How far back through the subject's matches to look for the one this incident
+ * was filed during.
+ *
+ * BOUNDED AND STATED, like every other read in this console. The match-history
+ * query walks the sort key backwards from the newest row, so this is "their last
+ * fifty matches" — comfortably more than the window in which anybody reviews a
+ * pending case, and short of what an incident from last spring would need. Past
+ * it the section renders the same em dash it renders for a match still running,
+ * which is the reason that rendering must never read as "they did nothing".
+ */
+const MATCH_LOOKBACK = 50
 
 export default async function IncidentPage({
   params,
@@ -139,10 +154,30 @@ async function Body({
    * IT CANNOT FAIL THE PAGE. `probe()` swallows and logs; the worst outcome is
    * an empty set, which is a state this page has to render correctly anyway.
    */
-  const [canResolve, activeBan, artifacts] = await Promise.all([
+  /**
+   * AND THE SUBJECT'S MATCH HISTORY JOINS IT, for the same reason as the probe:
+   * it is one more read alongside three that are already in flight, under a
+   * boundary the shell has already streamed past.
+   *
+   * A BOUNDED READ, AND THE CEILING IS REAL. This is the same query the profile
+   * page runs — the most recent `MATCH_LOOKBACK` rows for this license, walked
+   * backwards along the sort key — so an incident older than the subject's last
+   * that many matches finds nothing and the section renders an em dash. That is
+   * the same answer it gives for a match still in progress, which is the common
+   * case, and it is why the empty rendering must never read as "they did
+   * nothing". Narrowing the query to the incident's own match would mean
+   * building a sort-key range out of a zero-padded timestamp whose width this
+   * repo does not write and cannot see; a wrong range would silently find
+   * nothing, which looks exactly like a normal miss.
+   *
+   * IT CANNOT FAIL THE PAGE. `gameMatchesFor` swallows and logs, returning null
+   * — which lands on the same em dash.
+   */
+  const [canResolve, activeBan, artifacts, history] = await Promise.all([
     can(license, 'ban'),
     activeBanFor(incident.subjectLicense),
     probe(incident.incidentId),
+    gameMatchesFor(incident.subjectLicense, MATCH_LOOKBACK),
   ])
 
   const subjectOnline = players.some(
@@ -154,6 +189,14 @@ async function Body({
     <IncidentDetail
       incident={incident}
       artifacts={artifacts}
+      /*
+        THE JOIN IS NOT `find(r => r.matchId === incident.matchId)`. The game's
+        match number counts up from the server's boot, so one player can hold two
+        rows wearing the same number months apart. `matchRecordFor` breaks the
+        tie on the match window this incident recorded, and `check:timeline`
+        pins it.
+      */
+      matchRecord={matchRecordFor(incident, history)}
       canResolve={canResolve}
       subjectOnline={subjectOnline}
       subjectBanned={subjectBanned}

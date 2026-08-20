@@ -13,7 +13,12 @@ import {
   type Incident,
   type IncidentVerdict,
 } from '@/lib/incidents'
-import type { MatchFields, MatchTimelineEntry } from '@/lib/matchTimeline'
+import {
+  matchRecordFor,
+  type MatchFields,
+  type MatchTimelineEntry,
+} from '@/lib/matchTimeline'
+import type { ProfileMatch } from '@/lib/profile'
 import { utcIso } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
@@ -61,10 +66,15 @@ import { cn } from '@/lib/utils'
  *                          when the kick that follows a ban fails. Ban off,
  *                          Kick drawn.
  *
- *   ?scope=    with and without the `ban` scope. Without it the Resolve card
- *              does not render at all, and the page has to still be worth
+ *   ?scope=    with and without the `ban` scope. Without it the resolve buttons
+ *              do not render at all, and the page has to still be worth
  *              reading — an admin who can see a case but not close it is a real
  *              account, not an error state.
+ *
+ *   ?record=   whether the subject's match history contains the match this was
+ *              filed during. `running` and `absent` must render IDENTICALLY —
+ *              see the axis itself for why that is the check rather than a
+ *              redundancy.
  *
  * THE DIALOGS OPEN AND THE REQUESTS FAIL, exactly as on /preview/profile: they
  * post to real endpoints and there is no session behind them. This harness is
@@ -480,7 +490,16 @@ const MATCH_TIMELINE: MatchTimelineEntry[] = [
 /** The last kill is at +9:33, so a `now` inside the match sits after all six. */
 const INSIDE_THE_MATCH = MATCH_START + 10 * MIN
 
+/**
+ * The number the game gave this match, and the join key to the subject's match
+ * history. Every `MatchFields` case below carries it, so the `record` axis has
+ * something to join against; `none` deliberately does not, which is what makes
+ * the match-record panel disappear entirely rather than render empty.
+ */
+const MATCH_ID = 412
+
 const ENDED: MatchFields = {
+  matchId: MATCH_ID,
   matchStartedAt: MATCH_START,
   matchEndedAt: MATCH_START + 11 * MIN,
   matchEndsBy: MATCH_START + MATCH_CAP,
@@ -489,6 +508,7 @@ const ENDED: MatchFields = {
 
 /** No end, and no `match_end` row either — the write never happened. */
 const NO_END: MatchFields = {
+  matchId: MATCH_ID,
   matchStartedAt: MATCH_START,
   matchEndedAt: null,
   matchEndsBy: MATCH_START + MATCH_CAP,
@@ -507,6 +527,101 @@ const MATCH_CASES = {
 } satisfies Record<string, { fields: MatchFields; now: number }>
 
 type MatchKey = keyof typeof MATCH_CASES
+
+/**
+ * ═══ THE MATCH-RECORD AXIS ═══
+ *
+ * "In the incident there should also be a section about what they did that match
+ * - like how many kills they got, what position they got, how much loot they
+ * got, etc." — the owner, playtest.
+ *
+ * WHAT IS NOT ON THIS AXIS, BECAUSE IT IS NOT ANYWHERE: loot. Nothing on either
+ * row records it, so there is no case to preview and no fixture that could
+ * honestly carry one. `IncidentMatchRecord` says what a game-side change would
+ * have to write.
+ *
+ * THREE CASES, AND THE MIDDLE TWO ARE THE POINT:
+ *
+ *   found    the history has the match. The figures.
+ *   running  the history is real and does not have this match yet, because the
+ *            match has not ended — the rows are written at match end. THE
+ *            COMMONEST STATE ON A PENDING CASE, and the one that must not read
+ *            as a player who did nothing.
+ *   absent   no history rows at all, which is also what a failed read looks
+ *            like from here. Must render IDENTICALLY to `running`; flipping
+ *            between the two and seeing nothing change is the check.
+ *
+ * `?match=none` IS THE FOURTH STATE AND IT IS ON THE OTHER AXIS. That fixture
+ * carries no `matchId`, so there is no match to have a record of and the panel
+ * does not render at all — which is a different thing from a match whose record
+ * could not be found, and the two must not look alike.
+ *
+ * THE JOIN IS THE REAL ONE. This harness calls `matchRecordFor` rather than
+ * picking a fixture per case, so `?record=found` is only "found" if the shipped
+ * join actually finds it.
+ */
+const HISTORY_CASES = {
+  found: [
+    {
+      matchId: MATCH_ID,
+      endedAt: MATCH_START + 11 * MIN,
+      mode: 'squad',
+      placement: 3,
+      total: 47,
+      kills: 7,
+      downs: 2,
+      revives: 1,
+      damage: 1642,
+      survivedMs: 11 * MIN - 47_000,
+      xpEarned: 820,
+      voltsEarned: 240,
+      won: false,
+    },
+    /*
+      THE SAME MATCH NUMBER, FIVE MONTHS EARLIER. The game's match number counts
+      up from the server's boot, so this is a shape that really occurs — and it
+      is the one that would put a stranger's afternoon on this case if the join
+      matched on the number alone. It is in the FIRST case rather than in one of
+      its own precisely so the ordinary preview exercises it: if `?record=found`
+      ever shows 0 kills and no placement, the join has taken this row.
+    */
+    {
+      matchId: MATCH_ID,
+      endedAt: MATCH_START - 150 * 24 * HOUR,
+      mode: 'solo',
+      placement: 22,
+      total: 40,
+      kills: 0,
+      downs: 0,
+      revives: 0,
+      damage: 0,
+      survivedMs: 2 * MIN,
+      xpEarned: 30,
+      voltsEarned: 5,
+      won: false,
+    },
+  ],
+  running: [
+    {
+      matchId: MATCH_ID - 1,
+      endedAt: MATCH_START - HOUR,
+      mode: 'squad',
+      placement: 1,
+      total: 44,
+      kills: 4,
+      downs: 1,
+      revives: 3,
+      damage: 980,
+      survivedMs: 18 * MIN,
+      xpEarned: 1400,
+      voltsEarned: 500,
+      won: true,
+    },
+  ],
+  absent: [],
+} satisfies Record<string, ProfileMatch[]>
+
+type HistoryKey = keyof typeof HISTORY_CASES
 
 /**
  * The case as it stood at `now`, with nothing from the future in it.
@@ -723,8 +838,9 @@ async function Preview({
   const scope = pick(sp.scope, SCOPE_CASES, 'resolve' as ScopeKey)
   const artifacts = pick(sp.artifacts, ARTIFACT_CASES, 'full' as ArtifactKey)
   const match = pick(sp.match, MATCH_CASES, 'none' as MatchKey)
+  const record = pick(sp.record, HISTORY_CASES, 'found' as HistoryKey)
 
-  const params = { state, subject, scope, artifacts, match }
+  const params = { state, subject, scope, artifacts, match, record }
 
   /**
    * THE CLOCK IS PART OF THE MATCH CASE, not a constant. Whether a match with
@@ -735,13 +851,25 @@ async function Preview({
    */
   const now = MATCH_CASES[match].now
 
+  const shift = ARTIFACT_AGE_SHIFT[artifacts]
+
   const incident = asOf(
-    shifted(
-      { ...STATE_CASES[state], ...MATCH_CASES[match].fields },
-      ARTIFACT_AGE_SHIFT[artifacts],
-    ),
+    shifted({ ...STATE_CASES[state], ...MATCH_CASES[match].fields }, shift),
     now,
   )
+
+  /**
+   * THE HISTORY MOVES WITH THE CASE, for the same reason `shifted` moves the
+   * match: `aged` pushes everything 200 days back, and history rows left where
+   * they were would be a match that ENDED five months after the incident it was
+   * filed during — a shape no row can have, and one the join would correctly
+   * refuse, making `?artifacts=aged&record=found` silently show an em dash for
+   * the wrong reason.
+   */
+  const history = HISTORY_CASES[record].map((m) => ({
+    ...m,
+    endedAt: m.endedAt + shift,
+  }))
 
   return (
     <AppShell
@@ -782,6 +910,12 @@ async function Preview({
             current={match}
             params={params}
           />
+          <Axis
+            name="record"
+            keys={Object.keys(HISTORY_CASES)}
+            current={record}
+            params={params}
+          />
           {/*
             The two booleans printed as values rather than inferred from which
             buttons happen to be grey. A disabled button and a missing sentence
@@ -803,6 +937,12 @@ async function Preview({
           incident={incident}
           artifacts={ARTIFACT_CASES[artifacts]}
           artifactSrcOverride={PREVIEW_FRAMES}
+          /*
+            THE REAL JOIN, NOT A FIXTURE PER CASE. `?record=found` is only
+            "found" if the shipped `matchRecordFor` finds it — which is what
+            makes the two rows numbered 412 in that fixture worth having.
+          */
+          matchRecord={matchRecordFor(incident, history)}
           canResolve={SCOPE_CASES[scope]}
           subjectOnline={SUBJECT_CASES[subject].online}
           subjectBanned={SUBJECT_CASES[subject].banned}

@@ -58,6 +58,10 @@
  *   `matchOffset` stops bounding by the match     3 cases, sections 7a and 7b
  *   `matchOffset` stops testing the bound         2 cases, sections 7a and 7b
  *   one signed floor instead of sign + magnitude  1 case,  section 7b
+ *   `matchRecordFor` ignores the match window     5 cases, section 7c
+ *   `matchRecordFor` takes the latest end         1 case,  section 7c
+ *   `matchRecordFor` guesses when ambiguous       1 case,  section 7c
+ *   `matchRecordFor` drops the no-matchId return  1 case,  section 7c
  *   the component inlines the red class           1 case,  section 8
  *   a second component reads the issued flag      1 case,  section 8
  *
@@ -65,6 +69,13 @@
  * With `at` no longer compared, "match_start is first" still passed — the tie
  * ranking put it there for the wrong reason. Three other cases caught it. A
  * check that only asserted the ends of the list would have waved it through.
+ *
+ * AND ONE SURVIVED OUTRIGHT UNTIL A CASE WAS WRITTEN FOR IT. Deleting
+ * `matchRecordFor`'s "no matchId, no record" early return failed NOTHING: every
+ * case at the time gave the incident a real match number, so the null-to-null
+ * join it opens up could not arise. The case that closes it is an incident with
+ * no `matchId` against a row whose `matchId` is unreadable — both sides reduce
+ * to null through `num`, and without the early return they compare equal.
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -80,6 +91,7 @@ import {
   killLine,
   matchOffset,
   matchProgress,
+  matchRecordFor,
   mergeTimeline,
   weaponPart,
   weaponTone,
@@ -627,6 +639,128 @@ check(
   'matchOffset: zero is a plus, not a minus and not bare',
   matchOffset(FILED, span) === '+0:00',
   matchOffset(FILED, span),
+)
+
+// ---------------------------------------------------------------------------
+// 7c. WHICH MATCH IN THEIR HISTORY THIS INCIDENT WAS FILED DURING.
+// ---------------------------------------------------------------------------
+
+/*
+ * ═══ THE MATCH NUMBER IS NOT A KEY, AND THAT IS THE WHOLE SECTION ═══
+ *
+ * It counts up from the game server's boot, so two restarts apart one player
+ * holds two rows numbered 412 — one from this afternoon and one from March.
+ * `rows.find(r => r.matchId === id)` puts March's placement and kills on this
+ * afternoon's case, on a page somebody bans people from, and the result looks
+ * entirely plausible. The window on the incident row is what separates them.
+ */
+
+console.log('7c. joining the incident to the subject\'s match history')
+
+interface Row {
+  matchId: number
+  endedAt: number
+  kills: number
+}
+
+const MARCH = START - 150 * 24 * 3_600_000
+
+/** Two matches numbered 412, five months apart. The trap, as data. */
+const twice: Row[] = [
+  { matchId: 412, endedAt: START + 11 * MIN, kills: 7 },
+  { matchId: 412, endedAt: MARCH, kills: 0 },
+  { matchId: 7, endedAt: START - HOURS(2), kills: 3 },
+]
+
+const filed = { matchId: 412, matchStartedAt: START, matchEndsBy: START + 20 * MIN }
+
+check(
+  'matchRecordFor: the row for this match, not the other one wearing its number',
+  matchRecordFor(filed, twice)?.kills === 7,
+  matchRecordFor(filed, twice),
+)
+check(
+  'matchRecordFor: and it is decided by the window, not by list order',
+  matchRecordFor(filed, [...twice].reverse())?.kills === 7,
+  matchRecordFor(filed, [...twice].reverse()),
+)
+check(
+  'matchRecordFor: three matches with one number — the earliest end after the start',
+  matchRecordFor(filed, [
+    { matchId: 412, endedAt: START + 40 * MIN, kills: 99 },
+    { matchId: 412, endedAt: START + 11 * MIN, kills: 7 },
+    { matchId: 412, endedAt: MARCH, kills: 0 },
+  ])?.kills === 7,
+)
+
+check(
+  'matchRecordFor: the ordinary case, one row, one number',
+  matchRecordFor(filed, [{ matchId: 412, endedAt: START + 11 * MIN, kills: 7 }])?.kills === 7,
+)
+check(
+  'matchRecordFor: a lone row that ended BEFORE the match started is not it',
+  matchRecordFor(filed, [{ matchId: 412, endedAt: MARCH, kills: 0 }]) === null,
+)
+check(
+  'matchRecordFor: history that does not contain this match at all',
+  matchRecordFor(filed, [{ matchId: 7, endedAt: START - HOURS(2), kills: 3 }]) === null,
+)
+
+/*
+ * THE THREE ORDINARY WAYS THERE IS NOTHING TO SHOW. None of them is an error and
+ * none of them means the player did nothing: the history row is written when the
+ * match ENDS, the read behind it is bounded, and a report can be filed in the
+ * lobby.
+ */
+check('matchRecordFor: the match is still running, so no row exists yet', matchRecordFor(filed, []) === null)
+check('matchRecordFor: the history read failed', matchRecordFor(filed, null) === null)
+check('matchRecordFor: no history attribute at all', matchRecordFor(filed, undefined) === null)
+check(
+  'matchRecordFor: an incident with no matchId — filed in the lobby, or before the field',
+  matchRecordFor({ matchStartedAt: START }, twice) === null,
+)
+check(
+  'matchRecordFor: a null matchId is the same as an absent one',
+  matchRecordFor({ matchId: null, matchStartedAt: START }, twice) === null,
+)
+
+/*
+ * AMBIGUITY IS ANSWERED WITH NOTHING, NOT WITH A GUESS. A row that carries a
+ * match number and no start cannot place two candidates, and picking one on a
+ * moderation page is the failure this whole function exists to avoid.
+ */
+check(
+  'matchRecordFor: matchId with no start, and one candidate — take it',
+  matchRecordFor({ matchId: 7 }, twice)?.kills === 3,
+  matchRecordFor({ matchId: 7 }, twice),
+)
+check(
+  'matchRecordFor: matchId with no start, and two candidates — say nothing',
+  matchRecordFor({ matchId: 412 }, twice) === null,
+  matchRecordFor({ matchId: 412 }, twice),
+)
+
+/* Rubbish on either side costs the section, never the render. */
+check(
+  'matchRecordFor: a row with an unusable endedAt is not the answer',
+  matchRecordFor(filed, [{ matchId: 412, endedAt: Number.NaN, kills: 1 }]) === null,
+)
+check(
+  'matchRecordFor: a row with an unusable matchId matches nothing',
+  matchRecordFor(filed, [{ matchId: Number.NaN, endedAt: START + MIN, kills: 1 }]) === null,
+)
+/*
+ * THE TWO UNREADABLE NUMBERS ARE NOT THE SAME NUMBER. Both sides reduce to null
+ * through `num`, and an equality test written after the early return — rather
+ * than instead of it — quietly joins "this incident names no match" to "this row
+ * names no match" and puts a stranger's result on the case. Found by mutation:
+ * removing the early return failed nothing until this case existed.
+ */
+check(
+  'matchRecordFor: no matchId does not join to a row whose matchId is unreadable',
+  matchRecordFor({ matchStartedAt: START }, [
+    { matchId: Number.NaN, endedAt: START + MIN, kills: 5 },
+  ]) === null,
 )
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { BanDialog, MIN_REASON } from '@/components/BanDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { IncidentArtifacts } from '@/components/IncidentArtifacts'
+import { IncidentMatchRecord } from '@/components/IncidentMatchRecord'
 import { IncidentTimeline } from '@/components/IncidentTimeline'
 import { KickDialog } from '@/components/KickDialog'
 import { LocalTime } from '@/components/LocalTime'
@@ -27,6 +28,7 @@ import type {
   IncidentKind,
   VerdictAction,
 } from '@/lib/incidents'
+import type { ProfileMatch } from '@/lib/profile'
 import { cn } from '@/lib/utils'
 
 /**
@@ -38,6 +40,7 @@ import { cn } from '@/lib/utils'
  *                resolve buttons, right-aligned in the same row
  *   timeline     "Directly under the 'player report' section should be the
  *                timeline section"
+ *   match record what the subject did in that match — only when there was one
  *   verdict      only once it is closed
  *   artifacts    last. It was second.
  *
@@ -98,6 +101,7 @@ export function IncidentDetail({
   incident,
   artifacts,
   artifactSrcOverride,
+  matchRecord,
   canResolve,
   subjectOnline,
   subjectBanned,
@@ -121,6 +125,19 @@ export function IncidentDetail({
    * `/preview/incident` is its only caller; nothing real passes it.
    */
   artifactSrcOverride?: Record<number, string>
+  /**
+   * What the subject did in the match this was filed during, or null.
+   *
+   * JOINED ON THE SERVER, like everything else on this page that needs a second
+   * table. The page reads the subject's match history and `matchRecordFor`
+   * picks the row — which is not `find(r => r.matchId === …)`, because the
+   * game's match number restarts with the server. See `lib/matchTimeline`.
+   *
+   * NULL IS ORDINARY AND IS NOT "THEY DID NOTHING". The row is written when the
+   * match ends, the read behind it is bounded, and it can simply fail. All
+   * three render as an em dash; see `IncidentMatchRecord`.
+   */
+  matchRecord: ProfileMatch | null
   canResolve: boolean
   /**
    * On the server right now. Decides whether Kick is even offered — the console
@@ -397,6 +414,26 @@ export function IncidentDetail({
         pictures of.
       */}
       <IncidentTimeline incident={incident} now={now} />
+
+      {/*
+        WHAT THE SUBJECT DID IN THAT MATCH (owner, playtest: "In the incident
+        there should also be a section about what they did that match - like how
+        many kills they got, what position they got, how much loot they got,
+        etc."). Under the timeline, because it is the same match seen the other
+        way round: the timeline is what happened, this is how it came out.
+
+        LOOT IS NOT IN IT AND CANNOT BE — nothing on either row records it. See
+        `IncidentMatchRecord`, which says what a game-side change would have to
+        write.
+
+        `matchId` DECIDES WHETHER THE PANEL EXISTS AT ALL, and that is the one
+        distinction this line is carrying. No matchId means there was no match —
+        a report filed in the lobby, or any case filed before the game recorded
+        this — and a panel about a match that did not happen is furniture. A
+        matchId with no history row is a DIFFERENT state, it is ordinary, and it
+        renders inside the panel as an em dash rather than by deleting it.
+      */}
+      {incident.matchId != null && <IncidentMatchRecord record={matchRecord} />}
 
       {!pending && (
         <Card className="surface-edge gap-0 px-5 py-4">
