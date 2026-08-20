@@ -81,11 +81,12 @@ A header row, a body, a footer. **A card is a layout, not an emphasis level.** A
 single sentence does not get promoted to a 256px card for being important. It
 gets moved there for having parts.
 
-**There are three sites, in two files** — `Provenance.tsx`, and two in
-`ProfileView.tsx`. A grep for `<HoverCard` returns exactly those.
+**There are four sites, in three files** — `Provenance.tsx`, two in
+`ProfileView.tsx`, and one in `IncidentTimeline.tsx`. A grep for `<HoverCard`
+returns exactly those.
 
-Two are gone and one is new since this list was last written, so the count has
-been three throughout and the membership has not:
+Two are gone and two are new since this list was last written, so the count has
+moved from three to four and the membership has not otherwise:
 
 - **`FeedStatus`** held the first card in the app, and the component was deleted
   when the owner asked for the live/falling-behind/feed-lost chips to be hidden;
@@ -143,7 +144,24 @@ been three throughout and the membership has not:
   watched them change *into*, so there is no first sighting to point at. Do not
   fill that gap with a sentence, and do not borrow the other one — ask.
 
-**Do not add a fourth chip-shaped card without a visible affordance.** A chip
+- **The unauthorized weapon on the incident timeline** is the newest, and the
+  only one whose trigger is a word in the middle of a sentence rather than a
+  chip. It has real parts — a heading naming what was found, then what that
+  means about the player — which is rule 5 satisfied rather than bent, and the
+  content was asked for by name in the issue that built it (#30). It follows the
+  ban chip on both counts that matter here: the sentence exists twice, once in
+  the popup and once `sr-only` inside the trigger, and it advertises itself with
+  a dotted underline as well as the red, because `cursor-help` alone pays out
+  only after the pointer is already on the word.
+
+  **The red is the fact and the card is the elaboration**, which is the test a
+  fourth card had to pass. A reader who never hovers still sees that the console
+  flagged the weapon; what the popup adds is why. The claim itself — the game
+  does not issue this weapon — is `weaponIssued === false` and nothing else, and
+  `check:timeline` exists because absent and `false` rendering alike would put
+  that card on every kill filed before the field existed.
+
+**Do not add another chip-shaped card without a visible affordance.** A chip
 that hides its own explanation until somebody happens to point at it is the
 complaint that produced `IdLabel` in the first place.
 
@@ -252,6 +270,12 @@ two-sentence paragraphs in a single-line pill.
   timestamp sits mid-line with the author after it, and the stacked UTC is a
   block box that splits the inline flow and drops the author onto its own line.
   Enabling `utc` there needs that line restructured first.
+
+  **It moved to `IncidentTimeline.tsx` with #30 and the constraint did not
+  change.** That line is now `<LocalTime /> · {byName} · +4:00`, which is the
+  same inline run with one more item in it, so the block box would still break
+  it. Worth writing down only because "the timeline was rebuilt" reads like the
+  restructure this was waiting for, and it was not.
 
 - **Touch is still unfixed** for every site that remains a hover affordance. Only
   the inline conversions improved anything on a phone; this work should not be

@@ -72,7 +72,12 @@ export default async function IncidentPage({
       }}
     >
       <Suspense fallback={<PageLoading />}>
-        <Body incident={incident} license={admin.license} players={view.players} />
+        <Body
+          incident={incident}
+          license={admin.license}
+          players={view.players}
+          now={now}
+        />
       </Suspense>
     </AppShell>
   )
@@ -82,11 +87,22 @@ async function Body({
   incident,
   license,
   players,
+  now,
 }: {
   incident: Incident
   license: string | null
   /** The live roster, narrowed to the one field the online check reads. */
   players: { license: string | null }[]
+  /**
+   * THE SAME `now` THE SHELL WAS DRAWN WITH, not a second reading.
+   *
+   * The timeline uses it to decide whether a match with no recorded end is
+   * still inside its deadline. Taking a fresh `Date.now()` here would be a
+   * different instant from the one already in the tree, and the whole reason
+   * this is threaded through props rather than read in the browser is that the
+   * answer must not change between the server render and hydration.
+   */
+  now: number
 }) {
   /**
    * WHICH VERDICTS ARE EVEN POSSIBLE, decided here rather than in the browser.
@@ -141,6 +157,7 @@ async function Body({
       canResolve={canResolve}
       subjectOnline={subjectOnline}
       subjectBanned={subjectBanned}
+      now={now}
       categoryLabel={CATEGORY_LABEL}
       kindLabel={KIND_LABEL}
       verdictLabel={VERDICT_LABEL}

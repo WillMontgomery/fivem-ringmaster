@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { BanDialog, MIN_REASON } from '@/components/BanDialog'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { IncidentArtifacts } from '@/components/IncidentArtifacts'
+import { IncidentTimeline } from '@/components/IncidentTimeline'
 import { KickDialog } from '@/components/KickDialog'
 import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
@@ -80,6 +81,7 @@ export function IncidentDetail({
   canResolve,
   subjectOnline,
   subjectBanned,
+  now,
   categoryLabel,
   kindLabel,
   verdictLabel,
@@ -111,6 +113,16 @@ export function IncidentDetail({
    * server — the one place that decides what banned means.
    */
   subjectBanned: boolean
+  /**
+   * The server's clock, read once on the page above and handed down.
+   *
+   * ONE FACT DEPENDS ON IT: whether a match with no recorded end is still
+   * inside its deadline or has blown past it. Reading `Date.now()` inside a
+   * client component that also renders on the server answers that differently
+   * in the two places, which React 19 repairs by discarding the tree — the same
+   * hydration trap `LocalTime` was rebuilt to escape.
+   */
+  now: number
   categoryLabel: Record<IncidentCategory, string>
   kindLabel: Record<IncidentKind, string>
   verdictLabel: Record<VerdictAction, string>
@@ -283,35 +295,15 @@ export function IncidentDetail({
         srcOverride={artifactSrcOverride}
       />
 
-      <Card className="surface-edge gap-0 overflow-hidden py-0">
-        <header className="border-b border-border bg-card/60 px-4 py-2.5 text-sm">
-          Timeline
-        </header>
-        <div className="p-4">
-          <ul>
-            {incident.events.map((e, i) => (
-              <li
-                key={`${e.at}-${i}`}
-                className="border-t border-border/60 py-2.5 first:border-t-0 first:pt-0"
-              >
-                <div className="text-sm">
-                  <span className="font-medium">
-                    {e.kind === 'opened'
-                      ? 'Opened'
-                      : e.kind === 'resolved'
-                        ? 'Resolved'
-                        : 'Note'}
-                  </span>
-                  {e.text ? <span className="text-muted-foreground"> — {e.text}</span> : null}
-                </div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  <LocalTime ms={e.at} /> · {e.byName}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </Card>
+      {/*
+        THE TIMELINE MOVED OUT OF THIS FILE (#30) and grew a second writer. It
+        was the console's own `events` in a bare `<ul>`; it is now those merged
+        with the match the game recorded around this incident — the brackets,
+        every kill inside them, and whether the match ever reported an end. Two
+        attributes, two writers, one list, sorted here because DynamoDB's
+        `list_append` does not order. See `IncidentTimeline`.
+      */}
+      <IncidentTimeline incident={incident} now={now} />
 
       {pending && canResolve && (
         <Card className="surface-edge gap-0 px-5 py-4">

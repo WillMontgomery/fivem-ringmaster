@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import * as audit from './audit'
 import { ddb, tables } from './dynamo'
+import type { MatchTimelineEntry } from './matchTimeline'
 
 /**
  * Incidents — open questions about a player that a human has to close.
@@ -237,6 +238,42 @@ export interface Incident {
    * still in flight.
    */
   closedByBan?: ClosedByBan | null
+
+  /**
+   * ═══ THE MATCH THIS WAS FILED DURING, WRITTEN BY THE GAME ═══
+   *
+   * The gamemode (`dev` @ 11c969b) records the match around an incident onto
+   * the same row, in the same `PutItem` that files it. Everything below is
+   * OPTIONAL AND ALWAYS WILL BE: every incident filed before 2026-08-20 has
+   * none of it, and a report filed in the lobby has no match to describe.
+   *
+   * THE CONSOLE NEVER WRITES ANY OF IT, and the game never writes `events`.
+   * Two attributes, two writers, no overlap — which is what lets the game's
+   * grant stay a conditional `PutItem` that cannot reach inside an existing
+   * case. They are merged for display only; see `lib/matchTimeline`.
+   *
+   * EVERY TIME HERE IS ABSOLUTE MILLISECONDS. Nothing stored is relative, and
+   * offsets are computed at render time.
+   *
+   * `matchEndsBy` IS THE FIELD THAT MAKES AN ABSENT END READABLE. It is written
+   * at filing time, while the game is still alive to write it, so a match with
+   * no `matchEndedAt` can be told apart into "still running" and "the server
+   * died before it could say". Without it an unfinished match reads as running
+   * forever. `matchProgress` is the one reader.
+   */
+  matchStartedAt?: number | null
+  /** Null until the match-end write lands. Absent is not the same as null. */
+  matchEndedAt?: number | null
+  matchEndsBy?: number | null
+  /**
+   * Appended with `list_append`, WHICH DOES NOT ORDER. Never render in stored
+   * order — `mergeTimeline` sorts, and it is the only thing that may.
+   */
+  matchTimeline?: MatchTimelineEntry[] | null
+  /** False when the ring buffer dropped kills. Absent means it did not. */
+  matchTimelineComplete?: boolean
+  /** How many kills really happened, when the list holds fewer. */
+  matchKillsSeen?: number
 
   /**
    * ═══ THERE IS NO ARTIFACT FIELD ON THIS ROW, AND THAT IS DELIBERATE ═══

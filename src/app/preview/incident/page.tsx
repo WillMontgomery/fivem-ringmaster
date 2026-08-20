@@ -13,6 +13,8 @@ import {
   type Incident,
   type IncidentVerdict,
 } from '@/lib/incidents'
+import type { MatchFields, MatchTimelineEntry } from '@/lib/matchTimeline'
+import { utcIso } from '@/lib/time'
 import { cn } from '@/lib/utils'
 
 /**
@@ -86,6 +88,11 @@ const BASE = Date.UTC(2026, 7, 15, 20, 0, 0)
 const SUBJECT = 'license:preview000000000000000000000000000'
 const REPORTER = 'license:preview111111111111111111111111111'
 const ADMIN = 'license:previewadmin00000000000000000000000'
+
+/** Three more bodies for the match timeline to be about. */
+const REBEL = 'license:preview222222222222222222222222222'
+const HALEY = 'license:preview333333333333333333333333333'
+const VEX = 'license:preview444444444444444444444444444'
 
 /**
  * A player report with a named filer, which is the case that matters most here.
@@ -303,6 +310,235 @@ const SCOPE_CASES = { resolve: true, readonly: false } satisfies Record<
 type ScopeKey = keyof typeof SCOPE_CASES
 
 /**
+ * ═══ THE MATCH AXIS (#30) ═══
+ *
+ * The gamemode now writes the match an incident was filed during onto the same
+ * row: the brackets, every kill inside them, and a deadline that makes an
+ * absent end readable. NONE of it can be produced on a console. Reaching one of
+ * these states for real needs a live FiveM server, a match in a particular
+ * phase, a player who has actually been reported, and — for two of them — the
+ * server to CRASH at the right moment. So this axis is the only place any of it
+ * can be looked at.
+ *
+ * WHY THESE FIVE:
+ *
+ *   none        no match attributes at all. THE DEFAULT, because it is what
+ *               every incident in the table looks like today and what a report
+ *               filed in the lobby will always look like. The page must read
+ *               exactly as it did before this feature existed.
+ *   ended       the whole thing: start, six kills, end. The ordinary case.
+ *   running     no end yet and the deadline has not passed. The `now` for this
+ *               case sits INSIDE the match, which is the only way to see it.
+ *   unreported  no end and the deadline is hours gone. The server died holding
+ *               the write. This is the case that must not read as "running".
+ *   dropped     `ended`, plus the buffer overflowed: six kills stored, 47
+ *               counted.
+ *
+ * `running` AND `unreported` ARE THE PAIR TO FLIP BETWEEN. They differ only in
+ * the deadline and the clock — the stored timeline is identical, neither has a
+ * `matchEndedAt`, and reading one as the other is the exact mistake
+ * `matchEndsBy` exists to make impossible.
+ *
+ * THE KILLS ARE CHOSEN TO COVER EVERY BRANCH OF THE SENTENCE, and three of them
+ * are about `weaponIssued` specifically, because the cost of getting that
+ * comparison wrong is telling an admin a player cheated when they fell off a
+ * cliff.
+ */
+const FILED = BASE - 3 * HOUR
+const MATCH_START = FILED - 4 * 60_000
+const MATCH_CAP = 20 * 60_000
+const MIN = 60_000
+
+const MATCH_TIMELINE: MatchTimelineEntry[] = [
+  /*
+    OUT OF ORDER ON PURPOSE, AND THE MOST IMPORTANT LINE IN THIS FILE.
+    DynamoDB's `list_append` does not order, so the stored list genuinely
+    arrives shuffled — and a console that renders it in stored order looks
+    correct on every fixture somebody wrote in sequence. `match_start` is last
+    here and `match_end` is in the middle; if the page shows them anywhere but
+    the two ends, `mergeTimeline` is not being called.
+  */
+
+  /* An ordinary kill with an issued weapon. `a Marksman Rifle`. */
+  {
+    at: MATCH_START + 62_000,
+    kind: 'kill',
+    killerLicense: REBEL,
+    killerName: 'Rebel',
+    victimLicense: HALEY,
+    victimName: 'Haley',
+    weapon: 'WEAPON_MARKSMANRIFLE',
+    weaponLabel: 'Marksman Rifle',
+    weaponIssued: true,
+    cause: 'gunshot',
+    headshot: false,
+  },
+
+  /* The article's other branch, and the headshot chip. `an Assault Rifle`. */
+  {
+    at: MATCH_START + 167_000,
+    kind: 'kill',
+    killerLicense: HALEY,
+    killerName: 'Haley',
+    victimLicense: VEX,
+    victimName: 'Vex',
+    weapon: 'WEAPON_ASSAULTRIFLE',
+    weaponLabel: 'Assault Rifle',
+    weaponIssued: true,
+    cause: 'gunshot',
+    headshot: true,
+  },
+
+  { at: MATCH_START + 11 * MIN, kind: 'match_end' },
+
+  /*
+    ═══ THE RED ONE ═══ `weaponIssued: false` — the gamemode does not issue a
+    railgun and does not recognise this at all. The weapon text turns red and
+    carries the hover card. It is the ONLY entry here that may.
+  */
+  {
+    at: MATCH_START + 310_000,
+    kind: 'kill',
+    killerLicense: REBEL,
+    killerName: 'Rebel',
+    victimLicense: VEX,
+    victimName: 'Vex',
+    weapon: 'WEAPON_RAILGUN',
+    weaponLabel: 'Railgun',
+    weaponIssued: false,
+    cause: 'explosion',
+    headshot: false,
+  },
+
+  /*
+    ═══ THE FALSE POSITIVE THIS FEATURE COULD HAVE SHIPPED ═══ An environmental
+    death. `weaponIssued` is ABSENT because there is no weapon claim to make,
+    and the killer is the victim because that is how the engine reports it. It
+    must render as a name and a cause, in ordinary ink. A red "Preview Player
+    killed Preview Player with a Fall" would be this console accusing somebody
+    of cheating for falling off a roof.
+  */
+  {
+    at: MATCH_START + 453_000,
+    kind: 'kill',
+    killerLicense: SUBJECT,
+    killerName: 'Preview Player',
+    victimLicense: SUBJECT,
+    victimName: 'Preview Player',
+    weapon: 'WEAPON_FALL',
+    cause: 'fall',
+    headshot: false,
+  },
+
+  /*
+    ═══ EVERY ROW FILED BEFORE 2026-08-20 ═══ No `weaponIssued` field at all,
+    because the game did not write one yet. Absent is not false. This must be
+    indistinguishable from the first entry, and `an SMG` is the initialism
+    branch of the article rule while it is here.
+  */
+  {
+    at: MATCH_START + 512_000,
+    kind: 'kill',
+    killerLicense: VEX,
+    killerName: 'Vex',
+    victimLicense: SUBJECT,
+    victimName: 'Preview Player',
+    weapon: 'WEAPON_SMG',
+    weaponLabel: 'SMG',
+    cause: 'gunshot',
+    headshot: false,
+  },
+
+  /*
+    NO `weaponLabel` AND NO KILLER LICENSE — a gamemode build that has not
+    shipped a display name for this weapon, and a kill where the shooter's
+    license did not make it onto the row. The id renders verbatim with no
+    article in front of it, and the name renders as text that links nowhere.
+    Both are degradations the console has to survive, not states to fix here.
+  */
+  {
+    at: MATCH_START + 573_000,
+    kind: 'kill',
+    killerLicense: null,
+    killerName: 'Rebel',
+    victimLicense: HALEY,
+    victimName: 'Haley',
+    weapon: 'WEAPON_STONE_HATCHET',
+    weaponIssued: true,
+    cause: 'melee',
+    headshot: false,
+  },
+
+  { at: MATCH_START, kind: 'match_start' },
+]
+
+/** The last kill is at +9:33, so a `now` inside the match sits after all six. */
+const INSIDE_THE_MATCH = MATCH_START + 10 * MIN
+
+const ENDED: MatchFields = {
+  matchStartedAt: MATCH_START,
+  matchEndedAt: MATCH_START + 11 * MIN,
+  matchEndsBy: MATCH_START + MATCH_CAP,
+  matchTimeline: MATCH_TIMELINE,
+}
+
+/** No end, and no `match_end` row either — the write never happened. */
+const NO_END: MatchFields = {
+  matchStartedAt: MATCH_START,
+  matchEndedAt: null,
+  matchEndsBy: MATCH_START + MATCH_CAP,
+  matchTimeline: MATCH_TIMELINE.filter((e) => e.kind !== 'match_end'),
+}
+
+const MATCH_CASES = {
+  none: { fields: {}, now: BASE + 5 * MIN },
+  ended: { fields: ENDED, now: BASE + 5 * MIN },
+  running: { fields: NO_END, now: INSIDE_THE_MATCH },
+  unreported: { fields: NO_END, now: BASE + 5 * MIN },
+  dropped: {
+    fields: { ...ENDED, matchTimelineComplete: false, matchKillsSeen: 47 },
+    now: BASE + 5 * MIN,
+  },
+} satisfies Record<string, { fields: MatchFields; now: number }>
+
+type MatchKey = keyof typeof MATCH_CASES
+
+/**
+ * The case as it stood at `now`, with nothing from the future in it.
+ *
+ * WHY THIS EXISTS. The `running` case has to be looked at from INSIDE the
+ * match, which puts the clock about three hours before the rest of this
+ * harness. The `pending` fixture's note arrives an hour after filing and the
+ * closed fixtures resolve two hours after that — all of which would then be
+ * events that have not happened yet, rendered above a "still in progress" chip.
+ * A harness showing an impossible row is worse than a harness missing a case.
+ *
+ * SO THE AXES STAY INDEPENDENT AND THE CLOCK WINS. Pick any state you like
+ * alongside a running match; what you get is that case as far as it had got,
+ * which is a real shape. An incident cannot be resolved before it is filed.
+ */
+function asOf(incident: Incident, now: number): Incident {
+  const events = incident.events.filter((e) => e.at <= now)
+  if (events.length === incident.events.length && (incident.resolvedAt ?? 0) <= now) {
+    return incident
+  }
+
+  if ((incident.resolvedAt ?? 0) <= now) return { ...incident, events }
+
+  return {
+    ...incident,
+    events,
+    state: 'pending_review',
+    resolvedAt: null,
+    resolvedByLicense: null,
+    resolvedByName: null,
+    resolution: null,
+    verdict: null,
+    closedByBan: null,
+  }
+}
+
+/**
  * ═══ THE ARTIFACT AXIS ═══
  *
  * NO REAL ARTIFACT HAS EVER EXISTED. The bucket was created on 2026-08-20 and
@@ -375,11 +611,27 @@ const ARTIFACT_AGE_SHIFT: Record<ArtifactKey, number> = {
  */
 function shifted(incident: Incident, by: number): Incident {
   if (by === 0) return incident
+  const move = (v: number | null | undefined) =>
+    typeof v === 'number' ? v + by : v
+
   return {
     ...incident,
     openedAt: incident.openedAt + by,
     events: incident.events.map((e) => ({ ...e, at: e.at + by })),
     resolvedAt: incident.resolvedAt ? incident.resolvedAt + by : incident.resolvedAt,
+    /*
+      THE MATCH MOVES WITH IT, for the same reason the events do. `aged` pushes
+      a case 200 days back to put it past the artifact bucket's expiry; leaving
+      the match where it was would produce an incident opened last spring whose
+      match ran this afternoon — a shape no row can have, which is exactly what
+      this function exists to prevent.
+    */
+    matchStartedAt: move(incident.matchStartedAt),
+    matchEndedAt: move(incident.matchEndedAt),
+    matchEndsBy: move(incident.matchEndsBy),
+    matchTimeline: incident.matchTimeline
+      ? incident.matchTimeline.map((e) => ({ ...e, at: e.at + by }))
+      : incident.matchTimeline,
   }
 }
 
@@ -465,9 +717,26 @@ async function Preview({
   const subject = pick(sp.subject, SUBJECT_CASES, 'here' as SubjectKey)
   const scope = pick(sp.scope, SCOPE_CASES, 'resolve' as ScopeKey)
   const artifacts = pick(sp.artifacts, ARTIFACT_CASES, 'full' as ArtifactKey)
+  const match = pick(sp.match, MATCH_CASES, 'none' as MatchKey)
 
-  const params = { state, subject, scope, artifacts }
-  const now = BASE + 5 * 60_000
+  const params = { state, subject, scope, artifacts, match }
+
+  /**
+   * THE CLOCK IS PART OF THE MATCH CASE, not a constant. Whether a match with
+   * no recorded end reads as running or as never-reported is decided by `now`
+   * against `matchEndsBy`, so a fixed clock could only ever show one of the
+   * two. It is printed below with the other props for the same reason those
+   * are: a state you cannot see the input to is a state you are guessing at.
+   */
+  const now = MATCH_CASES[match].now
+
+  const incident = asOf(
+    shifted(
+      { ...STATE_CASES[state], ...MATCH_CASES[match].fields },
+      ARTIFACT_AGE_SHIFT[artifacts],
+    ),
+    now,
+  )
 
   return (
     <AppShell
@@ -502,6 +771,12 @@ async function Preview({
             current={artifacts}
             params={params}
           />
+          <Axis
+            name="match"
+            keys={Object.keys(MATCH_CASES)}
+            current={match}
+            params={params}
+          />
           {/*
             The two booleans printed as values rather than inferred from which
             buttons happen to be grey. A disabled button and a missing sentence
@@ -514,18 +789,19 @@ async function Preview({
             <span className="font-mono">
               subjectOnline={String(SUBJECT_CASES[subject].online)} ·
               subjectBanned={String(SUBJECT_CASES[subject].banned)} · canResolve=
-              {String(SCOPE_CASES[scope])}
+              {String(SCOPE_CASES[scope])} · now={utcIso(now)}
             </span>
           </p>
         </nav>
 
         <IncidentDetail
-          incident={shifted(STATE_CASES[state], ARTIFACT_AGE_SHIFT[artifacts])}
+          incident={incident}
           artifacts={ARTIFACT_CASES[artifacts]}
           artifactSrcOverride={PREVIEW_FRAMES}
           canResolve={SCOPE_CASES[scope]}
           subjectOnline={SUBJECT_CASES[subject].online}
           subjectBanned={SUBJECT_CASES[subject].banned}
+          now={now}
           categoryLabel={CATEGORY_LABEL}
           kindLabel={KIND_LABEL}
           verdictLabel={VERDICT_LABEL}
