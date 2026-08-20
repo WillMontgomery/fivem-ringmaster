@@ -219,6 +219,59 @@ export function sessionCookieName(secure: boolean): string {
   return secure ? '__Secure-authjs.session-token' : 'authjs.session-token'
 }
 
+/**
+ * Whether cookies are issued `Secure`, from the configured origin's protocol.
+ *
+ * `config.useSecureCookies ?? url.protocol === 'https:'` is what `@auth/core`'s
+ * init does, and this reproduces it so that the redeem route, `src/auth.ts` and
+ * the keepalive route cannot each decide it differently. It lived privately in
+ * the redeem route until the cookie below started depending on it.
+ *
+ * UNPARSEABLE FALLS BACK TO `true`, which fails towards a cookie the browser
+ * refuses rather than one it accepts over plain HTTP.
+ */
+export function secureCookies(authUrl: string): boolean {
+  try {
+    return new URL(authUrl).protocol === 'https:'
+  } catch {
+    return true
+  }
+}
+
+/**
+ * `SameSite` for every cookie this console's session depends on — #23.
+ *
+ * ============================================================================
+ * `None` IS WHAT MAKES THE PAUSE-MENU CONSOLE WORK AND IT IS A REAL WIDENING.
+ * A console framed by NUI is a third-party context, and a `Lax` cookie is not
+ * sent on cross-site subresource requests — so the framed console arrives
+ * signed out no matter how many times it redeems a token. `None` fixes that and
+ * simultaneously hands every page on the internet a credentialed POST into a
+ * console that bans players and restarts game servers.
+ *
+ * THAT IS ONLY ACCEPTABLE BECAUSE `src/middleware.ts` REFUSES CROSS-ORIGIN
+ * WRITES. `SameSite=Lax` was the entire CSRF defence in this application before
+ * #23; the `Origin` check is what replaced it, it shipped first, and it is not
+ * optional. If that check is ever removed, this must go back to `Lax` in the
+ * same commit.
+ * ============================================================================
+ *
+ * IT IS DERIVED FROM `secure`, NOT CHOSEN BESIDE IT, and that is the whole
+ * point of it being one function. `SameSite=None` without `Secure` is a cookie
+ * every modern browser DROPS SILENTLY — no console warning the operator will
+ * see, no error, just a console that cannot stay signed in. Making the two
+ * impossible to set independently means that state cannot be reached by
+ * editing one line and forgetting the other.
+ *
+ * SO A DEV MACHINE STAYS `Lax`. `http://localhost:3000` gets `secure: false`
+ * and therefore `Lax`, which is both the only thing that works there and the
+ * posture the console has always had locally. The framed flow is an HTTPS
+ * deployment's feature; it was never going to work over plain HTTP anyway.
+ */
+export function sessionSameSite(secure: boolean): 'none' | 'lax' {
+  return secure ? 'none' : 'lax'
+}
+
 /** The record, exactly as it sits in DynamoDB. */
 export interface HandoffRecord {
   discordId: string

@@ -4,6 +4,7 @@ import { DynamoDBAdapter } from '@auth/dynamodb-adapter'
 
 import { ddb, tables } from './lib/dynamo'
 import { env } from './lib/env'
+import { secureCookies, sessionCookieName, sessionSameSite } from './lib/handoff'
 
 /**
  * Authentication.
@@ -33,6 +34,42 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
   adapter: DynamoDBAdapter(ddb, { tableName: tables.sessions }),
 
   session: { strategy: 'database' },
+
+  /**
+   * THE SESSION COOKIE, SPELLED OUT BECAUSE #23 NEEDS `SameSite=None`.
+   *
+   * THIS IS THE ONE AUTH.JS ISSUES — the cookie a normal Discord login gets,
+   * and the one `auth()` reads on every request. `/api/handoff/redeem` writes
+   * the same cookie by hand for the pause-menu flow (it creates the session row
+   * through the adapter rather than through a provider), so the two must agree
+   * exactly or a redeem produces a console that is silently signed out. Both
+   * now build it from the same three functions in `lib/handoff.ts`, which is
+   * where the reasoning for `None` lives and where `origin.check.ts` asserts it.
+   *
+   * ONLY `sessionToken` IS OVERRIDDEN. Auth.js's `csrfToken`, `callbackUrl` and
+   * `pkceCodeVerifier` cookies keep their defaults on purpose: they exist for
+   * the duration of a top-level, same-site OAuth round trip, which is not a
+   * third-party context and does not want `None`. The framed flow never touches
+   * them — it is a handoff token, not an OAuth redirect — so widening them would
+   * be exposure bought for nothing.
+   *
+   * SPECIFYING `cookies` MEANS SPECIFYING THE NAME TOO, and getting it wrong is
+   * the failure with no error in it: `auth()` would look for a cookie nothing
+   * writes and every request would read as signed out. `sessionCookieName()`
+   * reproduces Auth.js's own `__Secure-` prefixing rule, and `handoff.check.ts`
+   * already pins both spellings against what `src/middleware.ts` sniffs for.
+   */
+  cookies: {
+    sessionToken: {
+      name: sessionCookieName(secureCookies(env().AUTH_URL)),
+      options: {
+        httpOnly: true,
+        sameSite: sessionSameSite(secureCookies(env().AUTH_URL)),
+        path: '/',
+        secure: secureCookies(env().AUTH_URL),
+      },
+    },
+  },
 
   providers: [
     Discord({

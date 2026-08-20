@@ -8,7 +8,9 @@ import {
   HANDOFF_LANDING,
   HANDOFF_REFUSED,
   redeem,
+  secureCookies,
   sessionCookieName,
+  sessionSameSite,
 } from '@/lib/handoff'
 
 /**
@@ -48,28 +50,6 @@ export const dynamic = 'force-dynamic'
 
 /** Auth.js's default database-session lifetime — @auth/core/lib/init.js. */
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
-
-/**
- * THE FLAGS MUST MATCH `defaultCookies()` EXACTLY, or this route issues a
- * cookie that `auth()` does not read and the redeem silently produces a
- * signed-out console. The names live in `lib/handoff.ts` so the checks can
- * assert them against the pair `src/middleware.ts` sniffs for.
- *
- * `SameSite=Lax` IS THE APP-WIDE POSTURE AND IS THE ONE THING THAT STOPS THIS
- * WORKING INSIDE A NUI IFRAME. A framed console is a third-party context, and a
- * Lax cookie is not sent on cross-site subresource requests — so the redirect
- * below would arrive at the landing page with no session and bounce to /login.
- * Changing it to `None; Secure` is what makes the framed flow work and is a
- * real widening of CSRF exposure on a console that restarts game servers. It is
- * the owner's call, it is not made here, and it is not made behind a flag.
- */
-function useSecureCookies(): boolean {
-  try {
-    return new URL(env().AUTH_URL).protocol === 'https:'
-  } catch {
-    return true
-  }
-}
 
 /**
  * The login page, and nothing else on any failure path.
@@ -161,12 +141,31 @@ export async function GET(req: Request): Promise<Response> {
 
     await adapter.createSession({ sessionToken, userId: user.id, expires })
 
-    const secure = useSecureCookies()
+    /**
+     * THE FLAGS MUST MATCH `defaultCookies()` EXACTLY, or this route issues a
+     * cookie that `auth()` does not read and the redeem silently produces a
+     * signed-out console. The name lives in `lib/handoff.ts` so the checks can
+     * assert it against the pair `src/middleware.ts` sniffs for, and `src/auth.ts`
+     * now builds Auth.js's own cookie from the same three functions so the two
+     * cannot drift.
+     *
+     * `SameSite` IS `None` ON HTTPS — #23, the owner's call, made, with the
+     * reasoning written where the value is decided (`lib/handoff.ts`). The `Lax`
+     * literal that used to sit here was the one thing stopping the framed flow
+     * working: a third-party context does not send a Lax cookie on a subresource
+     * request, so the redirect below arrived at the landing page with no session
+     * and bounced straight to /login. It is `None` ONLY because
+     * `src/middleware.ts` now refuses cross-origin writes.
+     *
+     * BOTH FLAGS COME FROM ONE BOOLEAN so that `None` without `Secure` — a
+     * cookie browsers drop in silence — cannot be produced by editing one line.
+     */
+    const secure = secureCookies(env().AUTH_URL)
     const cookie = [
       `${sessionCookieName(secure)}=${sessionToken}`,
       'Path=/',
       'HttpOnly',
-      'SameSite=Lax',
+      `SameSite=${sessionSameSite(secure) === 'none' ? 'None' : 'Lax'}`,
       `Expires=${expires.toUTCString()}`,
       secure ? 'Secure' : null,
     ]

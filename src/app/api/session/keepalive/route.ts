@@ -2,6 +2,8 @@ import { cookies } from 'next/headers'
 
 import { auth, signOut } from '@/auth'
 import { isIdle, signActivity } from '@/lib/activity'
+import { env } from '@/lib/env'
+import { secureCookies, sessionSameSite } from '@/lib/handoff'
 import {
   ACTIVITY_COOKIE,
   ACTIVITY_MAX_AGE_SECONDS,
@@ -35,6 +37,13 @@ export const dynamic = 'force-dynamic'
 
 /**
  * Same-origin, checked twice.
+ *
+ * KEPT AFTER #23 ADDED THE APP-WIDE CHECK, and not because it is the mechanism
+ * — `src/middleware.ts` now applies the `Origin` rule to every state-changing
+ * request in the console, and this route was for a long time the only place in
+ * the repository that had one. What survives here that middleware does not do
+ * is the CUSTOM HEADER, which is a stronger gate than `Origin` alone and costs
+ * a line. Nothing else should copy this shape; it is not the pattern.
  *
  * The custom header is the primary gate: it is not a CORS-simple header, so a
  * cross-origin form, image or `<script>` cannot produce it and a `fetch` that
@@ -99,10 +108,30 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ ok: false, code: IDLE_ERROR_CODE }, { status: 401 })
   }
 
+  /**
+   * `SameSite` MATCHES THE SESSION COOKIE, AND IT HAS TO — #23.
+   *
+   * This cookie is the idle timeout. Left at `Lax` while the session cookie
+   * moved to `None`, it would neither be SENT nor SET inside the pause-menu
+   * frame — a third-party context drops both — and `lib/activity.ts` reads an
+   * absent `rm_act` as "not yet idle" by design. The two facts compose into a
+   * console that is signed in inside the game and never signs itself out, with
+   * nothing anywhere reporting that the two-hour policy had stopped applying.
+   *
+   * That is a security control silently switching off in exactly the context
+   * #23 exists to enable, so it moves with the session cookie rather than
+   * being noticed later. `secure` comes from the same boolean for the reason
+   * `sessionSameSite` documents: `None` without `Secure` is dropped in silence.
+   *
+   * It follows `AUTH_URL` rather than `NODE_ENV`, which is where it used to
+   * read from, so that this cookie and the session it is bound to can never
+   * disagree about whether the deployment is HTTPS.
+   */
+  const secure = secureCookies(env().AUTH_URL)
   jar.set(ACTIVITY_COOKIE, value, {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: sessionSameSite(secure),
+    secure,
     path: '/',
     maxAge: ACTIVITY_MAX_AGE_SECONDS,
   })
