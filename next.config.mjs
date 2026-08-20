@@ -74,17 +74,37 @@ const nextConfig = {
    * and they would pass for a stolen click too. That check closes CSRF. This
    * is clickjacking, and the two do not substitute for each other.
    *
-   * What stands behind it is that the destructive actions cannot be driven by
-   * a click alone — a ban needs fifteen typed characters and a confirm, a kick
-   * five, and maintenance, deploy and branch-switch are multi-step confirms.
-   * Clickjacking steals a click, not a typed paragraph. THAT ARGUMENT HAS TWO
-   * KNOWN HOLES, both recorded here because they are the cases it does not
-   * cover: `components/ModerationBoard.tsx` lifts a ban on one click with no
-   * confirmation (its two sibling call sites both confirm), and
-   * `components/MaintenancePanel.tsx`'s "Revert to main" is one click by
-   * explicit design and starts an immediate drain. Neither is changed here —
-   * the frame rule is not the place to redesign a control — and both are the
-   * owner's to decide on.
+   * What stands behind it is that the destructive actions mostly cannot be
+   * driven by a click alone — a ban needs fifteen typed characters and a
+   * confirm, a kick five, an incident resolution fifteen, and force, cancel and
+   * branch-switch-away-from-main are multi-step confirms. Clickjacking steals a
+   * click, not a typed paragraph.
+   *
+   * THAT ARGUMENT HAS THREE KNOWN HOLES. An earlier version of this comment
+   * claimed two and asserted "maintenance, deploy and branch-switch are
+   * multi-step confirms", which was FALSE — a sweep on 2026-08-20 found a third
+   * and the false clause is corrected here. A security rationale that overstates
+   * its own coverage is worse than one that admits a gap, because the next
+   * person reads it instead of the code:
+   *
+   *   1. `components/ModerationBoard.tsx` lifts a ban on one click. FIXED in
+   *      9a4e9c5 — though note that file has ZERO CALLERS and was never
+   *      reachable, so it was never the live exposure this comment implied.
+   *   2. `components/MaintenancePanel.tsx` "Revert to main" — one click, an
+   *      immediate drain. Deliberate: it is the escape hatch when a dev branch
+   *      is broken, and recovery must be cheaper than the mistake. Reaffirmed by
+   *      the owner on 2026-08-20.
+   *   3. `components/MaintenancePanel.tsx:1597` "Schedule update" — one click,
+   *      and `drainIn` defaults to '0', so the default is an immediate drain and
+   *      a deploy when empty. **This is the one that is reachable today.** The
+   *      owner was shown it and confirmed on 2026-08-20 that it stays
+   *      unconfirmed.
+   *
+   * So the honest statement of the trade: a stolen click cannot ban, kick or
+   * resolve, but it CAN start a drain and a deploy. That is disruption on a
+   * server the operator watches, not a compromise of anyone's account — and it
+   * is the price of an escape hatch that stays fast. Recorded so nobody
+   * rediscovers it and assumes it was missed.
    */
   // The admin console renders live operational data. Nothing here should sit
   // in a CDN cache, and nothing here should be indexed.
