@@ -75,6 +75,21 @@ only ever opens for a mouse. `TooltipContent` is a single-line pill; a sentence
 does not survive in it. On an inert trigger a tooltip is permitted only with the
 same text present as `sr-only`.
 
+**That last sentence had exactly one standing violation, and it is gone.**
+`ServerStrip`'s phase pips — one coloured dot per running match, sitting beside
+the `matches` figure in the counts cluster — were tooltips on an inert `<span>`
+with no `sr-only` copy anywhere in the file, so `match 3 · storm · 12 alive`
+existed for a mouse and for nothing else. The owner cut the pips at playtest
+("What's the dot next to 'matches' in the top bar of the live players page? That
+can be removed lol") and the tooltips left with them, the same way `FilterChip`'s
+did: what was removed was the trigger, so there was nothing left to hang a popup
+on. The count each pip stood for is still the `matches` figure they sat next to,
+and the phase each one was coloured by is spelled out on the match cards.
+
+**Twelve `Tooltip` sites remain outside `src/components/ui/`**, down from
+thirteen. A grep for `<Tooltip` returns one line more than that, and the extra
+one is prose inside `ProfileView`'s own comment.
+
 ### 5. `HoverCard` = content with real internal structure
 
 A header row, a body, a footer. **A card is a layout, not an emphasis level.** A

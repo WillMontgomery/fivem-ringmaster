@@ -1,10 +1,4 @@
 import { Card } from '@/components/ui/card'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import type { MatchRow } from '@/lib/ingest'
 import { cn } from '@/lib/utils'
 
 /**
@@ -23,14 +17,6 @@ import { cn } from '@/lib/utils'
  * at 4 of 48 it reads nearly empty, which is the truth, where "4" alone reads
  * as fine.
  */
-
-const PHASE_DOT: Record<string, string> = {
-  WARMUP: 'bg-phase-warmup',
-  BUS: 'bg-phase-bus',
-  DROP: 'bg-phase-drop',
-  STORM: 'bg-phase-storm',
-  ENDED: 'bg-phase-ended',
-}
 
 function Figure({
   value,
@@ -64,7 +50,15 @@ export function ServerStrip({
   connected: number
   inMatch: number
   lobby: number
-  matches: MatchRow[]
+  /**
+   * How many matches are running, and nothing else about them.
+   *
+   * IT WAS THE ROWS THEMSELVES until the phase pips were removed, because the
+   * pips needed a state and an id per match. Nothing here reads either any
+   * more, so the prop is the count — a component that takes the whole roster to
+   * print `.length` invites the next person to draw something from it.
+   */
+  matches: number
 }) {
   return (
     <Card className="surface-edge animate-rise gap-0 overflow-hidden px-5 py-4">
@@ -81,42 +75,22 @@ export function ServerStrip({
         `matches` WAS PUSHED TO THE FAR RIGHT BY AN `ml-auto`, which is what the
         owner saw ("'matches' all the way on the right side"). The gap was doing
         the job of a divider between "people" and "games", but at any real width
-        it read as a figure that had come loose from the row. The phase pips stay
-        attached to it — they are one dot per match, and a count with its own
-        pips beside it is one object, not two.
+        it read as a figure that had come loose from the row.
+
+        AND THE PHASE PIPS ARE GONE (owner, playtest: "What's the dot next to
+        'matches' in the top bar of the live players page? That can be removed
+        lol"). One coloured dot per running match sat beside this figure, each
+        one a tooltip carrying `match 3 · storm · 12 alive`. At the one and two
+        matches a real server runs it read as a stray dot rather than as a row
+        of pips, and the fact it encoded is on the match cards under the "By
+        match" tab, spelled out. The phase colours themselves are untouched —
+        `MatchCard` is where they earn their keep.
       */}
       <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
         <Figure value={connected} label="on server" />
         <Figure value={lobby} label="in lobby" colour="var(--idle)" />
         <Figure value={inMatch} label="in match" colour="var(--primary)" />
-
-        <div className="flex items-end gap-6">
-          <Figure value={matches.length} label="matches" colour="var(--live)" />
-
-          {/* Phase pips: one dot per running match, coloured by phase. The
-              shape of the server's activity in the width of a word. */}
-          {matches.length > 0 && (
-            <div className="flex items-center gap-1.5 pb-1">
-              {matches.map((m) => (
-                <Tooltip key={m.id}>
-                  <TooltipTrigger
-                    render={
-                      <span
-                        className={cn(
-                          'size-2.5 rounded-full ring-2 ring-background transition-transform duration-200 hover:scale-125',
-                          PHASE_DOT[m.state] ?? PHASE_DOT.ENDED,
-                        )}
-                      />
-                    }
-                  />
-                  <TooltipContent>
-                    match {m.id} · {m.state.toLowerCase()} · {m.alive} alive
-                  </TooltipContent>
-                </Tooltip>
-              ))}
-            </div>
-          )}
-        </div>
+        <Figure value={matches} label="matches" colour="var(--live)" />
       </div>
 
     </Card>

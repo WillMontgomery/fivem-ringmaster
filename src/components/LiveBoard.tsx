@@ -70,7 +70,7 @@ export function LiveBoard({
         connected={view.counts.connected}
         inMatch={view.counts.inMatch}
         lobby={lobby.length}
-        matches={view.matches}
+        matches={view.matches.length}
       />
 
       {/*
