@@ -226,8 +226,16 @@ export function IncidentDetail({
 
         <div className="mt-4 grid gap-3 border-t border-border/60 pt-3 sm:grid-cols-3">
           <div>
+            {/*
+              "AGAINST", NOT "ABOUT" (owner, playtest: "Where the incident says
+              'about' it should really say 'against'"). It is the word they
+              already use for this relation everywhere else they have written
+              it down — "all other incidents against the freshly banned player"
+              — and it is the more honest one: a case names somebody as its
+              subject, which "about" softens into a topic.
+            */}
             <div className="text-xs uppercase tracking-wider text-muted-foreground">
-              About
+              Against
             </div>
             <Link
               href={`/players/${encodeURIComponent(incident.subjectLicense)}`}
