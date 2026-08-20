@@ -35,6 +35,11 @@ import { cn } from '@/lib/utils'
  * console that has no artifacts feature, and the next question after "why is
  * there nothing here" should not be "does this even work".
  *
+ * THE ONE SENTENCE ON THIS PANEL IS IN THE HEADER AND THE OWNER WROTE IT — see
+ * {@link COVERAGE_NOTE}. It says what a frame covers, which is true of the
+ * feature and not of this case, so it does not touch the paragraph above: the
+ * BODY is still wordless when there is nothing in it.
+ *
  * ═══ ONE IMAGE AT A TIME, AND NO THUMBNAIL RAIL ═══
  *
  * A rail is the obvious carousel furniture and it is the wrong thing here:
@@ -359,6 +364,28 @@ export function IncidentArtifacts({
 }
 
 /**
+ * WHAT A FRAME COVERS, IN THE OWNER'S OWN WORDS, ASKED FOR BY THEM.
+ *
+ * "Only shows game engine. Inventory, etc. will not be shown." — verbatim, and
+ * the only sentence on this page that was written by anybody other than the
+ * owner's own hand. `docs/hover-text.md` rule 8 forbids volunteering copy; it
+ * does not forbid copy that was requested, and where wording is given it is
+ * used exactly as given rather than smoothed.
+ *
+ * WHY IT IS TRUE, for whoever wonders and must not put this on the page:
+ * `screenshot-basic` grabs the game's 3D render through the same calls the
+ * `x-cfx-game-view` plugin uses. The NUI layer — HUD, inventory, chat, the
+ * pause menu — is composited by CEF afterwards and is not in the framebuffer
+ * that gets captured. There is no setting that changes it.
+ *
+ * IT APPLIES TO THE EMPTY STATE TOO, which is why it sits in the panel header
+ * rather than beside the picture. It is a fact about what this feature captures,
+ * true whether or not this case has any frames — and the empty body stays
+ * wordless, which is a separate instruction from a separate day.
+ */
+const COVERAGE_NOTE = 'Only shows game engine. Inventory, etc. will not be shown.'
+
+/**
  * The card around it, matching the other panels on this page exactly.
  *
  * LOCAL RATHER THAN SHARED because `IncidentDetail` spells this shape inline
@@ -373,14 +400,22 @@ function Panel({
 }) {
   return (
     <Card className="surface-edge gap-0 overflow-hidden py-0">
-      <header className="flex items-center justify-between border-b border-border bg-card/60 px-4 py-2.5 text-sm">
+      {/*
+        `flex-wrap` AND `ml-auto` REPLACED `justify-between`, because the row has
+        three things in it now rather than two and the middle one is a sentence.
+        Left to `justify-between` the note would have been pushed into the
+        counter; this keeps it against the heading it belongs to and lets it drop
+        to its own line in a narrow window instead of squeezing the count.
+      */}
+      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-card/60 px-4 py-2.5 text-sm">
         {/*
           "Artifacts", NOT "Captures" (owner, 2026-08-20). The rename was always
           primarily about this word: it is the only place the feature names
           itself to a reader.
         */}
         <span>Artifacts</span>
-        {trailing}
+        <span className="text-xs text-muted-foreground">{COVERAGE_NOTE}</span>
+        {trailing && <span className="ml-auto">{trailing}</span>}
       </header>
       <div className="p-4">{children}</div>
     </Card>
