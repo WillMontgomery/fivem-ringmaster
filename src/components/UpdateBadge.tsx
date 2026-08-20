@@ -9,7 +9,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { behindMainNow, refBehindNow } from '@/lib/maintenance'
+import {
+  behindMainNow,
+  refBehindNow,
+  UPDATE_AVAILABLE,
+  UP_TO_DATE,
+} from '@/lib/maintenance'
 // TYPE-ONLY, AND IT HAS TO STAY THAT WAY — `lib/ssh` reaches
 // `node:child_process` at module scope and this is a client component. `import
 // type` is erased outright, so nothing from the SSH channel reaches the bundle.
@@ -145,9 +150,14 @@ export function UpdateBadge() {
           number implied a magnitude nobody acts on — three commits and thirty
           are the same decision and the same drain — and the commits themselves
           are on the Maintenance page this links to.
+
+          AND THE WORDS ARE NO LONGER WRITTEN DOWN HERE. This file was the only
+          one the "UPDATE AVAILABLE" instruction reached, and the Host page's
+          commit card went on saying "update on dev" for a fortnight because it
+          held a second copy nobody knew about. Both read the constant now.
         */}
         <span className="hidden xl:inline">
-          {behind ? 'Update available' : 'Up to date'}
+          {behind ? UPDATE_AVAILABLE : UP_TO_DATE}
         </span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[20rem]">

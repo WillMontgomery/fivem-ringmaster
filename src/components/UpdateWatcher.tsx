@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useRef } from 'react'
 import { toast } from 'sonner'
 
-import { behindMainNow, refBehindNow } from '@/lib/maintenance'
+import { behindMainNow, refBehindNow, UPDATE_AVAILABLE } from '@/lib/maintenance'
 // TYPE-ONLY. See the note on the same import in UpdateBadge.
 import type { RefUpdate } from '@/lib/ssh'
 
@@ -121,7 +121,7 @@ export function UpdateWatcher() {
          * detector precisely because it is not being shown.
          */
         toast.info(
-          parked ? `${ref} has moved` : 'Update available',
+          parked ? `${ref} has moved` : UPDATE_AVAILABLE,
           {
             description: parked
               ? `The game server is parked on ${ref} and is not running its newest commit. Deploy it from Maintenance, where you can read the commit it would move to.`

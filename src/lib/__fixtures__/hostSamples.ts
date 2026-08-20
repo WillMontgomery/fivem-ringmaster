@@ -1,6 +1,7 @@
 import type { hostView } from '@/lib/telemetry'
 
-type Sample = ReturnType<typeof hostView>['samples'][number]
+type View = ReturnType<typeof hostView>
+type Sample = View['samples'][number]
 
 /**
  * Host telemetry windows, for the design harness.
@@ -149,4 +150,122 @@ export const HOST_WINDOWS: Record<string, Sample[]> = {
   single: hostSamples({ count: 1, seed: 3 }),
   empty: [],
   gappy: hostSamples({ count: 6, stepMs: 12 * 60_000, seed: 21 }),
+}
+
+/** What the status cards read, and the two commit readings that pair. */
+type StatusFixture = Pick<View, 'status' | 'refUpdate'>
+
+/**
+ * The readings the STATUS CARDS have to get right, which the sample windows
+ * above say nothing about.
+ *
+ * WHY THIS EXISTS, and it is a defect report rather than a design note. The
+ * harness fed `HostCharts` directly and skipped `HostBoard`, on the reasoning
+ * that "the charts are what is under review and the status cards above them are
+ * not". The cards then shipped wrong twice in a fortnight — a Processor card
+ * printing a core count on a live-status row, and a commit chip still reading
+ * "update on dev" after the owner had asked for "Update available" — and both
+ * were invisible to everyone reviewing them, because reaching that markup meant
+ * a real session against a real game box. The second one was corrected in the
+ * wrong file for a fortnight and nobody could see that either.
+ *
+ * THE COMMIT CARD IS THE WHOLE REASON THERE ARE SIX OF THESE. It is the one
+ * card with a branch per reading, and its three-way split is deliberately not a
+ * boolean: behind, level, and NOT YET KNOWN. Only a positive reading earns the
+ * update chip, only a known zero earns the tick, and an unanswered host earns
+ * silence — the rule `behindMainNow` and `refBehindNow` enforce, which is
+ * unreviewable unless all three can be summoned from a URL.
+ *
+ *   behind    on main, two commits back. The update chip.
+ *   parked    on `dev`, behind its tip. The SAME chip and no branch name — this
+ *             is the exact card that read "update on dev".
+ *   current   on main, level. The green tick.
+ *   unknown   a dispatcher too old to report `behindMain`. Neither chip: a
+ *             commit stated as a fact, with no verdict beside it.
+ *   down      FXServer stopped. Uptime has nothing to say.
+ *   none      no status at all — the cold console, before the first SSH round
+ *             trip lands. Every card an em-dash.
+ */
+export const HOST_STATUS: Record<string, StatusFixture> = {
+  behind: {
+    status: {
+      running: true,
+      pid: 4821,
+      uptimeSec: 3 * 3600 + 14 * 60,
+      commit: 'a3f9c21',
+      sha: 'a3f9c2149e0b7d5c8f31a06b4e29d7c0158af6b3',
+      behindMain: 2,
+      hostUptimeSec: 26 * 86_400,
+      deployedRef: 'main',
+    },
+    refUpdate: null,
+  },
+
+  parked: {
+    status: {
+      running: true,
+      pid: 4821,
+      uptimeSec: 47 * 60,
+      commit: '7c14e0d',
+      sha: '7c14e0d93b6a2f8517cc40e1b9d3a67f2e05c8d4',
+      // A LARGE PERMANENT DISTANCE NOBODY IS ACTING ON, and it must not reach
+      // the card: off main, `behindMainNow` returns null and `refBehindNow`
+      // answers instead. If this number ever renders here, that rule broke.
+      behindMain: 63,
+      hostUptimeSec: 26 * 86_400,
+      deployedRef: 'dev',
+    },
+    refUpdate: {
+      ref: 'dev',
+      behind: 4,
+      tipSha: 'f0271ab84c9d3e6a5b17820fd94c6e3a1b58a7c2',
+      deployedSha: '7c14e0d93b6a2f8517cc40e1b9d3a67f2e05c8d4',
+      stale: false,
+      at: 1_786_910_000_000,
+    },
+  },
+
+  current: {
+    status: {
+      running: true,
+      pid: 4821,
+      uptimeSec: 11 * 60,
+      commit: 'a3f9c21',
+      sha: 'a3f9c2149e0b7d5c8f31a06b4e29d7c0158af6b3',
+      behindMain: 0,
+      hostUptimeSec: 26 * 86_400,
+      deployedRef: 'main',
+    },
+    refUpdate: null,
+  },
+
+  unknown: {
+    // No `behindMain` and no `deployedRef` — an older `do_status` that answers
+    // neither. `behindMain` is required on HostStatus, so an absent one arrives
+    // as undefined over the wire and is spelled that way here.
+    status: {
+      running: true,
+      pid: 4821,
+      uptimeSec: 9 * 3600,
+      commit: 'a3f9c21',
+      hostUptimeSec: 26 * 86_400,
+    } as StatusFixture['status'],
+    refUpdate: null,
+  },
+
+  down: {
+    status: {
+      running: false,
+      pid: 0,
+      uptimeSec: 0,
+      commit: 'a3f9c21',
+      sha: 'a3f9c2149e0b7d5c8f31a06b4e29d7c0158af6b3',
+      behindMain: 0,
+      hostUptimeSec: 26 * 86_400,
+      deployedRef: 'main',
+    },
+    refUpdate: null,
+  },
+
+  none: { status: null, refUpdate: null },
 }

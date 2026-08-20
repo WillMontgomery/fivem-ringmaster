@@ -305,6 +305,44 @@ export function behindMainNow(
 }
 
 /**
+ * THE TWO ANSWERS TO "IS THE BOX RUNNING THE CODE IT SHOULD BE", IN WORDS.
+ *
+ * WHY THEY ARE HERE AND NOT WHEREVER THEY ARE RENDERED. The owner asked once
+ * for this wording — "the 'update on dev' chip needs to specifically only
+ * exactly say 'UPDATE AVAILABLE'" — and it landed in `UpdateBadge` and nowhere
+ * else, because four other places had independently typed the same sentiment in
+ * their own words. The Host page's commit card was still reading "update on
+ * dev" a fortnight later and the owner had to ask a second time. That is not a
+ * mistake somebody made; it is what happens when one label has five authors.
+ *
+ * SO IT HAS ONE AUTHOR, and it is the module that already owns the READING. The
+ * question "is there an update" is answered by `behindMainNow` and
+ * `refBehindNow` directly above; the words for the two answers now sit beside
+ * them, and every renderer already imports from this file to get the reading, so
+ * carrying the word costs no new import anywhere.
+ *
+ * NO REF IN EITHER OF THEM (owner). "Update on dev" named the branch so that
+ * the two distances "behind" can mean were distinguishable in the markup. That
+ * job belongs to the ref badges beside these labels and to the off-main banner,
+ * which are already doing it at every site that has both readings to tell apart.
+ *
+ * NO COUNT EITHER, since #26: "we don't need it to show how many commits
+ * anything is behind — just 'update available'".
+ *
+ * SENTENCE CASE, NOT SHOUTED, though most sites render them through a
+ * `uppercase` class. The casing is a decision for the surface; the words are the
+ * decision made here.
+ */
+export const UPDATE_AVAILABLE = 'Update available'
+
+/**
+ * The settled half of the same pair. Only ever said off a host that positively
+ * reported it — `null` from either reading above means nobody has looked, and
+ * "up to date" about a box we have not reached is the claim #26 was opened over.
+ */
+export const UP_TO_DATE = 'Up to date'
+
+/**
  * THE TWO COMMITS A DEPLOY WOULD MOVE BETWEEN, OR NULL.
  *
  * THE PAIRING RULE, ONCE, for the same reason `refBehindNow` states it once: a

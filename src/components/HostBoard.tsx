@@ -3,10 +3,8 @@
 import {
   ArrowUpCircle,
   Check,
-  Cpu,
   GitCommitHorizontal,
   HardDrive,
-  MemoryStick,
   Power,
   Wifi,
 } from 'lucide-react'
@@ -17,7 +15,12 @@ import { HostCharts } from '@/components/HostCharts'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { commitUrl } from '@/lib/github'
-import { behindMainNow, refBehindNow } from '@/lib/maintenance'
+import {
+  behindMainNow,
+  refBehindNow,
+  UPDATE_AVAILABLE,
+  UP_TO_DATE,
+} from '@/lib/maintenance'
 import { cn } from '@/lib/utils'
 import type { hostView } from '@/lib/telemetry'
 
@@ -112,7 +115,6 @@ export function HostBoard({ initial }: { initial: View }) {
    * that is a state this card must render as silence rather than as a verdict.
    */
   const update = behindMainNow(s) ?? refBehindNow(s?.deployedRef, view.refUpdate)
-  const updateRef = s?.deployedRef && s.deployedRef !== 'main' ? s.deployedRef : 'main'
 
   // The window's span used to be computed here for the sparkline captions.
   // `HostCharts` derives it from the samples it is handed, so it is no longer
@@ -121,35 +123,49 @@ export function HostBoard({ initial }: { initial: View }) {
   return (
     <div className="space-y-4">
       {/*
-        SIX FACTS IN ONE GRID, WHERE THERE USED TO BE TWO ROWS OF FOUR.
+        FOUR FACTS, AND NOT ONE OF THEM IS ALSO A LINE ON A CHART BELOW.
 
-        THE ROW THAT WENT: Processor, Memory, Inbound and Outbound, each
-        printing the latest value of a series as text, directly above
-        `HostCharts` plotting those same four series. The owner, on reading it:
-        "on the Host page we don't need cards for processor, memory,
-        inbound/outbound when our graphs show literally the exact same info".
+        WHAT WENT, IN TWO PASSES. First Inbound and Outbound, which carried a
+        byte rate and nothing else while the network chart drew both rates
+        against a labelled axis. The owner: "on the Host page we don't need
+        cards for processor, memory, inbound/outbound when our graphs show
+        literally the exact same info".
 
-        WHAT THE ARGUMENT ACTUALLY REACHES, WHICH IS NOT ALL OF IT. Inbound and
-        Outbound carried a byte rate and nothing else, and the network chart
-        draws both rates against a labelled axis, so those two are gone outright.
-        Processor and Memory each carried a SECOND reading the charts cannot
-        show: both of those charts are percentages of a ceiling they never name,
-        so the core count and the absolute GB behind the percentage exist
-        nowhere else on the page. Those cards are therefore REDUCED to the half
-        that is not duplicated and moved up here, beside `Disk free` — which has
-        no chart at all — rather than deleted with the row that held them.
+        THEN PROCESSOR AND MEMORY, WHICH THAT PASS ONLY REDUCED AND SHOULD HAVE
+        DELETED. The argument for keeping them was that each carried a second
+        reading no chart shows — the core count, and the absolute GB behind a
+        percentage drawn on an unnamed ceiling. Both are true and neither earns
+        a card. The owner, looking at the result: "The processor card only lists
+        number of cores lol, like that is something we should be watching for
+        change XD". A LIVE-STATUS CARD IS A THING YOU WATCH, and a core count
+        cannot change without the machine being rebuilt underneath it. The GB
+        figure went with it: it was the same card's other half, on a row that
+        exists to say what is happening right now.
 
-        THE COST, SAID PLAINLY RATHER THAN PATCHED WITH A CAPTION: the live
-        percentage is no longer readable as text. It is the right-hand end of a
-        line on a fixed 0-100 axis, and the exact figure is one hover or one
-        arrow key away. That is what `accessibilityLayer` on those charts is
-        paying for, and it is the trade the owner asked for.
+        THE COST, SAID PLAINLY RATHER THAN PATCHED WITH A CAPTION: neither the
+        live percentage nor the machine's size is readable as text any more. The
+        percentage is the right-hand end of a line on a fixed 0-100 axis, one
+        hover or one arrow key away — which is what `accessibilityLayer` on
+        those charts is paying for. The size is not on this page at all, and the
+        owner has decided it does not need to be.
 
-        THREE COLUMNS, NOT FOUR, because six cards in a four-wide grid leave two
-        stranded on a half-empty second row. At three the split lands on the
-        seam that is already there: is it up and current, then what the box is.
+        THE GRID IS `HostCharts`' GRID, DELIBERATELY — one column, two from
+        `lg`, gap-3 — so the card column edges land on the Processor and Memory
+        chart edges directly below and the page reads as two columns the whole
+        way down. Four cards divide into it exactly, with no stranded card on a
+        half-empty row, which is the defect the previous three-wide grid was
+        chosen to avoid when there were six and would now cause with four.
+
+        IT IS ALSO THE ONLY WIDTH THE COMMIT CARD SURVIVES, and that was
+        measured rather than guessed. `a3f9c21` plus the `Update available`
+        badge is 257px of unbreakable inline content; a card needs ~293px to
+        hold it. Four columns gives 263px at 1440 and 223px at 1280 — the badge
+        pushes 30px and 70px out through the card's own padding. Three gives
+        216px at 1024. Two gives 331px at 1024, 459px at 1280 and 779px at 1920,
+        and one gives 330px at 375: every card 88px tall, nothing wrapped,
+        nothing clipped, at every width this console is opened at.
       */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <StatCard icon={Power} label="FXServer" tone={s?.running ? 'var(--live)' : 'var(--danger)'}>
           {s ? (
             <span className={s.running ? 'text-live' : 'text-danger'}>
@@ -199,9 +215,18 @@ export function HostBoard({ initial }: { initial: View }) {
               className="group inline-flex items-center gap-2 transition-colors hover:text-info"
             >
               <code className="font-mono text-base">{s.commit}</code>
+              {/*
+                THE LABEL IS IMPORTED, NOT TYPED OUT, and that is the fix rather
+                than the three words. This chip read "update on dev" for a
+                fortnight AFTER the owner asked for "UPDATE AVAILABLE", because
+                the correction was applied to `UpdateBadge`, which had its own
+                copy of the string, and nobody knew this second copy existed.
+                Both now render `UPDATE_AVAILABLE` from lib/maintenance, beside
+                the `behindMainNow`/`refBehindNow` reading they already share.
+              */}
               <Badge className="gap-1 border-0 bg-info/10 text-xs font-semibold uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
                 <ArrowUpCircle className="size-3" />
-                update on {updateRef}
+                {UPDATE_AVAILABLE}
               </Badge>
             </Link>
           ) : (
@@ -219,36 +244,11 @@ export function HostBoard({ initial }: { initial: View }) {
               {update === 0 && (
                 <span className="inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-live">
                   <Check className="size-3" />
-                  up to date
+                  {UP_TO_DATE}
                 </span>
               )}
             </a>
           )}
-        </StatCard>
-
-        {/*
-          NO TONE ON THESE TWO ANY MORE. `--chart-1` and `--chart-2` on the icon
-          were there to tie a card to the series it restated; a core count is
-          not a series, and a colour claiming otherwise points at a line that no
-          longer says the same thing. They take the muted icon the rest of the
-          machine facts beside them take.
-        */}
-        <StatCard icon={Cpu} label="Processor">
-          <span className="font-mono">{last ? `${last.cores} cores` : '—'}</span>
-        </StatCard>
-
-        {/*
-          USED AND TOTAL, IN BYTES, WHICH IS THE PART THE MEMORY CHART HAS NO WAY
-          TO DRAW. Its axis is 0-100% of a ceiling it never states, so "64%" on
-          a 16 GB box and "64%" on a 64 GB box are the same picture and very
-          different facts. The percentage itself is not repeated here.
-        */}
-        <StatCard icon={MemoryStick} label="Memory">
-          <span className="font-mono">
-            {last && last.memTotalKb > 0
-              ? `${((last.memTotalKb - last.memAvailKb) / 1024 / 1024).toFixed(1)} / ${(last.memTotalKb / 1024 / 1024).toFixed(1)} GB`
-              : '—'}
-          </span>
         </StatCard>
 
         {/* NO CHART DRAWS DISK. `do_telemetry` reports it and this is its only

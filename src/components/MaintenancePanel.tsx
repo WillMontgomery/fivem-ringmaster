@@ -50,6 +50,7 @@ import {
   nothingToDeploy,
   refBehindNow,
   updateTargetNow,
+  UPDATE_AVAILABLE,
   type MaintenanceWindow,
 } from '@/lib/maintenance'
 import type { HostBranch, RefUpdate, UpdateTarget } from '@/lib/ssh'
@@ -1427,7 +1428,7 @@ export function MaintenancePanel({
                   */}
                   <div className="flex items-center gap-2">
                     <h2 className="text-sm font-medium">
-                      {refBehind ? 'Update available' : 'Update this branch'}
+                      {refBehind ? UPDATE_AVAILABLE : 'Update this branch'}
                     </h2>
                     <Badge className="gap-1 border-0 bg-warn/10 text-xs uppercase tracking-wider text-warn ring-1 ring-inset ring-warn/30">
                       <GitBranch className="size-3" />
@@ -1522,7 +1523,7 @@ export function MaintenancePanel({
                   */}
                   <div className="flex items-center gap-2">
                     <h2 className="text-sm font-medium">
-                      {mainBehind ? 'Update available' : 'Update this server'}
+                      {mainBehind ? UPDATE_AVAILABLE : 'Update this server'}
                     </h2>
                     <Badge className="gap-1 border-0 bg-info/10 text-xs uppercase tracking-wider text-info ring-1 ring-inset ring-info/30">
                       <ArrowUpCircle className="size-3" />
