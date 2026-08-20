@@ -45,7 +45,8 @@ import {
 import type { Ban as BanRecord } from '@/lib/bans'
 import type { AccentSurface } from '@/lib/contrast'
 import { ago, humanDuration } from '@/lib/duration'
-import { incidentChip } from '@/lib/incidentChip'
+import { filedByAPlayer, incidentChips } from '@/lib/incidentChip'
+import { labelFor } from '@/lib/labels'
 import type {
   DiscordNameChange,
   Profile,
@@ -249,8 +250,8 @@ function IncidentRow({
   categoryLabel: Record<string, string>
   verdictLabel: Record<string, string>
 }) {
-  const filedByAPlayer = i.kind === 'report' && i.category !== 'system'
-  const chip = incidentChip(i, verdictLabel)
+  const byAPlayer = filedByAPlayer(i)
+  const chips = incidentChips(i, verdictLabel)
 
   const other =
     direction === 'against'
@@ -280,11 +281,11 @@ function IncidentRow({
             href={`/incidents/${i.id}`}
             className="underline underline-offset-2 transition-colors hover:text-foreground"
           >
-            {filedByAPlayer
-              ? `Reported for ${categoryLabel[i.category] ?? i.category}`
+            {byAPlayer
+              ? `Reported for ${labelFor(categoryLabel, i.category)}`
               : i.summary}
           </Link>
-          {filedByAPlayer && other.name ? (
+          {byAPlayer && other.name ? (
             <>
               {/* Plain text between two links, on purpose: it is the only piece
                   of this title that does not go anywhere. */}
@@ -307,15 +308,27 @@ function IncidentRow({
         </div>
       </div>
 
-      <Badge
-        variant="outline"
-        className={cn(
-          'shrink-0 rounded-md border-0 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
-          chip.tone,
-        )}
-      >
-        {chip.label}
-      </Badge>
+      {/*
+        TWO CHIPS ON A CLOSED CASE, NOT ONE COMPOUND ONE (owner, playtest):
+        "all we need is the white 'resolved' chip. If an action was taken, that
+        should be its own (red) chip and read specifically 'KICKED' or
+        'BANNED'." The shape is `incidentChips`, shared with the queue, so the
+        same row cannot read differently in the two places it is listed.
+      */}
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+        {chips.map((chip) => (
+          <Badge
+            key={chip.label}
+            variant="outline"
+            className={cn(
+              'rounded-md border-0 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
+              chip.tone,
+            )}
+          >
+            {chip.label}
+          </Badge>
+        ))}
+      </div>
     </li>
   )
 }
@@ -544,7 +557,7 @@ function MatchRow({ m }: { m: ProfileMatch }) {
       <span
         className={cn(MATCH_COL.mode, 'font-mono text-xs text-muted-foreground')}
       >
-        {MODE_LABEL[m.mode] ?? (m.mode || 'match')}
+        {labelFor(MODE_LABEL, m.mode) || 'match'}
       </span>
 
       {/* TIME ALIVE, NOT MATCH LENGTH. Every player in one match shares its
@@ -608,7 +621,7 @@ const ACTION_LABEL: Record<string, string> = {
 }
 
 function actionLabel(action: string): string {
-  return ACTION_LABEL[action] ?? action
+  return labelFor(ACTION_LABEL, action)
 }
 
 /**
@@ -644,10 +657,13 @@ function actionLabel(action: string): string {
  *
  * So nothing is lost, and the reason has changed from "we cannot tell" to "we
  * can tell, and every answer is still no". What was decided lives on the
- * incident, and — since #28 — on the Incidents panel above, whose chip reads
- * "resolved · banned" rather than the bare word "resolved". See
- * {@link incidentChip}, which is the thing that has to stay true for this
- * paragraph to.
+ * incident, and — since #28 — on the Incidents panel above, whose row carries a
+ * red BANNED or KICKED chip beside the bare word "resolved" rather than only
+ * the bare word. See {@link incidentChips}, which is the thing that has to stay
+ * true for this paragraph to. (It said "resolved · banned" as one chip until
+ * the owner asked for the two facts to be two chips; the claim this paragraph
+ * rests on — that an action is still visible on the incident row — is
+ * unchanged.)
  */
 const NOT_AN_ACTION = new Set(['incident.resolve'])
 

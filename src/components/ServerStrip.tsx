@@ -68,12 +68,29 @@ export function ServerStrip({
 }) {
   return (
     <Card className="surface-edge animate-rise gap-0 overflow-hidden px-5 py-4">
+      {/*
+        THE ORDER IS THE OWNER'S, VERBATIM: "This line should actually read in
+        this order: 'on server', 'in lobby', 'in match', 'matches'".
+
+        AND IT IS THE ORDER THE ARITHMETIC READS IN. `on server` is the total;
+        `in lobby` and `in match` are the two halves it splits into; `matches` is
+        what those in a match are spread across. Left to right it now goes
+        whole → parts → containers, which is the sentence the segmented bar
+        below it draws.
+
+        `matches` WAS PUSHED TO THE FAR RIGHT BY AN `ml-auto`, which is what the
+        owner saw ("'matches' all the way on the right side"). The gap was doing
+        the job of a divider between "people" and "games", but at any real width
+        it read as a figure that had come loose from the row. The phase pips stay
+        attached to it — they are one dot per match, and a count with its own
+        pips beside it is one object, not two.
+      */}
       <div className="flex flex-wrap items-end gap-x-8 gap-y-4">
         <Figure value={connected} label="on server" />
-        <Figure value={inMatch} label="in match" colour="var(--primary)" />
         <Figure value={lobby} label="in lobby" colour="var(--idle)" />
+        <Figure value={inMatch} label="in match" colour="var(--primary)" />
 
-        <div className="ml-auto flex items-end gap-6">
+        <div className="flex items-end gap-6">
           <Figure value={matches.length} label="matches" colour="var(--live)" />
 
           {/* Phase pips: one dot per running match, coloured by phase. The

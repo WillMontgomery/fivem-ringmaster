@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowUpCircle } from 'lucide-react'
+import { ArrowUpCircle, CheckCircle2 } from 'lucide-react'
 import Link from 'next/link'
 import { useSyncExternalStore } from 'react'
 
@@ -14,32 +14,61 @@ import { behindMainNow, refBehindNow } from '@/lib/maintenance'
 // `node:child_process` at module scope and this is a client component. `import
 // type` is erased outright, so nothing from the SSH channel reaches the bundle.
 import type { RefUpdate } from '@/lib/ssh'
+import { cn } from '@/lib/utils'
 
 /**
- * "Update available", in the header, on every page.
+ * Whether the running server is current, in the header, on every page.
  *
  * IT BELONGS IN THE CHROME because "is the running server current with the code
  * it is meant to be running" is a standing fact about the deployment, not
  * something you should have to open the Host page to learn. It reads /api/host,
  * which answers from the telemetry poller's memory, on a slow cadence — a
  * deploy is a minutes-scale event, not a seconds-scale one, so 30s is plenty
- * and it keeps the header cheap.
+ * and it keeps the header cheap. Clicking it goes to Maintenance, where the
+ * deploy actually happens.
  *
- * It renders NOTHING when the server is current, unconfigured, or unreachable.
- * A chip that is only ever present when there is genuinely an update to ship is
- * a chip an operator can trust at a glance; one that is always there is
- * wallpaper. Clicking it goes to Maintenance, where the deploy actually happens.
+ * ═══ IT NO LONGER RENDERS NOTHING WHEN THE SERVER IS CURRENT ═══
  *
- * IT MEASURES AGAINST WHATEVER REF THE BOX IS ON, and says which. Two different
- * distances can be called "behind" here and confusing them is worse than
- * showing nothing: on main it is `behindMain`, the distance from reviewed code;
- * parked on a branch it is `refUpdate.behind`, the distance from the tip of the
- * branch somebody is pushing to. The first is what a deploy from here would
- * close on main; off main a deploy closes the second and leaves the first
- * exactly where it was. So the parked chip names the branch in its own label
- * rather than only in the tooltip — "Update on dev" and "Update available" are
- * different sentences, and a reader who cannot tell them apart is worse off
- * than one who sees nothing.
+ * THE HEADER WENT SILENT, AND THE OWNER NOTICED WITHIN A DAY. Before the
+ * feed chips were removed there was always something in this cluster — Live,
+ * Falling behind, Feed lost — so "the console has looked and everything is
+ * fine" and "the console has not looked" were told apart at a glance. With them
+ * gone, every remaining chip needed a POSITIVE abnormal reading to appear: an
+ * update to ship, a maintenance window, a deploy in flight, a deploy that
+ * failed. On an ordinary day with a healthy server the whole cluster was empty.
+ * The owner, on a freshly built console taking heartbeats: the chips "no longer
+ * appear ... until AFTER an fxserver update is kicked off". They were describing
+ * exactly that — the first thing the header had to say all day was "Updating".
+ *
+ * SO THE SETTLED CASE IS STATED TOO, and this chip is where it belongs, because
+ * "is the running server current with the code it is meant to be running" is a
+ * question with two answers and the console knows both. `Update available` and
+ * `Up to date` are the same reading reported either way round.
+ *
+ * IT IS NOT THE FEED CHIP UNDER ANOTHER NAME, which is the line that must not be
+ * crossed: nothing here reads `lastPushAt`, nothing ages, and nothing turns
+ * amber because a poll was missed. It is a fact about which COMMIT is deployed,
+ * from the SSH status poll, and it changes a handful of times a week.
+ *
+ * "NOT KNOWING" STILL SHOWS NOTHING AT ALL. Unconfigured, unreachable, or
+ * simply never polled all still render null — see `tick`, which publishes null
+ * for each of those. `Up to date` is a claim, and it is only ever made off a
+ * host that positively said so.
+ *
+ * IT MEASURES AGAINST WHATEVER REF THE BOX IS ON. Two different distances can
+ * be called "behind" here: on main it is `behindMain`, the distance from
+ * reviewed code; parked on a branch it is `refUpdate.behind`, the distance from
+ * the tip of the branch somebody is pushing to. The first is what a deploy from
+ * here would close on main; off main a deploy closes the second and leaves the
+ * first exactly where it was.
+ *
+ * THE LABEL NO LONGER NAMES THE BRANCH, on the owner's instruction: "The
+ * 'update on dev' chip needs to specifically only exactly say 'UPDATE
+ * AVAILABLE'". It used to read "Update on dev" when parked, so that the two
+ * distances could be told apart in the markup rather than only on hover. The
+ * branch is still named — in the tooltip, and in the off-main banner that sits
+ * across the top of every page of a parked console, which is a louder statement
+ * of the same fact than three words in a chip ever were.
  *
  * NO COUNT, ON EITHER REF, since #26. The owner: "we don't need it to show how
  * many commits anything is behind — just 'update available'". The number was
@@ -61,9 +90,15 @@ export function UpdateBadge() {
 
   if (!chip) return null
 
-  const sentence = chip.ref
-    ? `The game server is not running the newest commit on ${chip.ref}, the branch it is parked on. Open Maintenance to see which commit it would move to, and to deploy it.`
-    : 'The game server is not running the latest code on main. Open Maintenance to see which commit it would move to, and to deploy it.'
+  const behind = chip.behind
+
+  const sentence = behind
+    ? chip.ref
+      ? `The game server is not running the newest commit on ${chip.ref}, the branch it is parked on. Open Maintenance to see which commit it would move to, and to deploy it.`
+      : 'The game server is not running the latest code on main. Open Maintenance to see which commit it would move to, and to deploy it.'
+    : chip.ref
+      ? `The game server is running the newest commit on ${chip.ref}, the branch it is parked on. Nothing on that branch is waiting to ship — note that this says nothing about main, which the box is not on.`
+      : 'The game server is running the latest code on main. There is nothing waiting to deploy.'
 
   return (
     <Tooltip>
@@ -71,29 +106,48 @@ export function UpdateBadge() {
         render={
           <Link
             href="/maintenance"
-            className="inline-flex items-center gap-1.5 rounded-md bg-info/10 px-2 py-1 text-xs font-medium uppercase tracking-wider text-info ring-1 ring-inset ring-info/30 transition-colors hover:bg-info/20"
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium uppercase tracking-wider ring-1 ring-inset transition-colors',
+              /*
+                THE SETTLED STATE IS QUIET, AND THAT IS THE WHOLE DESIGN OF THE
+                PAIR. "Up to date" is true almost all of the time, so it is
+                painted in the muted token the console uses for "nothing to do
+                here" — present enough to prove the header is awake, dim enough
+                that the day it changes to the info-coloured "Update available"
+                the difference is the thing your eye catches. Two chips in the
+                same colour would have made the standing state and the actionable
+                one equally loud, which is how a chip becomes wallpaper.
+              */
+              behind
+                ? 'bg-info/10 text-info ring-info/30 hover:bg-info/20'
+                : 'bg-muted/40 text-muted-foreground ring-border hover:bg-muted/60',
+            )}
           />
         }
       >
-        <ArrowUpCircle className="size-3.5" />
+        {behind ? (
+          <ArrowUpCircle className="size-3.5" />
+        ) : (
+          <CheckCircle2 className="size-3.5" />
+        )}
         {/*
           Icon-only below `xl`, so the header's right-hand cluster cannot crowd
           the search bar. Safe to hide here specifically because this badge
           already has a tooltip carrying more than the label does.
 
-          THE PARKED LABEL CARRIES THE BRANCH NAME, where the main label does
-          not. That asymmetry is deliberate: on main there is only one thing
-          "update available" can mean, and off main there are two — so the fact
-          that distinguishes them is in the markup rather than only on hover,
-          which is the floor docs/hover-text.md sets.
+          "UPDATE AVAILABLE", EXACTLY, ON EITHER REF (owner). It read "Update on
+          dev" when the box was parked, so that the two distances "behind" can
+          mean were distinguishable in the markup. The branch now lives in the
+          tooltip and in the off-main banner directly below the header, which
+          says the same thing at a size that cannot be missed.
 
-          IT USED TO CARRY THE COUNT AS WELL ("3 behind dev"). The count is gone
-          on the owner's instruction and the ref stays, because the ref was the
-          half doing the disambiguating; the number only ever said how much of
-          something nobody was measuring in units they cared about.
+          IT USED TO CARRY A COUNT AS WELL ("3 behind dev"), removed in #26: the
+          number implied a magnitude nobody acts on — three commits and thirty
+          are the same decision and the same drain — and the commits themselves
+          are on the Maintenance page this links to.
         */}
         <span className="hidden xl:inline">
-          {chip.ref ? `Update on ${chip.ref}` : 'Update available'}
+          {behind ? 'Update available' : 'Up to date'}
         </span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[20rem]">
@@ -126,14 +180,33 @@ export function UpdateBadge() {
  * asking, and the LAST value is deliberately retained when it does. That is the
  * point: it is what the next header renders instantly.
  */
-let value: { ref: string | null } | null = null
+/**
+ * What the header is showing.
+ *
+ *   null            the console has no answer — unconfigured, unreachable, or
+ *                   not yet polled. Renders nothing, and MUST: `Up to date` on
+ *                   a host nobody has reached is a claim about a box we have
+ *                   not looked at, which is the failure #26 was opened over.
+ *   { behind: … }   a host that answered. `behind` is which way round.
+ *   ref             null = the reading is about main; a string = the branch the
+ *                   box is parked on, which is a different distance entirely.
+ */
+interface Chip {
+  ref: string | null
+  behind: boolean
+}
+
+let value: Chip | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 const listeners = new Set<() => void>()
 
-function publish(next: { ref: string | null } | null): void {
+function publish(next: Chip | null): void {
   const same =
     (next === null && value === null) ||
-    (next !== null && value !== null && next.ref === value.ref)
+    (next !== null &&
+      value !== null &&
+      next.ref === value.ref &&
+      next.behind === value.behind)
   if (same) return
   value = next
   listeners.forEach((l) => l())
@@ -186,7 +259,7 @@ async function tick(): Promise<void> {
        * avoid. Null — mismatched, stale-zero, or never read — shows nothing.
        */
       const behind = refBehindNow(ref, v.refUpdate)
-      publish(behind !== null && behind > 0 ? { ref } : null)
+      publish(behind === null ? null : { ref, behind: behind > 0 })
       return
     }
 
@@ -198,7 +271,7 @@ async function tick(): Promise<void> {
      * only ever appears when there is genuinely something to ship.
      */
     const behind = behindMainNow(v.status)
-    publish(behind !== null && behind > 0 ? { ref: null } : null)
+    publish(behind === null ? null : { ref: null, behind: behind > 0 })
   } catch {
     /* leave the last value; a dropped poll is not news */
   }

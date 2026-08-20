@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/tooltip'
 import { connectedFor, humanDuration } from '@/lib/duration'
 import type { PlayerRow as Player } from '@/lib/ingest'
+import { humanLabel } from '@/lib/labels'
 import { stateKey } from '@/lib/playerState'
 import { cn } from '@/lib/utils'
 
@@ -46,7 +47,10 @@ const STATE: Record<string, { label: string; className: string }> = {
 
 function StateChip({ state }: { state: string }) {
   const s = STATE[stateKey(state)] ?? {
-    label: state,
+    // A state this build has never heard of still shows, and still shows as
+    // itself — through `humanLabel` rather than raw, so `some_new_state` reads
+    // as "Some new state" instead of shouting its wire spelling at an operator.
+    label: humanLabel(state),
     className: 'text-muted-foreground ring-border bg-muted/40',
   }
   return (

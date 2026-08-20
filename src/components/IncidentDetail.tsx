@@ -16,7 +16,8 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { postJson } from '@/lib/api'
-import { verdictTone } from '@/lib/incidentChip'
+import { incidentHeadline, verdictTone } from '@/lib/incidentChip'
+import { labelFor } from '@/lib/labels'
 import type {
   Incident,
   IncidentCategory,
@@ -147,14 +148,22 @@ export function IncidentDetail({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg font-semibold tracking-tight">
-                {kindLabel[incident.kind] ?? incident.kind}
+                {labelFor(kindLabel, incident.kind)}
               </h1>
-              <Badge
-                variant="outline"
-                className="border-0 bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
-              >
-                {categoryLabel[incident.category] ?? incident.category}
-              </Badge>
+              {/*
+                THE CATEGORY CHIP IS GONE HERE TOO (owner, playtest): "we don't
+                need a chip telling us what the incident was for if the
+                description already tells us". The description is the line
+                directly below this row, and for a player report it now reads
+                "Reported for Abusive chat" — the same words the chip carried,
+                one line apart. On a system-filed case the chip read "SYSTEM",
+                which the owner cut by name.
+
+                THE FACT ITSELF IS NOT LOST, and that is the test this had to
+                pass: the category is what the description IS for a report, and
+                for an escalation the summary and the "Reported by / System"
+                field below say what it was. Nothing is only in the chip.
+              */}
               <Badge
                 className={cn(
                   'border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
@@ -166,7 +175,17 @@ export function IncidentDetail({
                 {pending ? 'pending review' : 'resolved'}
               </Badge>
             </div>
-            <p className="mt-1.5 text-sm">{incident.summary}</p>
+            {/*
+              COMPOSED FOR A PLAYER REPORT, VERBATIM OTHERWISE. The stored
+              summary interpolates the raw category id on the game side —
+              "Reported for abusive_chat by Xeon" — and the owner's instruction
+              is that it "should display as 'Abusive chat'". `incidentHeadline`
+              is the same reading the queue row and the profile row take, so the
+              three surfaces cannot describe one incident three ways.
+            */}
+            <p className="mt-1.5 text-sm">
+              {incidentHeadline(incident, categoryLabel)}
+            </p>
             {incident.note && (
               <p className="mt-1 text-sm text-muted-foreground">
                 &ldquo;{incident.note}&rdquo;
@@ -199,7 +218,14 @@ export function IncidentDetail({
                 {incident.reporterName}
               </Link>
             ) : (
-              <p className="mt-1 text-sm text-muted-foreground">The system</p>
+              /*
+                "System", NOT "The system" (owner, playtest: "'filed by the
+                system' sounds cheesy. How about filed by `System`"). It is the
+                name the timeline beneath this already uses — every event
+                `lib/incidents` writes without a human carries `byName:
+                'System'` — so the page now names one actor one way.
+              */
+              <p className="mt-1 text-sm text-muted-foreground">System</p>
             )}
           </div>
           {incident.linkedLicense && (
@@ -487,7 +513,7 @@ function Verdict({
         verdictTone(v.action),
       )}
     >
-      {verdictLabel[v.action] ?? v.action}
+      {labelFor(verdictLabel, v.action)}
       {v.action === 'ban' ? (
         v.expiresAt === null ? (
           <span className="ml-1 normal-case">— permanent</span>

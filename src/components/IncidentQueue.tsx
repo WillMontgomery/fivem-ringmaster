@@ -9,7 +9,7 @@ import { Pager } from '@/components/Pager'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { incidentChip } from '@/lib/incidentChip'
+import { incidentChips, incidentHeadline } from '@/lib/incidentChip'
 import type {
   Incident,
   IncidentCategory,
@@ -39,12 +39,31 @@ const KIND_TONE: Record<IncidentKind, string> = {
   anticheat: 'bg-danger/10 text-danger ring-danger/25',
 }
 
-function waiting(ms: number, now: number): string {
+/**
+ * How long ago this was filed. "12m ago".
+ *
+ * IT USED TO READ "12m waiting", IN AMBER PAST A DAY. The owner: "Incidents in
+ * the queue need to not say 'waiting' but instead maybe like 'ago' or
+ * something. And that doesn't need to be any special color."
+ *
+ * "AGO" IS THE HONEST WORD ANYWAY, and the ambiguity the old label was written
+ * to resolve is resolved better by it. "3d" beside an opened-at timestamp could
+ * be an age or a deadline; "3d waiting" fixed that by asserting the row is
+ * still being waited on, which is a claim about a QUEUE. "3d ago" fixes it by
+ * naming the direction, which is a fact about a TIMESTAMP — and it stays true
+ * on a row that is nobody's job any more.
+ *
+ * THE COLOUR IS GONE WITH IT. Amber past 24 hours was the console deciding, on
+ * a fixed threshold nobody set, which incidents an operator should feel bad
+ * about; the queue is already sorted oldest-first, so the row that has waited
+ * longest is the one at the top whether or not it is coloured.
+ */
+function ago(ms: number, now: number): string {
   const mins = Math.max(0, Math.floor((now - ms) / 60_000))
-  if (mins < 60) return `${mins}m`
+  if (mins < 60) return `${mins}m ago`
   const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h`
-  return `${Math.floor(hrs / 24)}d`
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
 }
 
 function Row({
@@ -59,7 +78,7 @@ function Row({
   verdictLabel: Record<VerdictAction, string>
 }) {
   const Icon = KIND_ICON[i.kind] ?? Flag
-  const chip = incidentChip(i, verdictLabel)
+  const chips = incidentChips(i, verdictLabel)
 
   return (
     <Link
@@ -78,63 +97,75 @@ function Row({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{i.subjectName}</span>
-          <Badge
-            variant="outline"
-            className="border-0 bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
-          >
-            {categoryLabel[i.category] ?? i.category}
-          </Badge>
           {/*
-            THE OUTCOME, NOT JUST THE STATE (#28).
-            "resolved" was the whole problem: it covered "this player was
-            banned" and "I watched a match and they were fine" with one word, so
-            the Resolved tab was a list of things that had stopped rather than a
-            record of what was decided. The verdict says which.
+            THE CATEGORY CHIP IS GONE, AND SO IS THE SYSTEM ONE (owner,
+            playtest): "Any time an incident is listed, we don't need a chip
+            telling us what the incident was for if the description already
+            tells us", and "SYSTEM doesn't need to be its own chip on those."
 
-            THE WORDING AND THE COLOUR COME FROM `lib/incidentChip`, which the
-            profile's incident rows read too. The same chip about the same row
-            has to say the same thing in both places, and the way that fails is
-            not a crash — it is one list reading "resolved" while the other
-            reads "resolved · banned", with nothing to say which is right.
+            Both halves of this row's category chip were saying something the
+            line directly beneath it already says. On a player report the
+            description reads "Reported for Abusive chat" and the chip read
+            "ABUSIVE CHAT" a few pixels above it. On a system-filed case the
+            chip read "SYSTEM", which is not a thing anybody reported anybody
+            for — it is the absence of a reporter, and the row's own footer says
+            "filed by System".
+
+            WHAT IS LEFT IN THIS SLOT IS THE OUTCOME (#28), which is not
+            duplicated anywhere on the row: whether the case is closed and
+            whether anything happened to the player. See `incidentChips` for why
+            that is now two chips rather than one compound label.
 
             PENDING ROWS CARRY NO CHIP HERE, which is why this is guarded rather
             than left to the helper: the queue tab is entirely pending, so a
             "pending review" badge on every row would be noise. The profile
             mixes both and shows it.
           */}
-          {i.state === 'resolved' && (
-            <Badge
-              variant="outline"
-              className={cn(
-                'border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
-                chip.tone,
-              )}
-            >
-              {chip.label}
-            </Badge>
-          )}
+          {i.state === 'resolved' &&
+            chips.map((chip) => (
+              <Badge
+                key={chip.label}
+                variant="outline"
+                className={cn(
+                  'border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
+                  chip.tone,
+                )}
+              >
+                {chip.label}
+              </Badge>
+            ))}
         </div>
-        <p className="mt-0.5 truncate text-sm text-muted-foreground">{i.summary}</p>
+        {/*
+          THE DESCRIPTION, WHICH FOR A PLAYER REPORT THE CONSOLE COMPOSES.
+          The stored summary is the game's, and for reports it interpolates the
+          raw category id — "Reported for abusive_chat by Xeon". See
+          `incidentHeadline`: the id is mapped through CATEGORY_LABEL and the
+          filer's name is left to the line below, which already carries it.
+        */}
+        <p className="mt-0.5 truncate text-sm text-muted-foreground">
+          {incidentHeadline(i, categoryLabel)}
+        </p>
         <p className="mt-0.5 text-xs text-muted-foreground/70">
           <LocalTime ms={i.openedAt} />
-          {i.reporterName ? ` · reported by ${i.reporterName}` : ' · filed by the system'}
+          {/*
+            "FILED BY THE SYSTEM" WAS THE OWNER'S WORD FOR IT: "sounds cheesy.
+            How about filed by `System`." Which is also the name the timeline
+            has always used for the same actor — `byName: 'System'` on every
+            event `lib/incidents` writes without a human — so this row now
+            agrees with the case page it links to rather than paraphrasing it.
+          */}
+          {i.reporterName ? ` · reported by ${i.reporterName}` : ' · filed by System'}
         </p>
       </div>
 
-      {/* THE WORD IS IN THE ROW, NOT ON HOVER. "3d" sitting beside an opened-at
-          timestamp is genuinely ambiguous — age, or a deadline? — so the
-          disambiguation is worth keeping, but the span has no fixed width, so
-          the word costs nothing. A tooltip here would also have been a trap:
-          this span is inside the row's `<Link>`, and a default `TooltipTrigger`
-          renders a `<button>`, which is invalid inside an `<a>`. */}
+      {/* THE AGE, ON PENDING ROWS ONLY. A resolved incident's age is not what
+          anybody is reading it for, and the row's timestamp above is already
+          the answer for those. A tooltip here would be a trap: this span is
+          inside the row's `<Link>`, and a default `TooltipTrigger` renders a
+          `<button>`, which is invalid inside an `<a>`. */}
       {i.state === 'pending_review' && (
-        <span
-          className={cn(
-            'shrink-0 font-mono text-xs',
-            now - i.openedAt > 24 * 3600_000 ? 'text-warn' : 'text-muted-foreground',
-          )}
-        >
-          {waiting(i.openedAt, now)} waiting
+        <span className="shrink-0 font-mono text-xs text-muted-foreground">
+          {ago(i.openedAt, now)}
         </span>
       )}
     </Link>

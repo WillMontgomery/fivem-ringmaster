@@ -836,8 +836,37 @@ export function MaintenancePanel({
             gains no permanent noise.
           */
           <div className="flex flex-col items-end gap-1">
+            {/*
+              WIREFRAME, NOT PURPLE, AND IT MATCHES THE BANNER'S COPY OF ITSELF
+              (owner: "change the remaining 'Revert to main' button from purple
+              to wireframe to match the one in the banner").
+
+              THE BANNER'S BUTTON WAS CHANGED FIRST AND THIS ONE WAS MISSED, so
+              the console had two controls, one page apart, that do the same
+              thing and looked like different kinds of thing. `OffMainBanner`
+              carries the full reasoning; the short version is that `default` is
+              `--primary`, which means "the main action on this page", and this
+              is not that — it sits inside a warning card about an unusual state,
+              where a saturated brand fill competes with the warning for
+              attention.
+
+              THE `warn` EDGE IS COPIED WITH IT, AND IT IS LOAD-BEARING. This
+              card is a `warn/5` wash, the same family as the banner's `warn/10`,
+              and `outline`'s own `--border` measures around 1.3:1 against it —
+              under the 3:1 WCAG 1.4.11 asks of the boundary that identifies a
+              control. `--warn` takes it to 3.7:1 light and 10:1 dark.
+              `dark:border-warn` is not redundant: `outline` ships
+              `dark:border-input`, and twMerge treats a `dark:`-prefixed utility
+              as a different key, so a bare `border-warn` would silently lose in
+              dark mode.
+
+              A REAL `Button` HERE, unlike the banner's `buttonVariants` on a
+              `<Link>`: this one runs `revert` and has a disabled state, so it is
+              a button in the markup as well as in the paint.
+            */}
             <Button
-              variant="default"
+              variant="outline"
+              className="border-warn dark:border-warn"
               disabled={busy || Boolean(live)}
               onClick={revert}
             >

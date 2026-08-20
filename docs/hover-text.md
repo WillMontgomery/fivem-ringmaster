@@ -127,7 +127,7 @@ provider in Base UI and needs none.
 |---|---|
 | `LocalTime.tsx` | `<time dateTime>` + optional visible UTC |
 | `AuditList.tsx` | folded into `LocalTime`, UTC now visible below the local time |
-| `IncidentQueue.tsx` | inline — `3d waiting` |
+| `IncidentQueue.tsx` | inline — `3d ago` (it read `3d waiting` until the owner asked for "ago") |
 | `ProfileView.tsx` placement badge | conditional `Tooltip` + `sr-only` |
 | `ProfileView.tsx` survived | inline — `12m 4s alive` |
 | `PlayerTable.tsx` filter chips | `Tooltip` + `sr-only` / `aria-describedby` |

@@ -196,6 +196,38 @@ const STATE_CASES = {
    * for the field, standing on one page.
    */
   legacy: closed('Banned for 7 days', null),
+
+  /*
+   * NOBODY FILED THIS. An anticheat escalation has no reporter and its category
+   * is `system`, and that combination changes three things on the page that
+   * nothing else on this axis reaches: the "Reported by" field reads `System`
+   * rather than naming a player, the timeline's opening event is attributed to
+   * `System`, and the summary is the game's own sentence rather than a category
+   * the console composes.
+   *
+   * IT IS HERE BECAUSE THE OWNER'S WORDING FOR IT WAS THE CORRECTION ("'filed
+   * by the system' sounds cheesy. How about filed by `System`"), and there was
+   * no way to look at that state without a live anticheat escalation sitting in
+   * a real queue at the moment you happened to open the page.
+   */
+  system: {
+    ...BASE_INCIDENT,
+    incidentId: 'aaaaaaaa-0000-4000-8000-000000000002',
+    kind: 'anticheat',
+    category: 'system',
+    reporterLicense: null,
+    reporterName: null,
+    summary: '14 shots refused in 60s -- no weapon issued',
+    note: null,
+    events: [
+      {
+        at: BASE - 3 * HOUR,
+        kind: 'opened',
+        byLicense: null,
+        byName: 'System',
+      },
+    ],
+  },
 } satisfies Record<string, Incident>
 
 type StateKey = keyof typeof STATE_CASES

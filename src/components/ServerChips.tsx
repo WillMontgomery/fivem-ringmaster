@@ -33,6 +33,22 @@ import { cn } from '@/lib/utils'
  * never its owner, and taking it away changed nothing about what the console
  * knows. It does mean the console no longer surfaces feed staleness OUTSIDE a
  * deploy window; that is the owner's call and it is worth knowing it was made.
+ *
+ * ═══ AND THE CLUSTER HAS A RESTING STATE AGAIN, WHICH IT LOST WITH THEM ═══
+ *
+ * TAKING THE FEED CHIPS OUT LEFT NOTHING THAT COULD APPEAR ON AN ORDINARY DAY.
+ * Every chip below needs a POSITIVE abnormal reading — a deploy running, a
+ * deploy that failed, a maintenance window, an update to ship — so a healthy
+ * server with nothing scheduled produced an empty cluster, and the owner
+ * reported the header as silent "until AFTER an fxserver update is kicked off".
+ * An empty header and a header on a console that has not looked are the same
+ * picture, which is the one thing this console tries never to do.
+ *
+ * `UpdateBadge` NOW CARRIES THAT RESTING STATE — it reports "Up to date" as
+ * well as "Update available", off the same positive host reading, and still
+ * renders nothing at all when the host has not answered. It is not the feed
+ * chip returning under another name: nothing in it reads `lastPushAt` and
+ * nothing in it ages.
  */
 export function ServerChips({
   live,

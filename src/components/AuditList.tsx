@@ -8,6 +8,7 @@ import { LocalTime } from '@/components/LocalTime'
 import { Pager } from '@/components/Pager'
 import { Card } from '@/components/ui/card'
 import type { AuditRow } from '@/lib/audit'
+import { labelFor } from '@/lib/labels'
 import { cn } from '@/lib/utils'
 
 /**
@@ -179,7 +180,7 @@ export function AuditList({ rows }: { rows: AuditRow[] }) {
                       license={r.actorLicense}
                       className="font-medium"
                     />{' '}
-                    {ACTION_LABEL[r.action] ?? r.action}
+                    {labelFor(ACTION_LABEL, r.action)}
                     {r.targetName || r.targetLicense ? (
                       <>
                         {' — '}

@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/tooltip'
 import { DEMO_BADGES } from '@/lib/demo'
 import { activityDeadline, hasSessionCookie } from '@/lib/activity'
+import * as incidents from '@/lib/incidents'
 import * as maint from '@/lib/maintenance'
 import { ensureDriver, maintenanceView } from '@/lib/maintenanceDriver'
 import { readPrefs } from '@/lib/prefs'
@@ -81,6 +82,46 @@ import { cn } from '@/lib/utils'
  * wireframes rather than being dead: a page that says what it will be and what
  * it is blocked on is more useful than a greyed-out word.
  */
+
+/** Where this console's own source lives. */
+const REPO_URL = 'https://github.com/WillMontgomery/fivem-ringmaster'
+
+/**
+ * The GitHub mark, INLINE, because it has to be.
+ *
+ * NOT FROM LUCIDE. `lucide-react` dropped every brand glyph — there is no
+ * `Github` export in the version this repo pins, and reaching for one is the
+ * first thing somebody will try when editing this file.
+ *
+ * NOT FETCHED EITHER, and that is a hard constraint rather than a preference. A
+ * strict CSP fronts this console; an `<img src="https://…">` or a stylesheet
+ * pulling from a CDN is blocked at the browser, so the sidebar would ship a
+ * broken image on the deployed box and a perfect one on localhost. `npm run
+ * verify` also scans every file for credential shapes, which is one more reason
+ * assets belong in the tree rather than behind a URL somebody has to trust.
+ *
+ * IT IS THE REAL MARK — GitHub's own Octicon path, the one their brand
+ * guidelines publish for exactly this use. `currentColor` and no hard-coded
+ * size, so it inherits the link's colour in both themes and the `size-*` class
+ * that wraps it.
+ *
+ * `aria-hidden` BECAUSE THE LINK IS ALREADY NAMED. Its `aria-label` says
+ * "Ringmaster on GitHub"; a second accessible name on the glyph inside it would
+ * be announced twice.
+ */
+function GithubMark({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+      focusable="false"
+      className={className}
+    >
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z" />
+    </svg>
+  )
+}
 
 export interface NavBadges {
   /** Incidents nobody has looked at. The number that should make you click. */
@@ -268,10 +309,17 @@ export async function AppShell({
    */
   user?: { name: string; avatarUrl?: string | null } | null
   /**
-   * Badge counts. Defaults rather than being required, because a badge that
-   * appears only on the pages that remembered to pass it is worse than none —
-   * the whole point is that an unread incident is visible from wherever you
-   * happen to be standing.
+   * Badge OVERRIDES, per key, and only for callers that have a reason.
+   *
+   * NOT THE SOURCE OF THEM, WHICH IT USED TO BE IN PRACTICE. The shell resolves
+   * both badges itself now; a key given here replaces that key and leaves the
+   * other alone. Passing `{ incidents: 3 }` no longer blanks the maintenance
+   * badge, which is the bug the owner reported twice — see the resolution
+   * below.
+   *
+   * The design harness is the caller this exists for: it renders fixtures and
+   * must not reach DynamoDB. Real pages may pass a count they already have in
+   * hand (both incident routes do) to save the shell a second read.
    */
   badges?: NavBadges
   /**
@@ -315,36 +363,76 @@ export async function AppShell({
       : user
 
   /**
-   * NO PLACEHOLDER BADGES.
+   * BOTH BADGES, RESOLVED HERE, ON EVERY PAGE.
    *
-   * This defaulted to DEMO_BADGES, so every page permanently showed
-   * "maintenance scheduled" and three unread incidents — fabricated state, on
-   * every screen, indistinguishable from the real thing. A badge nobody can
-   * trust is worse than no badge: the first genuine maintenance window would
-   * have looked exactly like the noise that was always there.
+   * ═══ THE BUG THIS CLOSES, WHICH WAS REPORTED TWICE ═══
    *
-   * Pages that know their badge state pass it; Maintenance does. The rest show
-   * none until M5 and M6 produce real counts.
+   * The owner: "The incidents # chip in the side bar doesn't appear unless I'm
+   * on the Incidents page. The same is true for the chip on the maintenance
+   * tab." Both symptoms, one cause, and it is the `??` that used to be on this
+   * expression rather than anything in the sidebar.
+   *
+   * `badges` is a per-page prop and this read `badges ?? <maintenance only>`,
+   * so the two badges were never both resolved on the same render:
+   *
+   *   /incidents          passes `{ incidents: n }`  -> the whole fallback is
+   *                       skipped, so the MAINTENANCE badge is missing
+   *   /maintenance        passes `{ maintenance: … }` -> same, in reverse: the
+   *                       INCIDENTS count is missing
+   *   every other page    passes nothing -> the fallback runs, and it only ever
+   *                       resolved maintenance, so the incident count was
+   *                       missing on eleven routes out of thirteen
+   *
+   * Which is exactly what a nav badge must not do. Its entire value is that an
+   * unread incident is visible from wherever you happen to be standing; one
+   * that only appears on the page it counts is telling you a thing you are
+   * already looking at.
+   *
+   * IT IS THE SAME ARGUMENT THE `feed` PROP LOST BELOW, and the previous fix
+   * for that one only moved half of it: the fallback was written when
+   * maintenance was the only badge, and `incidents` was added later as
+   * something the two incident routes passed in by hand. Nothing was wrong with
+   * the sidebar. A page-supplied badge was simply the only way an incident
+   * count ever reached it.
+   *
+   * SO BOTH ARE READ HERE, INDEPENDENTLY, AND `badges` NOW OVERRIDES PER KEY
+   * rather than replacing the object. The preview harness still passes
+   * DEMO_BADGES and still gets exactly what it asked for; a real page that
+   * passes one badge no longer silently blanks the other.
+   *
+   * NEITHER READ IS EXPENSIVE ENOUGH TO CARE. `openCount` is cached for fifteen
+   * seconds inside `lib/incidents` for precisely this reason — the comment
+   * there says "the badge renders on every page and this is a scan" — and
+   * `maint.current()` is the row the driver already polls. They are resolved
+   * together so one failing cannot take the other down with it.
+   *
+   * A FAILED READ SHOWS NO BADGE, NEVER A ZERO. `openCount` already returns its
+   * last known value rather than 0 on an error, and a rejected `current()`
+   * yields undefined here, which `MaintenanceBadge` renders as nothing. "We
+   * could not look" and "there is nothing waiting" must not look alike.
+   *
+   * ONLY WHAT THE CALLER DID NOT SUPPLY IS READ. The design harness passes both
+   * and must not reach DynamoDB to render a fixture; a real page that has
+   * already counted the queue for its own body (both incident routes do) does
+   * not pay for a second count.
    */
-  /**
-   * RESOLVED HERE, NOT PASSED IN.
-   *
-   * Badges used to come from each page, which produced three separate wrongs:
-   * the wireframe pages passed DEMO_BADGES and permanently displayed a
-   * scheduled maintenance window that did not exist, the real pages passed
-   * nothing and showed no badge at all, and only /maintenance ever showed the
-   * truth. A badge that is right on one page and invented on the next is worse
-   * than no badge, because you cannot tell which kind you are looking at.
-   *
-   * One read per render, from the same row the game polls. Pages can still
-   * override — the preview harness passes its own to show the states off.
-   */
-  const b: NavBadges =
-    badges ??
-    (await maint
-      .current()
-      .then((w) => ({ maintenance: maint.badgeState(w) }))
-      .catch(() => ({})))
+  const [liveIncidents, liveMaintenance] = await Promise.all([
+    badges?.incidents === undefined
+      ? incidents.openCount().catch(() => undefined)
+      : undefined,
+    badges?.maintenance === undefined
+      ? maint
+          .current()
+          .then((w) => maint.badgeState(w))
+          .catch(() => undefined)
+      : undefined,
+  ])
+
+  const b: NavBadges = {
+    incidents: badges?.incidents ?? liveIncidents,
+    maintenance:
+      badges?.maintenance !== undefined ? badges.maintenance : liveMaintenance,
+  }
 
   /**
    * THE FEED READING FOR THE HEADER CHIP, RESOLVED HERE RATHER THAN PASSED IN.
@@ -495,6 +583,46 @@ export async function AppShell({
                 Blitz Royale
               </div>
             </div>
+            {/*
+              THE REPOSITORY, WHERE THE OWNER ASKED FOR IT: "the top right of
+              the sidebar next to the server name and 'Ringmaster' text, but
+              right-aligned."
+
+              `ml-auto` DOES THE RIGHT-ALIGNING, not a justify-between on the
+              parent — the block to its left is two lines of text that must stay
+              beside the mark, and `justify-between` would push them apart from
+              it as the sidebar widens.
+
+              IT DISAPPEARS IN ICON MODE with the rest of the wordmark. A
+              collapsed rail is 3rem of nav icons; a GitHub mark in it would
+              read as a fourteenth destination inside the console rather than as
+              a way out of it.
+
+              `target="_blank"` WITH `rel="noreferrer"`. It leaves the console,
+              and an admin mid-incident should not lose the page they were on.
+              `noreferrer` implies `noopener`, and the referrer is worth
+              suppressing on its own: this console's hostname is not something
+              to hand to a third party on every click.
+
+              PLAIN `<a>`, NOT `next/link`. Link exists to prefetch and to route
+              client-side, and neither means anything for an external origin.
+            */}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <a
+                    href={REPO_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="Ringmaster on GitHub"
+                    className="ml-auto flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-sidebar-accent/60 hover:text-foreground group-data-[collapsible=icon]:hidden"
+                  />
+                }
+              >
+                <GithubMark className="size-4" />
+              </TooltipTrigger>
+              <TooltipContent side="right">Source on GitHub</TooltipContent>
+            </Tooltip>
           </div>
         </SidebarHeader>
 
