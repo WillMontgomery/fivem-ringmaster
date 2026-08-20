@@ -139,6 +139,18 @@ export function BanDialog({
         error?: string
         kicked?: { attempted: boolean; ok: boolean; error?: string }
         incident?: { closed: boolean; error?: string }
+        /**
+         * The other cases this ban closed, present only on a permanent ban that
+         * found some. See `closeOthersOnPermanentBan` in lib/incidents.
+         */
+        alsoClosed?: {
+          found: number
+          closed: number
+          refused: number
+          failed: number
+          leftOpen: number
+          lookupFailed: boolean
+        }
       }>('/api/bans', {
         license,
         reason: reason.trim(),
@@ -176,6 +188,37 @@ export function BanDialog({
         )
       } else {
         toast.success(`${name} banned ${expiry}.`)
+      }
+
+      /**
+       * THE OTHER CASES GET THEIR OWN TOAST, and that is not one toast too many.
+       *
+       * A permanent ban closes every other open case about the same player, so
+       * the incidents badge can drop by five the moment this returns — and a
+       * queue that empties with no explanation is the thing an admin cannot
+       * unsee. It is separate from the ban's toast because it is a separate
+       * fact, on cases the admin never opened, and because the ban's sentence is
+       * already carrying the kick and the verdict.
+       *
+       * WORDED BY THIS TASK AND AWAITING THE OWNER'S WORDS, exactly like the
+       * note written onto the cases themselves.
+       */
+      const also = d.alsoClosed
+      if (also) {
+        const cases = (n: number) => `${n} other case${n === 1 ? '' : 's'}`
+
+        if (also.lookupFailed) {
+          toast.warning(
+            `Other open cases about ${name} could not be read, so none were closed.`,
+          )
+        } else if (also.failed > 0 || also.leftOpen > 0) {
+          toast.warning(
+            `Closed ${cases(also.closed)} about ${name}, out of ${also.found}.`,
+            { description: 'The rest are still in the incident queue.' },
+          )
+        } else if (also.closed > 0) {
+          toast.success(`Closed ${cases(also.closed)} about ${name}.`)
+        }
       }
 
       reset()

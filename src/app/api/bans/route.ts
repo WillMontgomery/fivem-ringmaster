@@ -230,8 +230,46 @@ export async function POST(req: Request): Promise<Response> {
       incident = res.ok ? { closed: true } : { closed: false, error: res.reason }
     }
 
+    /**
+     * And close every OTHER case about them, if this ban is permanent.
+     *
+     * LAST OF ALL, FOR THE REASON EVERYTHING ELSE HERE IS ORDERED. This is the
+     * only step that can touch cases the admin never opened, it cannot undo a
+     * single thing above it, and it never throws — a sweep that failed must not
+     * turn a successful ban into an error the admin retries.
+     *
+     * WHAT DECIDES "PERMANENT" IS `ban.expiresAt`, the value on the row that was
+     * actually written, and the check lives inside the sweep rather than in an
+     * `if` here — one place, testable, and not something a second caller could
+     * get subtly wrong. A temporary ban reads nothing and writes nothing.
+     *
+     * THE INCIDENT IT CAME FROM IS EXCLUDED BY ID. It was closed above with the
+     * admin's own reason and its own verdict; it is not one of the "others".
+     */
+    const alsoClosed = await incidents.closeOthersOnPermanentBan({
+      ban,
+      fromIncidentId: input.incidentId ?? null,
+      actor,
+    })
+
     return Response.json(
-      { ok: true, ban, online, kicked, incident },
+      {
+        ok: true,
+        ban,
+        online,
+        kicked,
+        incident,
+        /**
+         * REPORTED ONLY WHEN IT DID SOMETHING OR TRIED TO. On the overwhelming
+         * majority of bans there are no other open cases, and a field reading
+         * "closed 0 of 0" on every response is furniture the browser then has to
+         * decide not to mention.
+         */
+        ...(alsoClosed.permanent &&
+        (alsoClosed.found > 0 || alsoClosed.lookupFailed)
+          ? { alsoClosed }
+          : {}),
+      },
       { status: 201 },
     )
   } catch (e) {

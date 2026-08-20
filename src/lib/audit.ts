@@ -114,6 +114,35 @@ export interface AuditRow {
 
 const PK = 'AUDIT'
 
+/**
+ * The last sort key this process handed out.
+ *
+ * `pk` + `ts` IS THE WHOLE PRIMARY KEY, so two rows written in the same
+ * millisecond are not two rows — the second is a PutItem over the first and the
+ * first is gone, with nothing logged and nothing to notice. One millisecond
+ * used to be comfortably longer than the gap between any two admin actions;
+ * closing a player's other cases after a permanent ban writes rows in a LOOP,
+ * which is the first thing in this console that can genuinely queue several
+ * inside one tick.
+ *
+ * SO A TIE IS BROKEN FORWARD, never backward: the row lands a millisecond late
+ * rather than on top of its predecessor. It stays a real timestamp — the skew
+ * is bounded by how many rows one request writes — and the ordering the log is
+ * read in is preserved exactly.
+ *
+ * THIS IS PER PROCESS AND CANNOT BE ANYTHING ELSE. Two consoles writing in the
+ * same millisecond still collide; that needs a different key (see the note on
+ * `pk`) and is not worth a migration for an event nothing has ever observed.
+ * What it does remove is the one case this code can actually cause.
+ */
+let lastTs = 0
+
+function nextTs(): number {
+  const now = Date.now()
+  lastTs = now > lastTs ? now : lastTs + 1
+  return lastTs
+}
+
 export interface Actor {
   license: string | null
   name: string
@@ -150,7 +179,7 @@ export async function begin(input: {
   detail?: AuditRow['detail']
 }): Promise<AuditHandle> {
   const commandId = randomUUID()
-  const ts = Date.now()
+  const ts = nextTs()
 
   const row: AuditRow = {
     pk: PK,
@@ -276,6 +305,16 @@ const PROFILE_WINDOW = 400
  * half at the boundary and leave the second row of it standing alone. The caller
  * groups first and bounds the result afterwards; `PROFILE_WINDOW` is the real
  * ceiling either way.
+ *
+ * `against` IS SLICED, AND THAT IS WHY {@link closedByABan} EXISTS. A permanent
+ * ban closes every other open case about the same player, and each closure is an
+ * `incident.resolve` row TARGETING that player, written a moment AFTER the
+ * `ban.issue` row. Fifty of them are fifty rows newer than the ban — so a plain
+ * `filter(target).slice(0, 50)` would hand the profile fifty closures and drop
+ * the ban itself, and the panel that exists to say "this person is banned" would
+ * be empty on the one profile where that mattered most. The rows are dropped
+ * BEFORE the slice rather than after, because after is too late: the ban is
+ * already outside the window by then.
  */
 export async function forPlayer(
   license: string,
@@ -283,9 +322,32 @@ export async function forPlayer(
 ): Promise<{ against: AuditRow[]; taken: AuditRow[] }> {
   const rows = await recent(PROFILE_WINDOW)
   return {
-    against: rows.filter((r) => r.targetLicense === license).slice(0, limit),
+    against: rows
+      .filter((r) => r.targetLicense === license && !closedByABan(r))
+      .slice(0, limit),
     taken: rows.filter((r) => r.actorLicense === license),
   }
+}
+
+/**
+ * A case closed BY a ban, rather than a decision anybody took about this player.
+ *
+ * NOTHING IS HIDDEN THAT WAS EVER SHOWN. The profile's "Kicks and bans" panel
+ * already discards every `incident.resolve` row unconditionally — closing a
+ * report is not something done to the player (see `NOT_AN_ACTION` in
+ * components/ProfileView) — so these rows have no reader on this side of the
+ * log. They are still in `/audit` and still in the table, which is where the
+ * append-only record lives.
+ *
+ * NARROWER THAN THAT FILTER ON PURPOSE. This does not drop the enforcement
+ * `player.kick` that also carries `becauseOf: 'ban.issue'`: being removed from a
+ * match IS something that happened to the player, it is one row rather than
+ * fifty, and it has been on that panel since bans started kicking.
+ */
+function closedByABan(row: AuditRow): boolean {
+  return (
+    row.action === 'incident.resolve' && row.detail?.becauseOf === 'ban.issue'
+  )
 }
 
 export async function recent(limit = 100): Promise<AuditRow[]> {

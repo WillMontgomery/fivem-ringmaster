@@ -4,9 +4,11 @@ import { AppShell } from '@/components/AppShell'
 import { IncidentDetail } from '@/components/IncidentDetail'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 import {
+  AUTO_CLOSE_RESOLUTION,
   CATEGORY_LABEL,
   KIND_LABEL,
   VERDICT_LABEL,
+  type ClosedByBan,
   type Incident,
   type IncidentVerdict,
 } from '@/lib/incidents'
@@ -30,12 +32,17 @@ import { cn } from '@/lib/utils'
  *
  * TWO AXES, BECAUSE THEY ARE INDEPENDENT IN LIFE:
  *
- *   ?state=    pending, and the four ways a closed case can read —
- *              banned-perm, banned-temp, kicked, none, and `legacy`, which is a
- *              row resolved before the verdict field existed. `legacy` is the
- *              one to look at hardest: it must NOT read as "no action", because
- *              nobody recorded one, and the whole point of the field is that the
+ *   ?state=    pending, and the ways a closed case can read — banned-perm,
+ *              banned-temp, kicked, none, and `legacy`, which is a row resolved
+ *              before the verdict field existed. `legacy` is the one to look at
+ *              hardest: it must NOT read as "no action", because nobody
+ *              recorded one, and the whole point of the field is that the
  *              console stops guessing which closures involved an action.
+ *              `auto-linked` and `auto-on-demand` are the two shapes of a case
+ *              closed by a permanent ban issued elsewhere — the first links to
+ *              the case the ban came from, the second says "on-demand" because
+ *              there is none. Their note is a PLACEHOLDER awaiting the owner's
+ *              wording, and this is the only place it can be read.
  *
  *   ?subject=  the two facts that decide which verdicts are offered, in all four
  *              combinations —
@@ -133,7 +140,12 @@ const BASE_INCIDENT: Incident = {
  * `pending_review`, or a verdict with no `resolvedAt`, would be reviewing
  * something that cannot exist.
  */
-function closed(resolution: string, verdict: IncidentVerdict | null): Incident {
+function closed(
+  resolution: string,
+  verdict: IncidentVerdict | null,
+  /** Set only on a case a permanent ban closed. See lib/incidents. */
+  closedByBan?: ClosedByBan,
+): Incident {
   return {
     ...BASE_INCIDENT,
     state: 'resolved',
@@ -142,6 +154,7 @@ function closed(resolution: string, verdict: IncidentVerdict | null): Incident {
     resolvedByName: 'Preview Admin',
     resolution,
     verdict,
+    ...(closedByBan ? { closedByBan } : {}),
     events: [
       ...BASE_INCIDENT.events,
       {
@@ -196,6 +209,39 @@ const STATE_CASES = {
    * for the field, standing on one page.
    */
   legacy: closed('Banned for 7 days', null),
+
+  /*
+   * ═══ CLOSED BY A PERMANENT BAN ISSUED SOMEWHERE ELSE ═══
+   *
+   * The owner: "for any permanent bans that take place - all other incidents
+   * against the freshly banned player should be resolved … and a note saying
+   * why, with a hyperlink to the original incident where they were banned from,
+   * if there was one."
+   *
+   * THESE TWO ARE HERE TO BE READ RATHER THAN TO BE TESTED. The verdict, the
+   * link and the counts are all asserted by `check:verdict` against the real
+   * writer; what nothing can assert is whether the SENTENCE is the one the owner
+   * wants, and that sentence is a placeholder written by the task that built
+   * this. It is unreachable on a real console — every one of these rows is
+   * created by a ban and can never be re-resolved — so a harness is the only
+   * place it can be looked at before it is somebody's permanent record.
+   *
+   * THE PAIR IS THE POINT. `auto-linked` came from a ban issued as another
+   * case's verdict and links to it; `auto-on-demand` came from a ban issued
+   * straight off a profile, where there is no case and the page says so in the
+   * owner's own words rather than rendering a dead link.
+   */
+  'auto-linked': closed(
+    AUTO_CLOSE_RESOLUTION,
+    { action: 'ban', expiresAt: null },
+    { fromIncidentId: 'aaaaaaaa-0000-4000-8000-000000000003' },
+  ),
+
+  'auto-on-demand': closed(
+    AUTO_CLOSE_RESOLUTION,
+    { action: 'ban', expiresAt: null },
+    { fromIncidentId: null },
+  ),
 
   /*
    * NOBODY FILED THIS. An anticheat escalation has no reporter and its category

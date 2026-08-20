@@ -376,6 +376,39 @@ export function IncidentDetail({
               {incident.resolution}
             </p>
           )}
+          {/*
+            WHERE THE BAN WAS ACTUALLY DECIDED, when it was not decided here.
+
+            THE LINK IS BUILT FROM A STRUCTURED FIELD, NOT FOUND IN THE TEXT. The
+            resolution above is free text an admin never typed on this case, and
+            an incident id interpolated into a sentence would be an id in a value
+            that gets copied around — see the note on AUTO_CLOSE_RESOLUTION. The
+            id lives in `closedByBan`, which is what this reads.
+
+            AND WHEN THERE IS NO CASE TO POINT AT, IT SAYS SO IN THE OWNER'S OWN
+            WORDS — "banned on-demand" — rather than rendering a dead anchor or
+            an "n/a". A ban issued from the profile page is not a ban whose
+            incident is missing; it is a ban that was never an incident verdict.
+          */}
+          {incident.closedByBan && (
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              The ban that closed this was issued{' '}
+              {incident.closedByBan.fromIncidentId ? (
+                <>
+                  on another{' '}
+                  <Link
+                    href={`/incidents/${incident.closedByBan.fromIncidentId}`}
+                    className="underline underline-offset-2 transition-colors hover:text-foreground"
+                  >
+                    incident
+                  </Link>
+                </>
+              ) : (
+                'on-demand'
+              )}
+              .
+            </p>
+          )}
           <p className="mt-1 text-xs text-muted-foreground/70">
             {incident.resolvedByName}
             {incident.resolvedAt ? (

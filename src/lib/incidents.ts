@@ -136,6 +136,41 @@ export function actionWasTaken(v: IncidentVerdict | null | undefined): boolean {
   return v != null && v.action !== 'none'
 }
 
+/**
+ * WHY A CASE CLOSED WHEN NOBODY DECIDED ANYTHING ON IT.
+ *
+ * A permanent ban closes every other open case about the same player (owner:
+ * "for any permanent bans that take place — all other incidents against the
+ * freshly banned player should be resolved … with a note saying why, with a
+ * hyperlink to the original incident where they were banned from, if there was
+ * one"). Those closures carry a REAL `ban` verdict — see the note on
+ * {@link closeOthersOnPermanentBan} for why that is the truthful shape and not a
+ * convenient one — and this attribute is what distinguishes them from the one
+ * case an admin actually banned FROM.
+ *
+ * IT IS A SIBLING OF `verdict`, NEVER A KEY INSIDE IT. The verdict map is a
+ * cross-repository contract with exactly two shapes for a ban (`action`, and
+ * `expiresAt` if and only if the action is a ban); the game's reader ignores
+ * anything else, and a third key inside that map would be this console adding a
+ * field to a structure another repository documents. Provenance is a fact about
+ * the CLOSURE, not about the verdict, and it lives beside it.
+ *
+ * ABSENT IS THE ORDINARY CASE and means what it has always meant: a human
+ * closed this case, on this case.
+ */
+export interface ClosedByBan {
+  /**
+   * The incident the ban was issued from, or null.
+   *
+   * NULL IS NOT A MISSING VALUE. A ban issued from the profile page rather than
+   * as an incident verdict is an ON-DEMAND ban (owner: "for the bans issued from
+   * the profile page — there's nothing to link to, so let's just say banned
+   * on-demand"), and there is no case to point at because no case was involved.
+   * The UI renders those words rather than a dead link or an "n/a".
+   */
+  fromIncidentId: string | null
+}
+
 /** One thing that happened to this incident. Append-only. */
 export interface IncidentEvent {
   at: number
@@ -193,6 +228,15 @@ export interface Incident {
    * stop anybody doing.
    */
   verdict?: IncidentVerdict | null
+
+  /**
+   * Set only when this case was closed by a permanent ban issued somewhere else.
+   *
+   * See {@link ClosedByBan}. Written in the same conditional update as `state`
+   * and `verdict`, so a row can never be an auto-closure with its provenance
+   * still in flight.
+   */
+  closedByBan?: ClosedByBan | null
 
   /**
    * S3 keys for capture frames, when the subject was still in the match.
@@ -463,6 +507,20 @@ export async function open(input: {
  * incident that says nothing, which is the exact state this field was added to
  * abolish — and the caller that "forgets" it is precisely the caller whose
  * closure #168 would then never pay for.
+ *
+ * `closedByBan` RIDES ON THE SAME WRITE and does not get one of its own, which
+ * is the same argument as the verdict's one line up: a second write would mean a
+ * window in which a row is closed with a `ban` verdict and no sign that the ban
+ * was issued on another case — and something reading it in that window would
+ * count one ban twice. There is exactly one update that can move an incident to
+ * `resolved`, and everything that describes the closure goes in it.
+ *
+ * REFUSAL IS DISTINGUISHED FROM FAILURE in the return, because they are
+ * different events and one caller acts on the difference. A refusal is the
+ * no-reopen rule working — somebody else closed this case first — and is an
+ * ordinary outcome; a failure is the database. See
+ * {@link closeOthersOnPermanentBan}, which counts them separately because a
+ * sweep nobody is watching has to be able to say which of the two it hit.
  */
 export async function resolve(input: {
   incidentId: string
@@ -470,7 +528,11 @@ export async function resolve(input: {
   byName: string
   resolution: string
   verdict: IncidentVerdict
-}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  /** Provenance, when the decision was not taken on THIS case. */
+  closedByBan?: ClosedByBan
+}): Promise<
+  { ok: true } | { ok: false; reason: string; refused: boolean }
+> {
   const now = Date.now()
 
   const event: IncidentEvent = {
@@ -481,39 +543,68 @@ export async function resolve(input: {
     text: input.resolution,
   }
 
+  /**
+   * Built rather than written out because ONE of the assignments is optional and
+   * an unused `:placeholder` is a ValidationException on a moderation write —
+   * DynamoDB rejects an ExpressionAttributeValues entry the expression never
+   * names. The set below and the values below it are added together or not at
+   * all.
+   */
+  const sets = [
+    '#s = :resolved',
+    'resolvedAt = :now',
+    'resolvedByLicense = :by',
+    'resolvedByName = :byName',
+    'resolution = :res',
+    '#verdict = :verdict',
+    'events = list_append(events, :ev)',
+  ]
+
+  const values: Record<string, unknown> = {
+    ':resolved': 'resolved' satisfies IncidentState,
+    ':pending': 'pending_review' satisfies IncidentState,
+    ':now': now,
+    ':by': input.byLicense,
+    ':byName': input.byName,
+    ':res': input.resolution,
+    ':verdict': input.verdict,
+    ':ev': [event],
+  }
+
+  if (input.closedByBan) {
+    sets.push('closedByBan = :cbb')
+    values[':cbb'] = input.closedByBan
+  }
+
   try {
     await ddb.update({
       TableName: tables.incidents,
       Key: { incidentId: input.incidentId },
-      UpdateExpression:
-        'SET #s = :resolved, resolvedAt = :now, resolvedByLicense = :by, ' +
-        'resolvedByName = :byName, resolution = :res, #verdict = :verdict, ' +
-        'events = list_append(events, :ev)',
+      UpdateExpression: `SET ${sets.join(', ')}`,
       ConditionExpression: 'attribute_exists(incidentId) AND #s = :pending',
       // `#verdict` is aliased for the same reason `#s` is: neither name is worth
       // checking against DynamoDB's reserved-word list on every edit, and the
       // failure mode is a ValidationException on a moderation write.
       ExpressionAttributeNames: { '#s': 'state', '#verdict': 'verdict' },
-      ExpressionAttributeValues: {
-        ':resolved': 'resolved' satisfies IncidentState,
-        ':pending': 'pending_review' satisfies IncidentState,
-        ':now': now,
-        ':by': input.byLicense,
-        ':byName': input.byName,
-        ':res': input.resolution,
-        ':verdict': input.verdict,
-        ':ev': [event],
-      },
+      ExpressionAttributeValues: values,
     })
     countCache = null
     return { ok: true }
   } catch (e) {
     const name = (e as { name?: string }).name
     if (name === 'ConditionalCheckFailedException') {
-      return { ok: false, reason: 'Already resolved, or no longer exists.' }
+      return {
+        ok: false,
+        reason: 'Already resolved, or no longer exists.',
+        refused: true,
+      }
     }
     console.error('[incidents] resolve failed', e)
-    return { ok: false, reason: 'The database refused the change.' }
+    return {
+      ok: false,
+      reason: 'The database refused the change.',
+      refused: false,
+    }
   }
 }
 
@@ -536,26 +627,31 @@ export async function resolve(input: {
  * already gives: the two-phase intent/outcome shape exists for actions that
  * reach out to something that can fail slowly, and this one has already
  * succeeded against a conditional write by the time we get here.
+ *
+ * EXCEPT WHEN NOBODY IS WATCHING, which is the one case that inverts it. A
+ * closure an admin asked for reports its own refusal to the admin who asked —
+ * they are looking at a toast about it. An AUTOMATIC closure (`closedByBan`) has
+ * no such reader: it happens in a loop after a ban, and if the write is refused
+ * or the database fails, an after-the-fact audit row is never written and the
+ * attempt leaves no trace anywhere. So that path records the intent FIRST and
+ * stamps the outcome afterwards, which is what lib/audit's two-phase shape is
+ * for and what its header says a success-only log costs. Same function, same
+ * `incident.resolve` row, same fields — only the order changes.
  */
 export async function closeWithVerdict(input: {
   incident: Incident
   actor: audit.Actor
   resolution: string
   verdict: IncidentVerdict
-}): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const result = await resolve({
-    incidentId: input.incident.incidentId,
-    // The actor always has a license here — authorize() resolves the session to
-    // a grants row, and grants are keyed on license.
-    byLicense: input.actor.license ?? '',
-    byName: input.actor.name,
-    resolution: input.resolution,
-    verdict: input.verdict,
-  })
+  /**
+   * Present only when this closure follows a permanent ban issued on another
+   * case (or on no case at all). See {@link ClosedByBan}.
+   */
+  closedByBan?: ClosedByBan
+}): Promise<{ ok: true } | { ok: false; reason: string; refused: boolean }> {
+  const automatic = input.closedByBan !== undefined
 
-  if (!result.ok) return result
-
-  const handle = await audit.begin({
+  const intent: Parameters<typeof audit.begin>[0] = {
     action: 'incident.resolve',
     actor: input.actor,
     targetLicense: input.incident.subjectLicense,
@@ -568,11 +664,273 @@ export async function closeWithVerdict(input: {
       ...(input.verdict.action === 'ban'
         ? { expiresAt: input.verdict.expiresAt }
         : {}),
+      /**
+       * THE SAME TELL THE ENFORCEMENT KICK CARRIES, and deliberately the same
+       * string. Banning a connected player writes a `player.kick` row with
+       * `becauseOf: 'ban.issue'` meaning "this is the ban being carried out, not
+       * a second decision" — and a case closed BY that ban is the same claim
+       * about the same act. lib/actionsTaken.ts drops both on one rule, which is
+       * what keeps one ban reading as one ban on a moderator's profile no matter
+       * how many cases it closed.
+       *
+       * The originating case does NOT carry it: that closure IS the admin's
+       * decision, and it folds into its `ban.issue` row by `incidentId` exactly
+       * as it always has.
+       */
+      ...(automatic ? { becauseOf: 'ban.issue' } : {}),
     },
+  }
+
+  const early = automatic ? await audit.begin(intent) : null
+
+  const result = await resolve({
+    incidentId: input.incident.incidentId,
+    // The actor always has a license here — authorize() resolves the session to
+    // a grants row, and grants are keyed on license.
+    byLicense: input.actor.license ?? '',
+    byName: input.actor.name,
+    resolution: input.resolution,
+    verdict: input.verdict,
+    ...(input.closedByBan ? { closedByBan: input.closedByBan } : {}),
   })
+
+  if (!result.ok) {
+    if (early) await audit.resolve(early.ts, 'failed', result.reason)
+    return result
+  }
+
+  const handle = early ?? (await audit.begin(intent))
   await audit.resolve(handle.ts, 'ok')
 
   return { ok: true }
+}
+
+/**
+ * How many other cases one permanent ban may close.
+ *
+ * BOUNDED BECAUSE THE INPUT IS NOT. A prolific cheater accumulates reports
+ * faster than anybody closes them — reports are rate-limited per player per
+ * match, not per subject — so "every open case about this player" is a number
+ * nothing in this system caps. Each closure is two round trips inside an HTTP
+ * request that has ALREADY banned somebody, and a request that runs long enough
+ * to be killed would leave the admin looking at an error for a ban that
+ * succeeded.
+ *
+ * OVER THE CAP IS REPORTED, NEVER SILENT — the same rule `SCAN_LIMIT` follows a
+ * few hundred lines up, and for the same reason: a sweep that quietly stops at
+ * fifty reads exactly like a player who only had fifty. What is left over stays
+ * `pending_review`, which is where it already was and where a human can still
+ * see it.
+ *
+ * EXPORTED SO THE CAP CAN BE CHECKED RATHER THAN ASSUMED. `check:verdict` drives
+ * the real sweep over more cases than this and asserts what it leaves behind; a
+ * ceiling written down in two places would be a ceiling the check eventually
+ * stops describing.
+ */
+export const AUTO_CLOSE_LIMIT = 50
+
+/**
+ * The sentence written onto every case this closes.
+ *
+ * PLACEHOLDER — THE OWNER HAS NOT GIVEN THE WORDS. It is the minimum factual
+ * statement: what happened, and that it happened elsewhere. It deliberately does
+ * NOT claim the report was accurate, does not name the case the ban came from
+ * (the link does that, from a structured field, so no incident id is ever
+ * interpolated into free text) and does not say what the reporter earned.
+ *
+ * ADMIN-FACING, LIKE EVERY OTHER `resolution`. It is stored on the row and in
+ * the audit log's `reason`; the game's projection of an incident (`projectVerdict`
+ * in the gamemode's br_ddb) carries `action`, `expiresAt`, `resolvedAt` and three
+ * derived booleans, and no free text at all — so nothing here reaches a reporter.
+ */
+export const AUTO_CLOSE_RESOLUTION =
+  'Closed automatically — a permanent ban was issued against this player while ' +
+  'this case was open.'
+
+/** What one sweep did. Every number is reported; none of them is inferred. */
+export interface AutoCloseOutcome {
+  /**
+   * FALSE MEANS NOTHING BELOW HAPPENED. A temporary ban does not close anything
+   * — no read, no write, no audit row — and this is how the caller knows the
+   * zeroes mean "not attempted" rather than "nothing to do".
+   */
+  permanent: boolean
+  /** Other cases still awaiting review, before the cap. */
+  found: number
+  closed: number
+  /** The conditional update refused: a human closed it first. Not an error. */
+  refused: number
+  /** The database failed. Those cases are untouched and still pending. */
+  failed: number
+  /** Found beyond {@link AUTO_CLOSE_LIMIT} and deliberately not attempted. */
+  leftOpen: number
+  /** The lookup itself failed, so nothing was even considered. */
+  lookupFailed: boolean
+}
+
+/**
+ * Close every OTHER open case about a player who has just been banned forever.
+ *
+ * ═══ THE OWNER'S REQUIREMENT ═══
+ *
+ * "for any permanent bans that take place - all other incidents against the
+ * freshly banned player should be resolved as 'no action' and a note saying why,
+ * with a hyperlink to the original incident where they were banned from, if
+ * there was one."
+ *
+ * ═══ WHY THE VERDICT IS `ban` AND NOT `none` ═══
+ *
+ * `none` HAS A MEANING THIS IS NOT. It is read from another repository, where it
+ * means an admin looked and decided nothing was needed — and it is NOT payable,
+ * so writing it here would deny 250 Volts to every reporter who correctly
+ * flagged a player who turned out to warrant a permanent ban. The owner ruled
+ * that those reports get paid: they were accurate, they simply were not the case
+ * the ban was issued from.
+ *
+ * SO THE VERDICT IS WHAT ACTUALLY HAPPENED. The outcome of these cases is that
+ * the player was permanently banned, and `{ action: 'ban', expiresAt: null }` is
+ * that sentence in the contract's own words. It needs no change to the contract,
+ * it reads as `payable` through the game's real reader, and it is true.
+ *
+ * A THIRD VERDICT VALUE WAS THE OBVIOUS ALTERNATIVE AND IS WORSE. Something like
+ * `banned_elsewhere` would be more precise here and would be read by the game as
+ * an action it does not recognise — which its reader correctly narrows to `null`,
+ * i.e. "do not know", i.e. NOT payable. It would break the one property the
+ * owner asked for while looking like the careful choice, and it would change a
+ * contract `check:verdict` exists to hold still.
+ *
+ * WHAT CARRIES THE DIFFERENCE INSTEAD is `closedByBan` on the row: same verdict,
+ * plus where the decision was actually made. See {@link ClosedByBan}.
+ *
+ * ═══ WHAT THIS WILL NOT DO ═══
+ *
+ * ONLY A PERMANENT BAN, decided by `expiresAt === null` ON THE ROW THAT WAS
+ * ACTUALLY WRITTEN — not on the `days` a browser sent, and not on anything the
+ * caller computed. A temporary ban returns immediately having read nothing.
+ *
+ * ONLY THIS PLAYER'S CASES, matched on `subjectLicense` against the license the
+ * ban was issued for. There is no name matching and no fuzzy anything: these
+ * closures are irreversible, so the selection is an equality test on the same
+ * identifier every table in this console is keyed on.
+ *
+ * NEVER THE CASE THE BAN CAME FROM. That one is closed by the ban route with the
+ * admin's own reason, and it is excluded here by id rather than left to the
+ * conditional update to refuse — a refusal would be indistinguishable from
+ * losing a race, and the number this returns would be a lie about the one case
+ * the admin was actually looking at.
+ *
+ * NEVER A CASE THAT IS ALREADY RESOLVED, twice over: they are filtered out
+ * before the loop, and `resolve()`'s condition would refuse them anyway. This is
+ * not a second way to resolve an incident — it is the same single conditional
+ * update, which is what makes "a bulk close cannot resolve a closed case" a
+ * property of the database rather than of this loop.
+ *
+ * ═══ AND WHEN THE BAN IS LIFTED ═══
+ *
+ * NOTHING REOPENS. Incidents have two states and no way back (owner,
+ * 2026-08-12) and verdicts cannot be changed after the fact (owner, 2026-08-17),
+ * so a lift cannot walk these back and must not try. It does not strand them
+ * either: the verdict remains true — that player WAS permanently banned when
+ * this case was closed — the lift is a `ban.lift` row on the same profile, and
+ * `lift()` in lib/bans keeps the ban row rather than deleting it. An expiry
+ * cannot arise at all: this only ever runs when there is no expiry to reach.
+ *
+ * NEVER THROWS. It runs after a ban that has already happened to a person; an
+ * exception here would surface as a failed request for a successful ban and
+ * invite a retry that double-writes the log. Every failure is counted and
+ * returned.
+ */
+export async function closeOthersOnPermanentBan(input: {
+  /** The ban row as written. `expiresAt === null` is what "permanent" means. */
+  ban: { license: string; expiresAt: number | null }
+  /** The case the ban was issued from, or null for an on-demand ban. */
+  fromIncidentId: string | null
+  actor: audit.Actor
+}): Promise<AutoCloseOutcome> {
+  const outcome: AutoCloseOutcome = {
+    permanent: input.ban.expiresAt === null,
+    found: 0,
+    closed: 0,
+    refused: 0,
+    failed: 0,
+    leftOpen: 0,
+    lookupFailed: false,
+  }
+
+  if (!outcome.permanent) return outcome
+
+  let open: Incident[]
+  try {
+    open = (await forSubject(input.ban.license)).filter(
+      (i) =>
+        i.state === 'pending_review' &&
+        i.incidentId !== input.fromIncidentId,
+    )
+  } catch (e) {
+    console.error('[incidents] auto-close lookup failed', e)
+    outcome.lookupFailed = true
+    return outcome
+  }
+
+  outcome.found = open.length
+
+  /**
+   * OLDEST FIRST, like the queue itself. If the cap bites, the cases that get
+   * closed are the ones that have been waiting longest — the same reason
+   * `queue()` sorts the other way from every other list in this module.
+   */
+  const targets = [...open]
+    .sort((a, b) => a.openedAt - b.openedAt)
+    .slice(0, AUTO_CLOSE_LIMIT)
+
+  outcome.leftOpen = open.length - targets.length
+
+  /**
+   * SEQUENTIAL, NOT `Promise.all`. Each iteration is a conditional write plus
+   * two audit writes against tables sized for tens of actions a day, and firing
+   * fifty of those at once is how a moderation action becomes the thing that
+   * throttles a table. It also keeps the audit rows in an order a human can
+   * read.
+   *
+   * PARTIAL FAILURE IS A REAL OUTCOME AND IT IS SAFE. There is no transaction
+   * across these cases and there should not be — each close is one atomic
+   * conditional update, so the third one failing leaves the first two closed,
+   * the third exactly as it was, and the rest still to try. Nothing is ever
+   * half-written, every attempt leaves an `incident.resolve` audit row saying
+   * whether it landed, and anything that did not close is still `pending_review`
+   * in the queue where a human will find it.
+   */
+  for (const incident of targets) {
+    try {
+      const res = await closeWithVerdict({
+        incident,
+        actor: input.actor,
+        resolution: AUTO_CLOSE_RESOLUTION,
+        verdict: { action: 'ban', expiresAt: null },
+        closedByBan: { fromIncidentId: input.fromIncidentId },
+      })
+
+      if (res.ok) outcome.closed++
+      else if (res.refused) outcome.refused++
+      else outcome.failed++
+    } catch (e) {
+      /**
+       * THE ONE FAILURE THAT LEAVES NO ROW. `closeWithVerdict` swallows a failed
+       * incident write and reports it, but `audit.begin` throws — deliberately,
+       * because an unlogged admin action is what that table exists to prevent.
+       * Here that means the audit row itself could not be written, so the
+       * operator log is the only place left to say so, and the case stays
+       * pending.
+       */
+      console.error('[incidents] auto-close failed', {
+        incidentId: incident.incidentId,
+        e,
+      })
+      outcome.failed++
+    }
+  }
+
+  return outcome
 }
 
 /**

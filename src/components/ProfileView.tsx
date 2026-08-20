@@ -700,6 +700,26 @@ const ACTION_TAKEN_LABEL: Record<string, string> = {
 }
 
 /**
+ * The two acts that can be taken WITHOUT a case behind them.
+ *
+ * "ON-DEMAND" IS THE OWNER'S WORD AND IT NAMES A FEATURE, not a missing value:
+ * "for the bans issued from the profile page — there's nothing to link to, so
+ * let's just say banned on-demand. That's what we'll call that feature on the
+ * profile page I guess lol — kicks/bans on-demand."
+ *
+ * WHICH DISTINCTION WAS ALREADY ON THIS ROW AND WAS INVISIBLE. A ban decided on
+ * an incident renders a link to it; a ban decided from a profile rendered
+ * nothing at all, so "no case" and "the link is missing" looked identical. Now
+ * one of them says which it is, in the same slot, in the owner's words.
+ *
+ * `ban.lift` IS NOT IN HERE and neither is `incident.resolve`. A lift is never
+ * decided on a case, so calling it on-demand would be marking every one of them
+ * with a distinction that has no other side; a closure always has an incident by
+ * definition. The owner named kicks and bans, and those are the two.
+ */
+const ON_DEMAND = new Set(['ban.issue', 'player.kick'])
+
+/**
  * An action that was dispatched and did not land, on a row that otherwise looks
  * exactly like one that did.
  *
@@ -1063,8 +1083,13 @@ function ActionsTakenPanel({
                       <LocalTime ms={a.at} /> · {ago(a.at, now)}
                       {/* THE INCIDENT, LINKED WHERE THERE IS ONE. A link needs a
                           label; this one is the noun naming its destination and
-                          not a phrase about it. */}
-                      {a.incidentId && (
+                          not a phrase about it.
+
+                          AND WHERE THERE IS NONE, THE OWNER'S WORD FOR THAT —
+                          see ON_DEMAND. Not a link and not styled as one:
+                          there is nowhere for it to go, which is the whole
+                          fact it is stating. */}
+                      {a.incidentId ? (
                         <>
                           {' · '}
                           <Link
@@ -1074,7 +1099,9 @@ function ActionsTakenPanel({
                             incident
                           </Link>
                         </>
-                      )}
+                      ) : ON_DEMAND.has(a.action) ? (
+                        <> · on-demand</>
+                      ) : null}
                       {a.outcome === 'failed' && <DidNotHappen />}
                     </div>
                   </div>

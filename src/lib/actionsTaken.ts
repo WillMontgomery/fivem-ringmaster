@@ -26,6 +26,18 @@ import type { ProfileActionTaken } from './profile'
  * read "Banned Vance" and "Kicked Vance" one millisecond apart would be counting
  * one act twice in a different costume, so that row folds too.
  *
+ * AND SINCE THE AUTO-CLOSURE, THE SECOND PAIR IS NOT A PAIR — IT IS A CROWD. A
+ * permanent ban closes every other open case about the same player, each with a
+ * genuine `ban` verdict (see `closeOthersOnPermanentBan` in lib/incidents for why
+ * that verdict is the truthful one), so ONE ban can now write five, or fifty,
+ * `incident.resolve` rows. They cannot be grouped with the ban the way the
+ * originating closure is — each names a DIFFERENT `incidentId`, which is the
+ * grouping key — so a rule that only knew about pairs would have shown one ban
+ * as fifty-one acts. Every one of those rows carries the same
+ * `detail.becauseOf: 'ban.issue'` the enforcement kick does, meaning the same
+ * thing it has always meant: this is the ban being carried out, not a decision
+ * of its own.
+ *
  * ═══ THE GROUPING RULE, IN FULL ═══
  *
  * 1. Keep only the four actions that are moderation of a PLAYER: `ban.issue`,
@@ -34,8 +46,11 @@ import type { ProfileActionTaken } from './profile'
  *    server rather than acting on a person, and the `discord.*` rows are the
  *    CONSOLE refusing or logging a write, not an action anybody took.
  *
- * 2. Drop `player.kick` rows whose `detail.becauseOf` is `ban.issue`. The
- *    `ban.issue` row beside them is the act.
+ * 2. Drop every row whose `detail.becauseOf` is `ban.issue`, whatever its action
+ *    — the enforcement kick, and every case the ban closed automatically. The
+ *    `ban.issue` row is the act. It is one rule rather than one per action
+ *    because it is one fact: that string is written by the ban path and by
+ *    nothing else, and it says the row is a consequence rather than a decision.
  *
  * 3. Group what is left by `detail.incidentId`. Rows with no incident id are
  *    never grouped with anything — they are their own act by definition.
@@ -139,8 +154,9 @@ export function actionsTakenFrom(rows: ActedRow[]): ProfileActionTaken[] {
   const kept = rows.filter(
     (r) =>
       COUNTED.has(r.action) &&
-      // Rule 2: the kick that carries out a ban is not a second decision.
-      !(r.action === 'player.kick' && str(r.detail?.becauseOf) === 'ban.issue'),
+      // Rule 2: what a ban CAUSED is not a second decision. The kick that
+      // enforces it, and every case it closed automatically, say `ban.issue`.
+      str(r.detail?.becauseOf) !== 'ban.issue',
   )
 
   /**
