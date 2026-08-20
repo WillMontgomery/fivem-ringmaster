@@ -24,8 +24,19 @@
  * degraded, rose dead. An accent competing with those would be a bug.
  *
  * Tailwind 4 and oklch, unlike the gamemode's NUI, which is pinned to Tailwind
- * 3 because CEF is Chrome 103 and renders oklch colourless. That constraint
- * belongs to the game client and does not follow us into a real browser.
+ * 3 because CEF is Chrome 103 and renders oklch colourless.
+ *
+ * THIS COMMENT USED TO END: "That constraint belongs to the game client and
+ * does not follow us into a real browser." It followed us. The pause-menu
+ * Admin tab frames this console inside CEF, so Chrome 103 is now one of our
+ * targets and every token below was arriving unparseable -- the console
+ * rendered as an uncoloured wireframe with an invisible modal overlay over it.
+ *
+ * The tokens are still authored in oklch, which is what shadcn's registry
+ * emits and what this palette was tuned in. `postcss.config.mjs` downlevels
+ * them at build time, emitting an sRGB fallback ahead of each declaration and
+ * re-stating the original inside `@supports`. Keep authoring in oklch; do not
+ * hand-write fallbacks here.
  */
 
 :root {
@@ -405,6 +416,32 @@
   }
 
   /*
+   * CEF 103 HAS NO `color-mix()`, AND ITS AUTOMATIC FALLBACK IS WORSE THAN
+   * NOTHING HERE. Lightning CSS downlevels the two declarations above by
+   * emitting a plain value ahead of each one, guarded by `@supports`. For a
+   * mix it cannot compute -- and it cannot compute one against `currentColor`
+   * -- the plain value it emits is `currentColor` itself. So the chip's
+   * background becomes exactly its own text colour, on a rule whose first
+   * line is `color: inherit`. The chip does not lose its tint; it becomes
+   * text painted on itself, which is unreadable rather than merely plain.
+   *
+   * Everything else in this stylesheet degrades acceptably on Chrome 103 --
+   * an alpha collapses and a translucent border reads solid. This is the one
+   * place the generated fallback is actively wrong, so it is overridden
+   * rather than left to be found in a screenshot. The ring on the line below
+   * survives on its own: `inset 0 0 0 1px` with no colour already means
+   * `currentColor`, which is what the chip wants.
+   *
+   * Losing the tint costs the chip its fill in the pause-menu console only.
+   * Real browsers never see this block.
+   */
+  @supports not (color: color-mix(in lab, red, red)) {
+    .accent-surface [data-accent-chip] {
+      background-color: transparent;
+    }
+  }
+
+  /*
    * Motion.
    *
    * MOVEMENT MEANS SOMETHING ARRIVED OR CHANGED. Nothing loops, nothing floats,
@@ -545,5 +582,73 @@
   [data-slot="progress-indicator"][data-indeterminate] {
     transform: translateX(100%) !important;
     opacity: 0.85;
+  }
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * CEF 103 ONLY: TINTED CHIP FILLS GO TRANSPARENT RATHER THAN OPAQUE.
+ * ---------------------------------------------------------------------------
+ *
+ * Tailwind writes an opacity modifier as a color-mix() guarded by @supports,
+ * with a plain fallback ahead of it. Where the colour is a literal it computes
+ * an exact 8-digit hex and the fallback is perfect. Where the colour is a
+ * TOKEN it cannot resolve the var() at build time, so the fallback it emits is
+ * the bare token AT FULL OPACITY:
+ *
+ *     bg-warn/10  ->  background-color: var(--warn);
+ *                     @supports (color-mix) { color-mix(in oklab, var(--warn) 10%, transparent) }
+ *
+ * THAT IS NOT A COSMETIC LOSS, WHICH IS WHAT AN EARLIER PASS OF THIS WORK
+ * ASSUMED AND WROTE DOWN AS FACT IN A GATE COMMENT. Every chip in this console
+ * is one shape: a 5-20% tint of a status colour, under text of that SAME
+ * colour, inside a ring. Collapse the tint to full opacity and the fill becomes
+ * exactly the ink, so the chip renders as a solid lozenge with its own label
+ * invisible inside it. On the host page alone that was the LIVE badge,
+ * "Update available", "Feed lost", "scheduled", two filter chips, and the
+ * signed-in user's avatar initials.
+ *
+ * SO CEF GETS NO FILL AT ALL. The text keeps its colour and the ring keeps its
+ * shape -- a ring collapsing to full opacity is merely a firmer edge -- and the
+ * chip still reads as a chip. Restoring the real tint would mean a
+ * hand-maintained rgba for all of these in BOTH themes, duplicating colour
+ * components that already exist exactly once, and every copy would drift the
+ * next time the palette moves. A missing tint is worth more than a wrong one.
+ *
+ * ATTRIBUTE SELECTORS, NOT CLASS SELECTORS, because the same utility also
+ * appears variant-prefixed -- hover:bg-danger/10, dark:bg-destructive/20 --
+ * and those are different class names for the identical problem. A substring
+ * match catches every form of it.
+ *
+ * UNLAYERED ON PURPOSE. Tailwind's utilities live in @layer utilities, and an
+ * unlayered rule beats a layered one whatever the source order. This has to
+ * win, and it should not depend on where in the file it happens to sit.
+ *
+ * The list is generated from real call sites; npm run check:cef fails if a new
+ * tinted utility appears in the stylesheet without an entry here.
+ */
+@supports not (color: color-mix(in lab, red, red)) {
+  [class*="bg-danger/10"],
+  [class*="bg-danger/20"],
+  [class*="bg-danger/5"],
+  [class*="bg-destructive/10"],
+  [class*="bg-destructive/20"],
+  [class*="bg-destructive/30"],
+  [class*="bg-info/10"],
+  [class*="bg-info/15"],
+  [class*="bg-info/20"],
+  [class*="bg-info/5"],
+  [class*="bg-live/10"],
+  [class*="bg-phase-bus/10"],
+  [class*="bg-phase-drop/10"],
+  [class*="bg-phase-storm/10"],
+  [class*="bg-phase-warmup/10"],
+  [class*="bg-primary/10"],
+  [class*="bg-primary/15"],
+  [class*="bg-primary/5"],
+  [class*="bg-warn/10"],
+  [class*="bg-warn/15"],
+  [class*="bg-warn/5"] {
+    background-color: transparent;
   }
 }
