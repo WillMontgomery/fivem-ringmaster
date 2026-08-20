@@ -51,7 +51,9 @@ import { thresholdFor } from '@/lib/xp'
  *                `banned-temp` counts down and was issued by `system`, `served`
  *                is a real ban that has run out — no chip at all, which is the
  *                case the owner asked for and the one a harness that only ever
- *                passed `bans: []` could never show
+ *                passed `bans: []` could never show. `banned-online` is the pair
+ *                for the Kick button's rule: connected AND banned, so a missing
+ *                Kick is the ban hiding it rather than absence disabling it
  *   ?names=      the names the "Other names" row is built from: never renamed,
  *                renamed twice, and enough to fill the line
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
@@ -742,6 +744,21 @@ const MOD_CASES = {
   offline: { online: false, canBan: true, ban: null },
   banned: { online: false, canBan: true, ban: ACTIVE_BAN },
   'banned-temp': { online: false, canBan: true, ban: TEMP_BAN },
+  /**
+   * BANNED AND STILL CONNECTED, which is the case the Kick button's new rule is
+   * actually about.
+   *
+   * "the kick button should not be displayed on the profile page when a ban is
+   * in place" — the owner. On every other banned case here the player is offline
+   * too, so the button was already disabled and its disappearance proves nothing.
+   * This one is the pair that separates "hidden because banned" from "disabled
+   * because absent": online, kickable in every other respect, and NO Kick button.
+   *
+   * It is a real state and a short-lived one — `/api/bans` kicks a connected
+   * player in the same request that bans them, so a profile opened in between,
+   * or one whose snapshot is a couple of seconds behind, sits here.
+   */
+  'banned-online': { online: true, canBan: true, ban: ACTIVE_BAN },
   served: { online: true, canBan: true, ban: SERVED_BAN },
   noscope: { online: true, canBan: false, ban: null },
 } as const
@@ -1320,6 +1337,12 @@ async function Preview({
         place that decides what banned means — so a harness that shortcut it to
         "there is a row" would show the chip on exactly the profile the owner
         asked to stop showing it on, and would go on passing.
+
+        IT NOW DRIVES THE KICK BUTTON TOO, which is why `served` matters twice
+        over: that player has a real ban row, is online, and MUST still have a
+        Kick button, because the ban has run out. One boolean, one rule, three
+        things reading it — the chip, the Ban/Lift ban button, and whether Kick
+        is drawn at all.
       */}
       <ProfileView
         p={p}
@@ -1327,7 +1350,10 @@ async function Preview({
         banned={banRow !== null && isActive(banRow, now)}
         categoryLabel={CATEGORY_LABEL}
         verdictLabel={VERDICT_LABEL}
-        moderation={MOD_CASES[mod]}
+        moderation={{
+          online: MOD_CASES[mod].online,
+          canBan: MOD_CASES[mod].canBan,
+        }}
       />
     </div>
   )

@@ -15,7 +15,6 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { postJson } from '@/lib/api'
-import type { Ban } from '@/lib/bans'
 
 /**
  * Kick and ban, for the player whose page this is.
@@ -40,17 +39,44 @@ import type { Ban } from '@/lib/bans'
  * THE LICENSE IS ALREADY IN HAND, which is the whole reason these live here
  * rather than only on a form that asks you to paste one. Copying an identifier
  * between panels is how the wrong player gets banned.
+ *
+ * ═══ "CURRENTLY BANNED" IS DECIDED ONCE, ON THE SERVER, AND ARRIVES AS A
+ *     BOOLEAN ═══
+ *
+ * This component USED TO RE-DERIVE IT — `ban && !ban.liftedAt && (expiresAt ===
+ * null || expiresAt > Date.now())`, a hand-copy of `bans.isActive` sitting one
+ * component away from the BANNED chip that reads the real thing. Two
+ * representations of one fact with nothing asserting they agree is this
+ * project's signature bug, and this pair could drift on the two axes that matter
+ * most: `Date.now()` here is the BROWSER's clock and a different instant from
+ * the server's `now`, and any future change to what "lifted" or "expired" means
+ * would land in `lib/bans` and not here.
+ *
+ * So the row is gone and `banned` comes down from `ProfileView`, which already
+ * has it: the profile page computes it as `bans.isActive(ban, now)` — the one
+ * rule — and hands the same boolean to the chip beside the player's name and to
+ * these buttons. They cannot disagree because there is only one of it.
+ *
+ * THE `ban` ROW ITSELF IS NO LONGER A PROP. It was only ever here to be reduced
+ * to that boolean, and a `Ban` shape passed to a component that does not read a
+ * single field of it is an invitation to start.
  */
 export function PlayerActions({
   license,
   name,
-  ban,
+  banned,
   online,
   canBan,
 }: {
   license: string
   name: string
-  ban: Ban | null
+  /**
+   * A ban IN FORCE right now — `bans.isActive`, decided on the server.
+   *
+   * NOT "there is a ban row". A ban that was served or lifted is history, and
+   * history must not take the kick button away or turn Ban into Lift ban.
+   */
+  banned: boolean
   /** On the server right now — decides whether a kick is even possible. */
   online: boolean
   canBan: boolean
@@ -60,8 +86,26 @@ export function PlayerActions({
   const [liftOpen, setLiftOpen] = useState(false)
   const [kickOpen, setKickOpen] = useState(false)
 
-  const active =
-    ban && !ban.liftedAt && (ban.expiresAt === null || ban.expiresAt > Date.now())
+  /**
+   * EVERY CONDITION ON THE KICK BUTTON, IN ONE PLACE, AND THEY ARE TWO
+   * DIFFERENT QUESTIONS.
+   *
+   *   shown    "the kick button should not be displayed on the profile page
+   *            when a ban is in place" — the owner. HIDDEN, not disabled: a
+   *            banned player is not somebody you kick, so there is no action
+   *            being withheld and nothing to grey out. Note the asymmetry with
+   *            the line below — `banned` removes the control, everything else
+   *            only stops it working.
+   *   enabled  the two conditions that were already here. `online`, because
+   *            there is nobody to remove otherwise, and `canBan`, because
+   *            kicking takes the scope. Both stay DISABLED-with-a-reason rather
+   *            than hidden, which is what they have always been.
+   *
+   * A banned player who is somehow still connected is a transient state —
+   * `/api/bans` kicks them in the same request — and it resolves towards the
+   * button being irrelevant either way.
+   */
+  const kick = { shown: !banned, enabled: online && canBan }
 
   const lift = async () => {
     try {
@@ -82,39 +126,43 @@ export function PlayerActions({
           out. Without the `ban` scope both buttons disable the same way and
           say why, which is where the removed "you can see this record but not
           act on it" paragraph went.
+
+          AND IT IS ABSENT ALTOGETHER WHILE A BAN IS IN FORCE — see `kick`
+          above. Nothing marks the gap: a caption or a ghost button explaining
+          the absence would be text nobody asked for.
         */}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                className={online && canBan ? undefined : 'cursor-not-allowed'}
-              />
-            }
-          >
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={!online || !canBan}
-              onClick={() => setKickOpen(true)}
+        {kick.shown && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <span className={kick.enabled ? undefined : 'cursor-not-allowed'} />
+              }
             >
-              <LogOut />
-              Kick
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            {!canBan
-              ? 'Kicking needs the ban scope, which this account does not have.'
-              : online
-                ? 'Remove them from the server now. Does not ban.'
-                : `${name} is not connected — there is nobody to kick.`}
-          </TooltipContent>
-        </Tooltip>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!kick.enabled}
+                onClick={() => setKickOpen(true)}
+              >
+                <LogOut />
+                Kick
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {!canBan
+                ? 'Kicking needs the ban scope, which this account does not have.'
+                : online
+                  ? 'Remove them from the server now. Does not ban.'
+                  : `${name} is not connected — there is nobody to kick.`}
+            </TooltipContent>
+          </Tooltip>
+        )}
 
         <Tooltip>
           <TooltipTrigger
             render={<span className={canBan ? undefined : 'cursor-not-allowed'} />}
           >
-            {active ? (
+            {banned ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -139,7 +187,7 @@ export function PlayerActions({
           <TooltipContent side="bottom">
             {!canBan
               ? 'Banning needs the ban scope, which this account does not have.'
-              : active
+              : banned
                 ? `Let ${name} join again. The ban record is kept.`
                 : online
                   ? 'Ban them. They are on the server, so it removes them immediately.'

@@ -413,7 +413,11 @@ export default async function PlayerProfilePage({
             banned={bannedNow}
             categoryLabel={incidents.CATEGORY_LABEL}
             verdictLabel={incidents.VERDICT_LABEL}
-            moderation={{ ban, online: live !== null, canBan }}
+            // `ban` NO LONGER TRAVELS HERE. Whether it is in force is
+            // `bannedNow` above — `bans.isActive`, the one rule — and it is
+            // already going over as `banned` on the line above. The moderation
+            // buttons read that same boolean now instead of re-deriving it.
+            moderation={{ online: live !== null, canBan }}
           />
         </div>
       </DiscordChromeProvider>

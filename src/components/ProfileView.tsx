@@ -43,8 +43,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-// Aliased: `Ban` in this file is already the lucide icon.
-import type { Ban as BanRecord } from '@/lib/bans'
+/*
+ * `import type { Ban as BanRecord } from '@/lib/bans'` USED TO BE HERE, aliased
+ * because `Ban` in this file is already the lucide icon. It went with the
+ * `moderation.ban` prop: nothing in this file reads a ban ROW any more — the
+ * chip reads `p.ban` for its card and `banned` for whether to draw at all, and
+ * the buttons take the same `banned`. See the `moderation` prop.
+ */
 import type { AccentSurface } from '@/lib/contrast'
 import { ago, humanDuration } from '@/lib/duration'
 import { filedByAPlayer, incidentChips, verdictTone } from '@/lib/incidentChip'
@@ -2104,10 +2109,19 @@ function SkeletonFigures({ n, className }: { n: number; className: string }) {
 }
 
 function ProfileSkeleton({
-  moderation,
+  moderationButtons,
   actionsTaken,
 }: {
-  moderation: boolean
+  /**
+   * How many buttons the moderation bar will have: 0 (no bar at all), 1 (a ban
+   * is in force, so Kick is not drawn) or 2.
+   *
+   * A COUNT RATHER THAN A BOOLEAN, since the Kick button became conditional. It
+   * is knowable here — `banned` comes from the server and owes nothing to
+   * Discord — so a skeleton that always drew two would leave an 88px hole in a
+   * right-aligned flex group on every banned player's page. See PlayerActions.
+   */
+  moderationButtons: number
   /** Whether the "Actions taken" panel is already certain to render. */
   actionsTaken: boolean
 }) {
@@ -2162,10 +2176,11 @@ function ProfileSkeleton({
                 <Skeleton className="h-4 w-20" />
               </div>
             </div>
-            {moderation && (
+            {moderationButtons > 0 && (
               <div className="flex gap-2">
-                <Skeleton className="h-9 w-20 rounded-md" />
-                <Skeleton className="h-9 w-20 rounded-md" />
+                {Array.from({ length: moderationButtons }, (_, i) => (
+                  <Skeleton key={i} className="h-9 w-20 rounded-md" />
+                ))}
               </div>
             )}
           </div>
@@ -2341,13 +2356,19 @@ export function ProfileView({
    * the server and handed across as a non-`children` prop trips React's dev key
    * check: it arrives unvalidated, and rendering it raises "Each child in a list
    * should have a unique key prop" on a page that has no such list. Passing the
-   * three facts and constructing the element here keeps it client-to-client, and
-   * keeps the console quiet enough that a real warning is still worth reading.
+   * facts and constructing the element here keeps it client-to-client, and keeps
+   * the console quiet enough that a real warning is still worth reading.
+   *
+   * IT CARRIED THE `Ban` ROW AND NO LONGER DOES. The only thing `PlayerActions`
+   * ever did with it was re-derive "is this ban in force" — a second copy of
+   * `bans.isActive`, standing beside the `banned` prop above, which IS that rule
+   * already evaluated on the server. The row is gone from both and `banned` is
+   * handed down instead, so the chip beside the player's name and the buttons in
+   * the same bar cannot disagree about the same ban. See PlayerActions.
    *
    * Omitted entirely by callers that must not offer the buttons at all.
    */
   moderation?: {
-    ban: BanRecord | null
     /** On the server right now — decides whether a kick is even possible. */
     online: boolean
     canBan: boolean
@@ -2386,7 +2407,9 @@ export function ProfileView({
   if (chromeState.status === 'loading') {
     return (
       <ProfileSkeleton
-        moderation={moderation !== undefined}
+        // Kick is not drawn while a ban is in force, so the bar is one button
+        // short there — and `banned` is known without Discord. See PlayerActions.
+        moderationButtons={moderation === undefined ? 0 : banned ? 1 : 2}
         actionsTaken={p.actionsTaken.length > 0}
       />
     )
@@ -2530,7 +2553,9 @@ export function ProfileView({
               <PlayerActions
                 license={p.license}
                 name={p.name}
-                ban={moderation.ban}
+                // THE SAME BOOLEAN THE CHIP ABOVE READS. Not a second reading of
+                // `p.ban` — see the `moderation` prop.
+                banned={banned}
                 online={moderation.online}
                 canBan={moderation.canBan}
               />
