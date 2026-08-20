@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { AppShell } from '@/components/AppShell'
 import { DiscordChromeProvider } from '@/components/DiscordChrome'
 import { ProfileView } from '@/components/ProfileView'
+import { actionsTakenFrom } from '@/lib/actionsTaken'
 import * as audit from '@/lib/audit'
 import { discordChromeFor } from '@/lib/discord'
 import * as bans from '@/lib/bans'
@@ -33,7 +34,10 @@ import { liveView } from '@/lib/state'
  *   incidents                   ringmaster-incidents, both directions
  *   match history               br-players, one `match#...` row per match (#153)
  *   face, banner, accent        Discord, live, on every render
+ *   admin role                  Discord, live, in parallel with the face — the
+ *                               same check lib/discordRole runs before writes
  *   discord name history        ringmaster-players, written when it changes
+ *   actions this admin took     the audit log again, filtered on actorLicense
  *
  * THE DISCORD HALF IS THE ONLY THING NOT AWAITED HERE, and the only thing on
  * this page that can be slow for a reason outside this system. It is handed to
@@ -89,7 +93,7 @@ export default async function PlayerProfilePage({
   // The real snapshot, not a fixture: are they on the server right now?
   const live = view.players.find((p) => p.license === license) ?? null
 
-  const [ban, canBan, record, game, matches, actions, against, filed] =
+  const [ban, canBan, record, game, matches, log, against, filed] =
     await Promise.all([
       bans.banFor(license),
       can(admin.license, 'ban'),
@@ -100,7 +104,9 @@ export default async function PlayerProfilePage({
       // are different operations, so they are different calls — but they run in
       // this same batch, so the page costs no extra round trip in wall time.
       gameMatchesFor(license),
-      audit.forTarget(license),
+      // ONE READ, BOTH DIRECTIONS. What was done to them, and — because this
+      // player may themselves be an admin — what they did. See audit.forPlayer.
+      audit.forPlayer(license),
       incidents.forSubject(license),
       incidents.filedBy(license),
     ])
@@ -290,7 +296,7 @@ export default async function PlayerProfilePage({
     // license, so a second ban overwrites the first — `p.ban` above is the
     // CURRENT ban only, and this is the history. They are different questions
     // and the page asks both.
-    actions: actions.map((a) => ({
+    actions: log.against.map((a) => ({
       at: a.ts,
       action: a.action,
       outcome: a.outcome,
@@ -298,6 +304,20 @@ export default async function PlayerProfilePage({
       actorLicense: a.actorLicense,
       reason: a.reason,
     })),
+
+    /*
+     * WHAT THIS PERSON DID, one row per act.
+     *
+     * COLLAPSED BEFORE IT IS BOUNDED, which is the order that matters: a ban
+     * issued as an incident verdict is TWO audit rows on purpose (#28), and
+     * slicing first could cut such a pair across the boundary. `actionsTakenFrom`
+     * is the whole of that rule and it is a pure function, so /preview/profile
+     * drives the same code with fixture rows rather than an imitation of it.
+     *
+     * FIFTY, matching what `forPlayer` allows the other direction. The panel
+     * pages at five, so this is a bound on the history rather than on the view.
+     */
+    actionsTaken: actionsTakenFrom(log.taken).slice(0, 50),
 
     // REAL NOW. Both directions matter: what has been filed against them, and
     // what they have filed against others -- somebody who reports everybody is

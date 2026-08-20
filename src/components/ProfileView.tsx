@@ -8,6 +8,8 @@ import {
   FileWarning,
   Flag,
   Flame,
+  Gavel,
+  Shield,
   Shirt,
   Skull,
   Swords,
@@ -15,7 +17,7 @@ import {
   User,
   Users,
 } from 'lucide-react'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import Link from 'next/link'
 
 import {
@@ -45,16 +47,18 @@ import {
 import type { Ban as BanRecord } from '@/lib/bans'
 import type { AccentSurface } from '@/lib/contrast'
 import { ago, humanDuration } from '@/lib/duration'
-import { filedByAPlayer, incidentChips } from '@/lib/incidentChip'
+import { filedByAPlayer, incidentChips, verdictTone } from '@/lib/incidentChip'
 import { labelFor } from '@/lib/labels'
 import type {
+  AdminRole,
   DiscordNameChange,
   Profile,
+  ProfileActionTaken,
   ProfileIdentifier,
   ProfileIncident,
   ProfileMatch,
 } from '@/lib/profile'
-import { formatCount } from '@/lib/time'
+import { formatCount, utcIso } from '@/lib/time'
 import { cn } from '@/lib/utils'
 import { nextThresholdFor } from '@/lib/xp'
 
@@ -668,6 +672,59 @@ function actionLabel(action: string): string {
 const NOT_AN_ACTION = new Set(['incident.resolve'])
 
 /**
+ * The same actions, worded for the OTHER direction: what this person DID.
+ *
+ * A SECOND MAP, NOT A SECOND SPELLING OF THE FIRST. `ACTION_LABEL` above reads
+ * as a thing that happened — "Banned", "Kicked" — because those rows sit on the
+ * profile of the person it happened TO. These rows sit on the profile of the
+ * person who did it, next to the name of somebody else, so they are verbs with an
+ * object: "Banned Vance", "Closed an incident about Vance". Reusing the first map
+ * would produce "Banned — Vance" on a panel titled "Actions taken", which reads
+ * as though the page's owner were the one banned.
+ *
+ * `incident.resolve` IS IN THIS ONE AND EXCLUDED FROM THE OTHER, which is the
+ * whole difference between the two panels. Closing a report is not something done
+ * to the subject — see `NOT_AN_ACTION` — but it is unambiguously something the
+ * ADMIN did, and it is the third of the three things the owner listed
+ * ("kicked, banned, or actioned an incident").
+ */
+const ACTION_TAKEN_LABEL: Record<string, string> = {
+  'ban.issue': 'Banned',
+  'ban.lift': 'Lifted the ban on',
+  'player.kick': 'Kicked',
+  'incident.resolve': 'Closed an incident about',
+}
+
+/**
+ * An action that was dispatched and did not land, on a row that otherwise looks
+ * exactly like one that did.
+ *
+ * THE OUTCOME BADGE IS GONE AND A FAILURE IS NOT. "OK / PENDING / FAILED" meant
+ * nothing to somebody reading a moderation history — a successful action does
+ * not need announcing, and a green tick beside almost every line trains the eye
+ * to skip the column where the one failure lives. An action that did NOT happen
+ * still needs saying: a kick shown identically to one that landed is a false
+ * record.
+ *
+ * ONE COMPONENT, TWO PANELS. The wording is the owner's from the Kicks-and-bans
+ * row and it now serves "Actions taken" as well — the SAME state, on the same
+ * page, about the same audit row read from the other end. Two copies of one
+ * sentence is how the two ends of one fact start disagreeing, and the second one
+ * would also have been a string this task authored rather than inherited.
+ */
+function DidNotHappen() {
+  return <span className="text-danger"> · did not go through</span>
+}
+
+/** The colour of the marker beside one action taken. */
+const ACTION_TAKEN_TONE: Record<string, string> = {
+  'ban.issue': 'bg-danger/10 text-danger ring-danger/25',
+  'player.kick': 'bg-warn/10 text-warn ring-warn/25',
+  'ban.lift': 'bg-muted/40 text-muted-foreground ring-border',
+  'incident.resolve': 'bg-info/10 text-info ring-info/25',
+}
+
+/**
  * FIVE ROWS A PAGE, ON EVERY PANEL OF THIS PAGE — the owner's number.
  *
  * This is a page you read top to bottom while deciding something about a
@@ -874,6 +931,168 @@ function IncidentList({
         </ul>
       )}
     </Paged>
+  )
+}
+
+/**
+ * ACTIONS TAKEN — what this person did TO other people (owner).
+ *
+ * "there should be an additional table on the page labelled 'Actions taken'
+ * which lists all times they've kicked, banned, or actioned an incident.
+ * Remember they may ban as a verdict of an incident - in which case it shouldn't
+ * be counted twice."
+ *
+ * ═══ THE COUNTING RULE IS NOT IN THIS FILE ═══
+ *
+ * The rows arriving here are ALREADY one per act: `lib/actionsTaken.ts` folds the
+ * `incident.resolve` row into the `ban.issue` or `player.kick` row it shares an
+ * `incidentId` with, and folds the enforcement kick into the ban that caused it.
+ * That rule is a pure function on audit-shaped rows rather than a filter in the
+ * markup, for the reason `NOT_AN_ACTION` below this panel's sibling is a Set and
+ * not an `if`: a counting rule embedded in JSX cannot be driven by a fixture, and
+ * this one has four cases that all look identical on screen when they are wrong.
+ *
+ * ═══ WHEN THE PANEL EXISTS AT ALL ═══
+ *
+ * Almost nobody has taken a moderation action, so an empty "Actions taken" panel
+ * on every profile in the console would be furniture — the same argument that
+ * keeps the in-game name row off a player who has never renamed. It renders when
+ * there is something to show, OR when the ADMIN chip is showing, which is the
+ * owner's sentence read whole: "if the person is an admin … there should be an
+ * additional table". An admin with nothing in it gets the house empty state, the
+ * same one four other panels on this page use, and not a sentence of its own.
+ *
+ * It deliberately does NOT render on `admin === 'unknown'` with nothing in it.
+ * We do not know they are an admin, and there is nothing to show.
+ *
+ * ═══ THE VERDICT CHIP, AND WHEN IT WOULD BE A REPEAT ═══
+ *
+ * Only `incident.resolve` rows carry one. On a collapsed ban-from-an-incident the
+ * row already reads "Banned", and a red BANNED chip beside it would be the exact
+ * double-count this panel exists to remove, moved one line to the right. On a
+ * closure the chip is the only thing that says what was decided — "No action" in
+ * the quiet tone, from the same `verdictTone` the incident rows use, so a
+ * conscientious no-action closure is never painted as a failure.
+ */
+function ActionsTakenPanel({
+  rows,
+  now,
+  verdictLabel,
+}: {
+  rows: ProfileActionTaken[]
+  now: number
+  verdictLabel: Record<string, string>
+}) {
+  return (
+    <Section
+      title="Actions taken"
+      provenance={<ProvenanceTag kind="moderation" />}
+      action={
+        rows.length > 0 ? (
+          <Badge
+            data-accent-chip=""
+            variant="outline"
+            className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
+          >
+            {rows.length}
+          </Badge>
+        ) : null
+      }
+    >
+      {rows.length === 0 ? (
+        /*
+         * THE HOUSE EMPTY STATE, WORD FOR WORD, and no sentence of its own. Four
+         * other panels on this page render exactly this — Identifiers, Play
+         * record, Progression, Sessions — so an empty "Actions taken" reads as
+         * the same absence they do rather than as a paragraph somebody wrote for
+         * this one panel. See `Empty`.
+         */
+        <Empty />
+      ) : (
+        <Paged items={rows} perPage={PROFILE_PER_PAGE} label="Actions taken pages">
+          {(slice) => (
+            <ul>
+              {slice.map((a) => (
+                <li
+                  key={`${a.at}-${a.action}-${a.targetLicense ?? ''}`}
+                  className="flex items-start gap-3 border-t border-border/60 py-2.5 first:border-t-0 first:pt-0"
+                >
+                  <div
+                    className={cn(
+                      'mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md ring-1 ring-inset',
+                      ACTION_TAKEN_TONE[a.action] ??
+                        'bg-muted/40 text-muted-foreground ring-border',
+                    )}
+                  >
+                    <Gavel className="size-3.5" />
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm">
+                      <span className="font-medium">
+                        {labelFor(ACTION_TAKEN_LABEL, a.action)}
+                      </span>{' '}
+                      {/* THE SUBJECT LINKS TO THEIR OWN PROFILE, the way both
+                          parties do everywhere else moderation is listed —
+                          "who did they do this to" should be one click. A row
+                          the log recorded without a name says so rather than
+                          rendering a blank. */}
+                      {a.targetLicense ? (
+                        <Link
+                          href={`/players/${encodeURIComponent(a.targetLicense)}`}
+                          className="underline underline-offset-2 transition-colors hover:text-foreground"
+                        >
+                          {a.targetName ?? a.targetLicense}
+                        </Link>
+                      ) : (
+                        // The house dash for a value we do not have, not a
+                        // sentence about not having it.
+                        <span>{a.targetName ?? '—'}</span>
+                      )}
+                      {a.reason ? (
+                        <span className="text-muted-foreground"> — {a.reason}</span>
+                      ) : null}
+                    </div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">
+                      <LocalTime ms={a.at} /> · {ago(a.at, now)}
+                      {/* THE INCIDENT, LINKED WHERE THERE IS ONE. A link needs a
+                          label; this one is the noun naming its destination and
+                          not a phrase about it. */}
+                      {a.incidentId && (
+                        <>
+                          {' · '}
+                          <Link
+                            href={`/incidents/${a.incidentId}`}
+                            className="underline underline-offset-2 transition-colors hover:text-foreground"
+                          >
+                            incident
+                          </Link>
+                        </>
+                      )}
+                      {a.outcome === 'failed' && <DidNotHappen />}
+                    </div>
+                  </div>
+
+                  {a.action === 'incident.resolve' && a.verdict && (
+                    <div className="flex shrink-0 items-center justify-end">
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          'rounded-md border-0 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
+                          verdictTone(a.verdict),
+                        )}
+                      >
+                        {labelFor(verdictLabel, a.verdict)}
+                      </Badge>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Paged>
+      )}
+    </Section>
   )
 }
 
@@ -1293,68 +1512,25 @@ function DiscordNames() {
 const ID_LABEL =
   'w-28 shrink-0 text-xs uppercase tracking-wider text-muted-foreground'
 
-/**
- * A label in that column that also explains itself, on hover and in the DOM.
+/*
+ * `IdLabel` USED TO LIVE HERE AND IS GONE RATHER THAN LEFT UNCALLED.
  *
- * A HOVER CARD RATHER THAN OPEN TEXT, and that is the owner on both of the rows
- * that use it: "any helper text should be a hover card, not just out in the
- * open", and — of the history that used to sit in Sessions — "there's no hover
- * card for me to know what that information is or means". The descriptor under
- * the display name used to be a permanent three-line paragraph inside a panel of
- * one-line rows, which is furniture on a page a moderator reads several times a
- * day.
+ * It was the self-explaining label for the two rows this panel no longer has:
+ * "Display name" and "In-game name", each a heading, what the row was, and the
+ * trap it warned about. The owner asked for both by name — "any helper text
+ * should be a hover card, not just out in the open" — and it did that job.
  *
- * IT IS A CARD AND NOT A TOOLTIP BECAUSE IT HAS PARTS. Rule 5 of
- * docs/hover-text.md: a card is a layout, not an emphasis level. Both of these
- * are a heading, then what the row IS, then the trap it exists to warn about —
- * three pieces that do not survive in `TooltipContent`, which is a single-line
- * pill. A one-sentence label would not have earned one.
+ * IT HAD EXACTLY TWO CALL SITES AND BOTH ARE NOW ONE ROW. Merging them into
+ * "Other names" (the owner's later instruction) left the component with nothing
+ * to label, and writing a THIRD descriptor to cover the merged row would have
+ * been copy nobody asked for — which the owner has since ruled out in general:
+ * "please do not add any helper text to any pages on your own ever."
  *
- * THE DOTTED UNDERLINE IS NOT DECORATION. The owner's complaint about the
- * Sessions block was that nothing told him there was anything to read; a hover
- * affordance nobody can see is the same defect with extra steps. `cursor-help`
- * alone only pays out after the pointer is already there.
- *
- * AND THE WORDS ARE IN THE DOM TWICE, in one component, so neither copy can be
- * deleted without seeing the other. Base UI's popup carries no `role` and no
- * `aria-describedby`, and this trigger is an inert `<span>` that nothing can
- * focus, so the hover reaches a sighted mouse user and nobody else. See
- * docs/hover-text.md rule 1 — no fact may live only on hover.
+ * SO IT IS DELETED, NOT PARKED. A component with no callers is this repo's
+ * signature failure and the thing its own notes warn about hardest. If a
+ * descriptor for "Other names" is wanted, the words have to come from the owner,
+ * and this comes back with them — out of git, unchanged.
  */
-function IdLabel({ label, body }: { label: string; body: string[] }) {
-  return (
-    <HoverCard>
-      {/* `render` is not optional: `HoverCardTrigger` renders an `<a>` by
-          default, and an anchor with no href as the label of a table row is
-          both wrong markup and a styling surprise. */}
-      <HoverCardTrigger
-        render={
-          <span
-            className={cn(
-              ID_LABEL,
-              'cursor-help underline decoration-dotted decoration-muted-foreground/50 underline-offset-4',
-            )}
-          />
-        }
-      >
-        {label}
-        {/* STRINGS, NOT NODES, and that is what makes the two copies one fact:
-            the paragraphs below and this sentence are the same array, so a
-            change to the card cannot leave the announced version behind. It also
-            keeps a `<p>` out of a `<span>`, which React rejects as nesting. */}
-        <span className="sr-only">. {body.join(' ')}</span>
-      </HoverCardTrigger>
-      <HoverCardContent side="top" align="start">
-        <p className="text-sm font-medium">{label}</p>
-        <div className="mt-1.5 space-y-1.5 text-sm text-muted-foreground">
-          {body.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
-        </div>
-      </HoverCardContent>
-    </HoverCard>
-  )
-}
 
 /**
  * The chip that says a player is banned, and the record behind it on hover.
@@ -1480,43 +1656,240 @@ function BannedChip({
   )
 }
 
-/** What the display-name row means, in the card and in the DOM. */
-const DISPLAY_NAME_NOTE = [
-  'What Discord shows for this account right now — free text the player can change at any time, so it identifies nobody.',
-  'Their nickname inside our own Discord server can be different again, and this is not it: Ringmaster reads the account, not the server member. See the @handle beside their in-game name for the one value here that does identify the account.',
-]
+/**
+ * The chip that says this person is an admin — and the one that says we asked
+ * and did not find out.
+ *
+ * ═══ WHAT "ADMIN" MEANS HERE, AND IT IS NOT THE GRANTS TABLE ═══
+ *
+ * The owner: "if the person is an admin (meaning they have the discord role)".
+ * That is `lib/discordRole.ts` — the same live check that runs before every
+ * write — asked once per profile render and carried on the Discord chrome. There
+ * is deliberately no second notion of admin-ness on this page: a console where
+ * the chip and the gate can disagree about the same person would be worse than a
+ * console with no chip, and this repository has shipped exactly that shape of
+ * defect before.
+ *
+ * ═══ TWO CHIPS, BECAUSE SILENCE IS THE FAILURE MODE ═══
+ *
+ * A red chip that quietly disappears because Discord was slow is worse than no
+ * chip: absence is indistinguishable from "we asked and the answer was no", and
+ * one of those is a claim about a person. So `unknown` — a timeout, a 429, a
+ * 5xx, a guild the bot cannot see — wears a quiet chip with a question mark on
+ * it instead of vanishing.
+ *
+ * NEITHER CHIP CARRIES A WORD OF EXPLANATION, on the owner's standing
+ * instruction that nothing may write copy into a page on its own initiative.
+ * `ADMIN` is their wording. `ADMIN?` is a one-word state label rather than a
+ * sentence, and it has no tooltip, no hover card and no `sr-only` gloss — it is
+ * flagged for the owner rather than explained at them.
+ *
+ * `unchecked` RENDERS NOTHING AT ALL, and that is the distinction lib/discordRole
+ * already draws for the audit log: no bot token is a CONFIGURATION STATE, true of
+ * every profile forever until somebody pastes one, not an event. A grey chip on
+ * every player in the console for the rest of time is furniture. `no` renders
+ * nothing either — Discord answered, and most people are not admins.
+ *
+ * THE RED IS THE SAME RED AS THE BAN CHIP — the `danger` token, at the same
+ * tenth-opacity fill and thirtieth-opacity ring — rather than a new colour mixed
+ * for this chip. One accent, already measured, in both themes: 4.61:1 on its own
+ * fill in the light theme and 5.26:1 in the dark.
+ */
+function AdminChip({ role }: { role: AdminRole }) {
+  if (role === 'yes') {
+    return (
+      <Badge className="gap-1 border-0 bg-danger/10 text-xs font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
+        <Shield className="size-3" />
+        Admin
+      </Badge>
+    )
+  }
 
-/** What the in-game-name row means, in the card and in the DOM. */
-const GAME_NAME_NOTE = [
-  'The name the game server reports for this license — what other players see in the lobby and on the kill feed.',
-  '"Formerly" is the names it used to be, each shown with the last time Ringmaster saw it in use. A rename immediately before an incident is itself worth knowing, which is why the old ones are kept rather than overwritten.',
-]
+  if (role !== 'unknown') return null
+
+  return (
+    <Badge
+      variant="outline"
+      className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
+    >
+      Admin?
+    </Badge>
+  )
+}
 
 /**
- * Every identifier we hold for this player, and what Discord calls them.
+ * One entry in the "Other names" list.
  *
- * THE DISPLAY NAME IS AN IDENTIFIER ROW NOW (owner, item 1). It sat unlabelled
- * beside the @handle under the in-game name, where the two were indistinguishable
- * — one of them is how you find an account and the other is what somebody
- * decided to call themselves this week.
+ * NOT `FormerNameItem`, AND THE DIFFERENCE IS THE `null`. That type says "a name
+ * that was replaced" and its `at` is never absent. This list holds one entry that
+ * has NOT been replaced — the Discord display name they are using right now,
+ * which is an "other name" for somebody whose page is headed by their in-game
+ * name — and a shape that cannot express "still current" would have forced a
+ * date onto it.
+ */
+type OtherName = {
+  /** The name. Never empty. */
+  name: string
+  /**
+   * When it stopped being current — or NULL when it has not stopped.
+   *
+   * NEITHER VALUE IS THE MOMENT THE PLAYER RENAMED, and nothing in this system
+   * knows that moment. Both are honest upper bounds; `OtherNameCard`'s comment
+   * works through which is which, and the page states none of it — the reader
+   * gets "known as X until Y", which is the owner's wording and all of it.
+   *
+   * NULL MEANS NO CARD. There is no Y, and inventing a sentence to stand in for
+   * one is exactly what the owner has ruled out.
+   */
+  until: number | null
+  /** Which stream it came from. Decides what the card's second line says. */
+  from: 'game' | 'discord'
+}
+
+/**
+ * One name, with its own hover card. The owner asked for exactly this: "Each
+ * name should have its own hover card which reads 'known as X until Y'".
  *
- * AND IT GETS A DESCRIPTOR, which none of the other rows needs, because it is
- * the only row in this panel you cannot key anything on. A license, a Steam id
- * and a Discord snowflake are all durable handles on a person; a display name is
- * free text the player edits at will. A row that sits in a table of identifiers
- * looking as solid as the ones above it, and is not, would be worse than no row
- * at all — so the descriptor says exactly that, and points at the @handle as the
- * stable one. THAT DESCRIPTOR IS A HOVER CARD NOW rather than a paragraph
- * rendered under every profile forever — the owner's second item. See `IdLabel`.
+ * THE CARD IS THOSE WORDS AND NOTHING ELSE. It has no heading repeating the name,
+ * no note about which instant Y is, and no explanation of where the name came
+ * from — the owner's standing rule is that nothing writes copy into a page on its
+ * own initiative, and every one of those sentences would have been mine.
  *
- * THE IN-GAME NAME HISTORY LANDED HERE TOO (owner, item 4). It was in the
- * Sessions panel, as a heading reading "Also known as" over a list of bare
- * strings — beside a session count and a connected duration, which are not names
- * and have nothing to do with names. It is a history of ONE identifier, so it
- * belongs under that identifier, which is what this panel is for. The row it now
- * sits under is the same shape as the display name's, from the same components,
- * for the same reason the two Discord histories share one: three renderings of
- * "this person used to be called something else" is two too many.
+ * WHICH MEANS THE FOOTNOTE Y DESERVES IS IN THIS COMMENT INSTEAD. A genuine
+ * "until", meaning the instant the player renamed, DOES NOT EXIST in either
+ * stream and cannot be derived from one:
+ *
+ *   in-game   `names[].lastSeen` — the last time the GAME reported this license
+ *             under that name. Real, and an upper bound: the rename happened
+ *             somewhere between it and the next sighting.
+ *   Discord   `DiscordNameChange.at` — when RINGMASTER first noticed the answer
+ *             had moved, which is why lib/profile.ts calls the field `at` rather
+ *             than `changedAt`. Discord only ever returns the present, so on a
+ *             player nobody opens this can be days late.
+ *
+ * Both are honest upper bounds rather than guesses, which is what makes "until Y"
+ * sayable at all. Nothing here invents a rename date, and nothing here explains
+ * the distinction at the reader — it is reported to the owner instead.
+ *
+ * A NAME WITH NO `until` NEVER REACHES THIS COMPONENT. See the row that builds
+ * the list: the current Discord display name has not stopped being current, so
+ * there is no Y for it and no wording from the owner for what to say instead. It
+ * renders as plain text with no card rather than with an invented sentence.
+ *
+ * THE DOTTED UNDERLINE IS THE AFFORDANCE, not decoration — the same rule the ban
+ * chip and `IdLabel` follow. In a comma-separated list of plain words there would
+ * otherwise be nothing at all saying any of them could be pointed at.
+ *
+ * AND THE SENTENCE IS IN THE DOM TWICE, in one component, so neither copy can be
+ * deleted without seeing the other — docs/hover-text.md rule 1. Base UI's popup
+ * carries no `role` and no `aria-describedby` and this trigger is an inert
+ * `<span>`, so the hover reaches a sighted mouse user and nobody else. The spoken
+ * copy uses the UTC instant because it is the unambiguous one, and because
+ * `LocalTime` renders an element rather than a string this could reuse.
+ */
+function OtherNameCard({ item }: { item: OtherName & { until: number } }) {
+  return (
+    <HoverCard>
+      {/* `render` is not optional: `HoverCardTrigger` renders an `<a>` by
+          default, and an anchor with no href in a list of names is both wrong
+          markup and a styling surprise. */}
+      <HoverCardTrigger
+        render={
+          <span className="cursor-help whitespace-nowrap underline decoration-dotted decoration-muted-foreground/50 underline-offset-4" />
+        }
+      >
+        {item.name}
+        <span className="sr-only">
+          . known as {item.name} until {utcIso(item.until)}
+        </span>
+      </HoverCardTrigger>
+      <HoverCardContent side="top" align="start">
+        known as {item.name} until <LocalTime ms={item.until} />
+      </HoverCardContent>
+    </HoverCard>
+  )
+}
+
+/**
+ * Every name this person has gone by except the one in the `<h1>`, newest first.
+ *
+ * THE CURRENT DISPLAY NAME LEADS, because it is the only entry that is still
+ * true, and it is dropped when it merely repeats the in-game name at the top of
+ * the page — "other" is the whole of the label.
+ *
+ * DUPLICATES COLLAPSE. Somebody whose Discord display name and in-game name have
+ * been the same string appears in both streams, and two identical words in a
+ * comma-separated list read as a rendering fault rather than as two sightings.
+ * The first occurrence wins, which — given the order below — is the most recent
+ * one, so the card on a surviving duplicate carries the later "until".
+ */
+function otherNames(
+  currentGameName: string,
+  gameNames: Profile['names'],
+  displayName: string | null,
+  formerDiscord: DiscordNameChange[],
+): OtherName[] {
+  // Everything that has ended, newest first, from both streams at once. They
+  // interleave: a Discord rename in June sits between two game renames.
+  const past: OtherName[] = [
+    // `names` is newest first and index 0 is the `<h1>`; the tail is history.
+    ...gameNames.slice(1).map((n) => ({
+      name: n.name,
+      until: n.lastSeen,
+      from: 'game' as const,
+    })),
+    ...formerDiscord.map((c) => ({
+      name: c.from,
+      until: c.at,
+      from: 'discord' as const,
+    })),
+  ].sort((a, b) => (b.until ?? 0) - (a.until ?? 0))
+
+  const all: OtherName[] =
+    displayName && displayName !== currentGameName
+      ? [{ name: displayName, until: null, from: 'discord' }, ...past]
+      : past
+
+  const seen = new Set<string>([currentGameName])
+  return all.filter((n) => {
+    if (n.name === '' || seen.has(n.name)) return false
+    seen.add(n.name)
+    return true
+  })
+}
+
+/**
+ * Every identifier we hold for this player, and every name they have gone by.
+ *
+ * ═══ TWO NAME ROWS BECAME ONE (owner) ═══
+ *
+ * "let's combine in-game name and display name rows to just say 'other names'
+ * with the names listed, separated by commas."
+ *
+ * WHAT THEY REPLACED. An "In-game name" row — the `<h1>` repeated, with its
+ * rename history under it — and a "Display name" row of the same shape, each with
+ * its own label, its own hover card and its own `formerly …` list. Between them
+ * they used four lines of a panel of one-line rows to say what is now one line,
+ * and the split was by SOURCE (which stream did this come from) rather than by
+ * the question a moderator is asking, which is "what else has this person been
+ * called". A rename in the game and a rename on Discord are the same signal.
+ *
+ * THE CURRENT IN-GAME NAME IS NOT IN THE LIST, because it is the `<h1>` 200px up
+ * the page and "other" is the whole of the label. The current DISPLAY name is,
+ * because it is a different name — one the person is using right now, somewhere
+ * this page does not otherwise show.
+ *
+ * WHAT WAS LOST, STATED RATHER THAN GLOSSED. The display-name row used to render
+ * absence as absence: "not set" when Discord answered and the account had no
+ * display name. A row that is a LIST OF NAMES cannot say that — a name that does
+ * not exist is not in the list — so on an account with no display name and no
+ * renames the row simply does not appear. The @handle under the `<h1>` still
+ * carries the one Discord value that identifies the account, and `?discord=noname`
+ * in the preview harness is that case.
+ *
+ * THE IDENTIFIER ROWS ARE UNTOUCHED. License, Discord snowflake, Steam id — the
+ * durable handles this system actually keys on, which is what the panel was for
+ * before either name row existed.
  */
 function IdentifiersPanel({
   identifiers,
@@ -1532,59 +1905,30 @@ function IdentifiersPanel({
   const state = useDiscordChrome()
   const chrome = state.status === 'ready' ? state.chrome : null
 
-  const displayName = chrome?.globalName ?? null
-  const former = (chrome?.formerNames ?? []).filter(
+  const formerDiscord = (chrome?.formerNames ?? []).filter(
     (c) => c.field === 'globalName',
   )
 
-  /*
-   * THE IN-GAME ROW APPEARS ONLY WHEN THERE IS A HISTORY, and that is a
-   * deliberate exception to this panel's usual "render absence as absence".
-   *
-   * The current in-game name is already the `<h1>` at the top of this page, 200px
-   * away and in 20px type. A permanent row repeating it under a label would be
-   * the same string twice on one screen for every player who has never renamed —
-   * which is most of them — and this repo has form for shipping two copies of one
-   * fact. The row earns its place when it carries something the `<h1>` cannot: a
-   * name that is no longer current.
-   *
-   * `names` is newest first, so index 0 is what the `<h1>` already says and the
-   * tail is the history.
-   */
-  const formerGameNames = names.slice(1).map((n) => ({
-    from: n.name,
-    // `lastSeen` is the last time the game reported this license under that
-    // name, which is the closest thing to "until" that exists — nothing here
-    // can know when the player actually typed a new one.
-    at: n.lastSeen,
-    handle: false,
-  }))
+  const others = otherNames(
+    name,
+    names,
+    chrome?.globalName ?? null,
+    formerDiscord,
+  )
 
   /*
-   * WHEN THE ROW EXISTS AT ALL, and the three cases are not the same.
-   *
-   *   Discord answered            always a row. "They have not set one" is a
-   *                               fact Discord told us, and a row that silently
-   *                               vanishes says nothing at all — absence gets
-   *                               rendered as absence on this page, not as a
-   *                               gap somebody has to notice.
-   *   Discord did not answer, but
-   *   we have a stored name or a
-   *   rename history              a row, marked "(last known)".
-   *   Discord did not answer and
-   *   we have never seen a name    no row. The identity card already says
-   *                               Discord did not answer; repeating it as an
-   *                               empty labelled row is furniture.
+   * THE "(LAST KNOWN)" MARKER GOES ON THE ROW, NOT ON A NAME, and only when a
+   * Discord-sourced name is actually in it. Ringmaster's record of what the GAME
+   * called somebody is unaffected by Discord being down — it never came from
+   * Discord — so marking a row of purely in-game names as stale would be a
+   * warning about the wrong stream.
    */
-  const showDisplayName =
+  const staleDiscord =
     chrome !== null &&
-    (chrome.answered || displayName !== null || former.length > 0)
+    !chrome.answered &&
+    others.some((n) => n.from === 'discord')
 
-  if (
-    identifiers.length === 0 &&
-    !showDisplayName &&
-    formerGameNames.length === 0
-  ) {
+  if (identifiers.length === 0 && others.length === 0) {
     return <Empty />
   }
 
@@ -1609,50 +1953,49 @@ function IdentifiersPanel({
         </li>
       ))}
 
-      {/* THE IN-GAME NAME, AND ONLY BECAUSE IT HAS A HISTORY — see
-          `formerGameNames`. This is the "Also known as" block from the Sessions
-          panel, back under the name it is a history of and with an explanation
-          attached to the label rather than nowhere. */}
-      {formerGameNames.length > 0 && (
-        <li className="flex items-baseline gap-3 border-t border-border/60 pt-2">
-          <IdLabel label="In-game name" body={GAME_NAME_NOTE} />
-          <div className="min-w-0 flex-1">
-            <div className="text-xs text-foreground/90">{name}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              <FormerNames items={formerGameNames} />
-            </div>
-          </div>
-        </li>
-      )}
+      {/*
+        OTHER NAMES — one row, comma separated, one hover card each (owner).
 
-      {showDisplayName && chrome && (
+        THE COMMAS ARE PUNCTUATION, NOT LAYOUT, so they sit outside the triggers:
+        a comma inside the hover target would underline with the name and read as
+        part of it. `Fragment` keyed on the name and its instant, because two
+        streams can hold the same string at different times and a bare name is not
+        a unique key.
+      */}
+      {others.length > 0 && (
         <li className="flex items-baseline gap-3 border-t border-border/60 pt-2">
-          <IdLabel label="Display name" body={DISPLAY_NAME_NOTE} />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-baseline gap-x-2 text-xs">
-              {displayName ? (
-                <span className="text-foreground/90">{displayName}</span>
-              ) : (
-                // "not set" and "not known" are different claims and the page
-                // must not make the first one on the second one's evidence.
-                <span className="text-muted-foreground/70">
-                  {chrome.answered ? 'not set' : 'not known'}
-                </span>
-              )}
-              {!chrome.answered && (
-                <span className="text-muted-foreground">
-                  <LastKnown />
-                </span>
-              )}
-            </div>
-            {/* THE DESCRIPTOR THAT USED TO BE HERE IS ON THE LABEL NOW, as a
-                hover card — the owner's second item. It is not deleted: every
-                word of it is in `DISPLAY_NAME_NOTE`, rendered into the card and
-                into the DOM as `sr-only` by `IdLabel`. */}
-            {former.length > 0 && (
-              <div className="mt-1 text-xs text-muted-foreground">
-                <FormerNames items={former.map(fromDiscord)} />
-              </div>
+          {/*
+            A PLAIN LABEL, NOT AN `IdLabel`. The two rows this replaces each
+            carried a hover-card descriptor the owner asked for by name — but
+            those described rows that no longer exist, and a merged descriptor
+            for this one would be copy nobody asked for. Their standing rule is
+            that nothing writes explanatory text into a page on its own
+            initiative, so the row says what it is and no more, and the loss is
+            reported rather than papered over.
+          */}
+          <span className={ID_LABEL}>Other names</span>
+          <div className="min-w-0 flex-1 text-xs text-foreground/90">
+            {others.map((n, i) => (
+              <Fragment key={`${n.from}:${n.name}:${n.until ?? 'now'}`}>
+                {i > 0 && <span className="text-muted-foreground">, </span>}
+                {/*
+                  NO `until`, NO CARD. The current Discord display name has not
+                  stopped being current, so "known as X until Y" has no Y — and
+                  there is no owner wording for what a card should say instead.
+                  The NAME is data and is shown; the sentence would have been
+                  invention, so there is none. See OtherNameCard.
+                */}
+                {n.until === null ? (
+                  <span className="whitespace-nowrap">{n.name}</span>
+                ) : (
+                  <OtherNameCard item={{ ...n, until: n.until }} />
+                )}
+              </Fragment>
+            ))}
+            {staleDiscord && (
+              <span className="ml-2 text-muted-foreground">
+                <LastKnown />
+              </span>
             )}
           </div>
         </li>
@@ -1760,7 +2103,14 @@ function SkeletonFigures({ n, className }: { n: number; className: string }) {
   )
 }
 
-function ProfileSkeleton({ moderation }: { moderation: boolean }) {
+function ProfileSkeleton({
+  moderation,
+  actionsTaken,
+}: {
+  moderation: boolean
+  /** Whether the "Actions taken" panel is already certain to render. */
+  actionsTaken: boolean
+}) {
   return (
     <div className="space-y-4" aria-busy="true">
       {/* Announced once, because a wall of grey boxes says nothing out loud. */}
@@ -1823,13 +2173,19 @@ function ProfileSkeleton({ moderation }: { moderation: boolean }) {
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {/* Identifiers: three value rows, then the in-game name and the display
-            name, each a name over its rename history.
+        {/* Identifiers: three value rows, then ONE name row.
 
-            TWO SHORT BLOCKS RATHER THAN ONE TALL ONE, because the display name's
-            three-line descriptor is not rendered any more — it moved onto the
-            label as a hover card, and a skeleton still drawing five lines there
-            would promise a paragraph that never arrives. See `IdLabel`. */}
+            IT WAS TWO NAME ROWS AND IS NOW ONE, because the real panel's are —
+            "In-game name" and "Display name" merged into "Other names" at the
+            owner's request. A skeleton still drawing two blocks would have
+            promised a row that never arrives and dropped ~58px out from under
+            the page at the swap, which is the exact jump this whole arrangement
+            exists to prevent.
+
+            AND THE SURVIVING ROW IS SHORTER. The old rows were a name over its
+            own "formerly …" list, two lines; the new one is a single comma-
+            separated line that wraps to two only on a player with several. One
+            bar of ordinary row height is the common case. */}
         <SkeletonSection>
           <div className="space-y-2">
             {Array.from({ length: 3 }, (_, i) => (
@@ -1838,22 +2194,10 @@ function ProfileSkeleton({ moderation }: { moderation: boolean }) {
                 <Skeleton className="h-4 min-w-0 flex-1" />
               </div>
             ))}
-            {Array.from({ length: 2 }, (_, i) => (
-              <div
-                key={i}
-                className="flex items-baseline gap-3 border-t border-border/60 pt-2"
-              >
-                <Skeleton className="h-4 w-24 shrink-0" />
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  {/* The name, then its "formerly …" list, which wraps to two
-                      lines at every width this card is ever drawn at. Measured
-                      against the real row rather than guessed: 18 + 7 + 32 = 57
-                      against the 58px the rendered row occupies. */}
-                  <Skeleton className="h-4 w-32" />
-                  <Skeleton className="h-8 w-5/6" />
-                </div>
-              </div>
-            ))}
+            <div className="flex items-baseline gap-3 border-t border-border/60 pt-2">
+              <Skeleton className="h-4 w-24 shrink-0" />
+              <Skeleton className="h-4 min-w-0 flex-1" />
+            </div>
           </div>
         </SkeletonSection>
 
@@ -1906,6 +2250,30 @@ function ProfileSkeleton({ moderation }: { moderation: boolean }) {
         <SkeletonRows n={PROFILE_PER_PAGE} width="w-1/2" />
         <SkeletonPager />
       </SkeletonSection>
+
+      {/*
+        ACTIONS TAKEN, AND HALF OF ITS CONDITION IS KNOWABLE HERE.
+
+        The panel renders when the player has taken an action OR holds the Discord
+        admin role. The FIRST half comes from the audit log, which the server
+        already read before this skeleton was drawn — so `actionsTaken` is passed
+        in and the common case (an admin with a history) is drawn to the right
+        height. The second half arrives with the very chunk this skeleton is
+        waiting for and cannot be known.
+
+        SO ONE CASE STILL JUMPS: an admin who holds the role and has never used
+        it grows an empty panel at the swap. That is the smallest of the panels,
+        it is below the fold, and the alternative — always drawing it — would take
+        a whole card out from under EVERY non-admin profile in the console, which
+        is almost all of them. Same trade `SkeletonFigures` makes about the
+        lifetime-xp pair: be right for the common case and say which one is not.
+      */}
+      {actionsTaken && (
+        <SkeletonSection>
+          <SkeletonRows n={PROFILE_PER_PAGE} width="w-1/2" />
+          <SkeletonPager />
+        </SkeletonSection>
+      )}
 
       {/* Match history, including its new label row. The columns come from
           MATCH_COLUMNS so the skeleton cannot drift from the table — except for
@@ -2016,8 +2384,24 @@ export function ProfileView({
   const moderationActions = p.actions.filter((a) => !NOT_AN_ACTION.has(a.action))
 
   if (chromeState.status === 'loading') {
-    return <ProfileSkeleton moderation={moderation !== undefined} />
+    return (
+      <ProfileSkeleton
+        moderation={moderation !== undefined}
+        actionsTaken={p.actionsTaken.length > 0}
+      />
+    )
   }
+
+  /*
+   * ADMIN STATUS, WHICH ONLY EXISTS WHEN THERE IS A DISCORD ACCOUNT TO ASK ABOUT.
+   *
+   * `absent` — no Discord id on the registry row — is `no` rather than `unknown`,
+   * and that is a real answer rather than a shrug: the owner's test for admin is
+   * holding a role in the Discord server, and somebody with no Discord account
+   * cannot hold one. Nothing was asked because there was nothing to ask.
+   */
+  const adminRole: AdminRole =
+    chromeState.status === 'ready' ? chromeState.chrome.admin : 'no'
 
   // Decided once and used twice — the band is drawn by IdentityBanner and the
   // avatar's lift depends on there being one. See identityBand.
@@ -2078,6 +2462,11 @@ export function ProfileView({
                   Offline
                 </Badge>
               )}
+              {/* "a chip should appear next to their online/offline chip that
+                  says 'ADMIN' in red" — the owner, and this is that chip, in
+                  that position. See AdminChip for what "admin" is tested
+                  against and for the second chip it can render instead. */}
+              <AdminChip role={adminRole} />
               {/*
                 THE "1 BAN" CHIP IS GONE, and it was worse than a redundant
                 count. The owner: "remove where it says 'x bans' at the top of
@@ -2501,15 +2890,7 @@ export function ProfileView({
                         ) : (
                           a.actorName
                         )}
-                        {/* THE OUTCOME BADGE IS GONE, but a failure is not.
-                            "OK / PENDING / FAILED" meant nothing to somebody
-                            reading a player's history — a successful action
-                            does not need announcing. An action that did NOT
-                            happen still does: a kick shown identically to one
-                            that landed is a false record. */}
-                        {a.outcome === 'failed' && (
-                          <span className="text-danger"> · did not go through</span>
-                        )}
+                        {a.outcome === 'failed' && <DidNotHappen />}
                       </div>
                     </div>
                   </li>
@@ -2521,6 +2902,21 @@ export function ProfileView({
           <Empty />
         )}
       </Section>
+
+      {/*
+        ACTIONS TAKEN — the other direction through the audit log, and it comes
+        after Kicks and bans because that is the order the questions arrive in:
+        what was done to this person first, then what they did to other people.
+        See ActionsTakenPanel for the one-row-per-act rule and for why the panel
+        is absent on almost every profile.
+      */}
+      {(p.actionsTaken.length > 0 || adminRole === 'yes') && (
+        <ActionsTakenPanel
+          rows={p.actionsTaken}
+          now={now}
+          verdictLabel={verdictLabel}
+        />
+      )}
 
       {/*
         MATCH HISTORY, REAL SINCE #153 — and the empty state is now three

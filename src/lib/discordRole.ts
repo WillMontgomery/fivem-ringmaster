@@ -1,5 +1,6 @@
 import type { Actor, AuditHandle, AuditOutcome, AuditRow } from './audit'
 import { env } from './env'
+import type { AdminRole } from './profile'
 import { REVOKED_MESSAGE } from './revocation'
 
 /**
@@ -226,6 +227,42 @@ export async function checkAdminRole(
         : `could not reach Discord: ${e instanceof Error ? e.message : String(e)}`
     return { state: 'unresolved', why }
   }
+}
+
+/**
+ * The same verdict, as the thing a PAGE can draw. See {@link AdminRole}.
+ *
+ * ═══ WHY THE READ PATH GOES THROUGH THIS FILE AND NOT A SECOND CHECK ═══
+ *
+ * The owner: "if the person is an admin (meaning they have the discord role)".
+ * That is this file's question, already asked once before every write, and there
+ * must not be a second notion of "is an admin" living on a profile page — a
+ * console where the chip and the gate can disagree about the same person is
+ * worse than one with no chip. So the profile page calls `checkAdminRole` and
+ * maps its answer here.
+ *
+ * THE MAPPING IS NOT AN IDENTITY, AND THE INTERESTING LINE IS THE LAST ONE.
+ * `unresolved` is a single state to the GATE, which fails open on all of it and
+ * says so in the log. To a READER it is two different things:
+ *
+ *   no bot token   this console cannot answer the question about anybody, ever,
+ *                  until somebody pastes a token. A state, not an event — the
+ *                  same distinction that keeps this case out of the audit log
+ *                  (see `unresolved` below). Rendering "we could not check" on
+ *                  every profile forever would be furniture.
+ *   anything else  a timeout, a 429, a 5xx, a guild we cannot see. An EVENT, and
+ *                  one that must not be shown as a negative: silently dropping
+ *                  the chip would tell a moderator this person is not an admin
+ *                  on evidence that says nothing about them.
+ *
+ * PURE, AND DELIBERATELY SEPARATE FROM THE FETCH, so the whole table of answers
+ * is reachable without a network — the same arrangement `readMemberResponse`
+ * has.
+ */
+export function adminRoleFrom(check: RoleCheck): AdminRole {
+  if (check.state === 'held') return 'yes'
+  if (check.state === 'revoked') return 'no'
+  return check.why === NO_TOKEN_REASON ? 'unchecked' : 'unknown'
 }
 
 /**

@@ -69,31 +69,47 @@ A header row, a body, a footer. **A card is a layout, not an emphasis level.** A
 single sentence does not get promoted to a 256px card for being important. It
 gets moved there for having parts.
 
-**There are three sites, in two files** — `Provenance.tsx` and two in
+**There are three sites, in two files** — `Provenance.tsx`, and two in
 `ProfileView.tsx`. A grep for `<HoverCard` returns exactly those.
 
-There were four. `FeedStatus` held the first, and the component was deleted when
-the owner asked for the live/falling-behind/feed-lost chips to be hidden; the
-state it read (`lastPushAt`) survived it and is now what proves a deployed
-server has come back. See `lib/serverPhase`.
+Two are gone and one is new since this list was last written, so the count has
+been three throughout and the membership has not:
 
-`Provenance` was the second. `ProfileView`'s `IdLabel` is
-the third and the first one that is a *label* rather than a chip: the "Display
-name" and "In-game name" rows of the identifiers panel each carry a heading,
-what the row is, and the trap it warns about — three pieces, which is what
-earned the card. The owner asked for both by name ("any helper text should be a
-hover card, not just out in the open"), and what they replaced was a permanent
-paragraph under one row and, under the other, no explanation at all.
+- **`FeedStatus`** held the first card in the app, and the component was deleted
+  when the owner asked for the live/falling-behind/feed-lost chips to be hidden;
+  the state it read (`lastPushAt`) survived it and is now what proves a deployed
+  server has come back. See `lib/serverPhase`.
+- **`Provenance`** is the oldest survivor: four two-sentence paragraphs that had
+  been crammed into a single-line tooltip.
+- **`ProfileView`'s `IdLabel`** was the first that was a *label* rather than a
+  chip — the "Display name" and "In-game name" rows of the identifiers panel,
+  each a heading, what the row was, and the trap it warned about. **It is gone
+  too.** Those two rows merged into one "Other names" row at the owner's request,
+  which left it with no call sites, and a merged descriptor would have been copy
+  nobody asked for. See rule 8.
+- **The ban chip on the profile** is the worked example of rule 1 on a card
+  rather than a tooltip. Its three rows — reason, who issued it, how long — are a
+  `<dl>` in the popup *and* an `sr-only` sentence inside the trigger, so the
+  screen-reader user gets the same three facts the popup carries. It also earns
+  its own affordance: `cursor-help` alone only pays out once the pointer is
+  already there, so the word "Banned" carries a dotted underline.
+- **The names in "Other names"**, one card per name, are the newest and the one
+  that bends this rule rather than satisfying it. Each reads exactly `known as X
+  until Y` — one line, no heading, no second paragraph. **That is a tooltip's
+  shape in a card's component**, and it is deliberate: the owner asked for a
+  hover card by name ("Each name should have its own hover card which reads
+  'known as X until Y'"), and rule 8 forbids inventing the extra parts that would
+  have earned one. Its `sr-only` copy carries the same sentence with the UTC
+  instant, because `LocalTime` renders an element rather than a string.
 
-**The fourth is the ban chip on the profile**, and it is the worked example of
-rule 1 on a card rather than a tooltip. Its three rows — reason, who issued it,
-how long — are a `<dl>` in the popup *and* an `sr-only` sentence inside the
-trigger, so the screen-reader user gets the same three facts the popup carries.
-It also earns its own affordance: `cursor-help` alone only pays out once the
-pointer is already there, so the word "Banned" carries a dotted underline. **A
-chip that hides its own explanation until somebody happens to point at it is the
-complaint that produced `IdLabel` in the first place**; do not add a fifth
-without one.
+  **A name with no `Y` gets no card at all.** The current Discord display name
+  has not stopped being current; there is no honest "until" for it and no owner
+  wording for what to say instead, so the name renders as plain text with no
+  hover affordance. Do not fill that gap with a sentence — ask.
+
+**Do not add a fourth chip-shaped card without a visible affordance.** A chip
+that hides its own explanation until somebody happens to point at it is the
+complaint that produced `IdLabel` in the first place.
 
 ### 6. The native `title` attribute is banned on DOM elements
 
@@ -118,6 +134,38 @@ on the grounds that "the delays feel different".
 
 The one `TooltipProvider` lives at `src/app/layout.tsx`. `HoverCard` has no
 provider in Base UI and needs none.
+
+### 8. Never write the words yourself
+
+The owner, 2026-08-19:
+
+> "please do not add any helper text to any pages on your own ever. I know
+> you're just trying to help but it comes across as 'AI slop' if you're writing
+> text without the context of the person who's using it and their intent or
+> familiarity."
+
+This rule sits **above** every rule before it. Rules 1–7 govern *where* a string
+goes once it exists; this one governs whether it may exist at all. Only text the
+owner asked for, and where they gave exact wording, verbatim.
+
+**Data is not helper text.** Values, timestamps, counts, names, column headers,
+chip labels and link labels are all showing rather than explaining. The line is
+anything written to *explain*.
+
+What that has already cost, so the next person does not restore it by reflex:
+
+- The ADMIN chip has no tooltip. `ADMIN?` — the state where Discord did not
+  answer — has no tooltip and no `sr-only` gloss either; it is a one-word label
+  flagged to the owner rather than explained at the reader.
+- "Other names" has a plain label, not an `IdLabel` card, and `IdLabel` is
+  deleted with it.
+- "Actions taken" uses `ProfileView`'s house `Empty` when it has no rows, like
+  the four other panels on that page. It does not explain what it would contain.
+
+When a state genuinely has no honest wording, the answer is to **report it and
+wait**, not to write something reasonable-sounding. A hover card asserting a
+date we do not have is worse than no hover card, and a paragraph nobody asked
+for is worse than a blank.
 
 ---
 
@@ -179,8 +227,9 @@ two-sentence paragraphs in a single-line pill.
   either.** The script exists in `package.json` and there is no ESLint config
   file and no `eslint` dependency anywhere in the repo, so it is a name rather
   than a gate — and it is *not* part of `npm run verify`, which is what actually
-  runs (`check:secrets`, `check:banrule`, `check:xpcurve`, `check:chips`,
-  `check:contrast`, `typecheck`). An ESLint rule banning the `title` JSX
+  runs (`check:secrets`, `check:banrule`, `check:xpcurve`, `check:verdict`,
+  `check:discordrole`, `check:chips`, `check:deployphase`, `check:contrast`,
+  `typecheck`). An ESLint rule banning the `title` JSX
   attribute on DOM elements — allowlisting `<iframe>`/`<svg>`, never matching
   component props — is what would keep this from decaying, but standing ESLint
   up at all is the bootstrap task in front of it.

@@ -6,11 +6,13 @@ import {
   DiscordChromeStateProvider,
 } from '@/components/DiscordChrome'
 import { ProfileView } from '@/components/ProfileView'
+import { actionsTakenFrom, type ActedRow } from '@/lib/actionsTaken'
 import { isActive, type Ban } from '@/lib/bans'
 import { accentSurface } from '@/lib/contrast'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 import { CATEGORY_LABEL, VERDICT_LABEL } from '@/lib/incidents'
 import type {
+  AdminRole,
   DiscordChrome,
   DiscordNameChange,
   Profile,
@@ -39,7 +41,7 @@ import { thresholdFor } from '@/lib/xp'
  * issue and the widest string the curve can ever produce, so the fix stays
  * checkable.
  *
- * SIX INDEPENDENT AXES, because they are independent in life:
+ * EIGHT INDEPENDENT AXES, because they are independent in life:
  *
  *   ?state=      match history — played / legacy / never / unreadable
  *   ?incidents=  0, 1, 5, 6 and 43 rows, for the tabs and the page boundary
@@ -50,11 +52,19 @@ import { thresholdFor } from '@/lib/xp'
  *                is a real ban that has run out — no chip at all, which is the
  *                case the owner asked for and the one a harness that only ever
  *                passed `bans: []` could never show
- *   ?names=      the IN-GAME rename history: never renamed, renamed twice, and
- *                enough renames to reach the "+N more" overflow
+ *   ?names=      the names the "Other names" row is built from: never renamed,
+ *                renamed twice, and enough to fill the line
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
  *                accent colours that break a naive implementation, and an
  *                account with no display name
+ *   ?admin=      all four answers the Discord role check can give, which is the
+ *                ONLY way to see three of them: `yes` is the red ADMIN chip,
+ *                `unknown` is the quiet ADMIN? one, and `unchecked` (no bot
+ *                token) and `no` must both render NOTHING — an absence you can
+ *                only review by flipping to it
+ *   ?taken=      the "Actions taken" panel, built by running real audit-shaped
+ *                rows through the real `actionsTakenFrom`. `some` contains two
+ *                separate double-count traps; see RAW_TAKEN
  *
  * THE DISCORD AXIS IS THE ONE THAT CANNOT BE REACHED ANY OTHER WAY. Every other
  * state on this page needs a live session and an AWS credential; the Discord
@@ -278,10 +288,17 @@ const CATEGORIES = [
   'other',
 ]
 
+const XEON = 'license:preview111111111111111111111111111'
+const MARLA = 'license:preview222222222222222222222222222'
+const KESTREL = 'license:preview333333333333333333333333333'
+/** The two this player REPORTS, and the two they act on in `RAW_TAKEN`. */
+const VANCE = 'license:preview444444444444444444444444444'
+const ODILE = 'license:preview555555555555555555555555555'
+
 const FILERS = [
-  { name: 'Xeon', license: 'license:preview111111111111111111111111111' },
-  { name: 'Marla', license: 'license:preview222222222222222222222222222' },
-  { name: 'Kestrel', license: 'license:preview333333333333333333333333333' },
+  { name: 'Xeon', license: XEON },
+  { name: 'Marla', license: MARLA },
+  { name: 'Kestrel', license: KESTREL },
 ]
 
 /**
@@ -392,8 +409,8 @@ function reportsAgainst(n: number): ProfileIncident[] {
 /** Reports this player filed about other people. The other tab. */
 function reportsFiledBy(n: number): ProfileIncident[] {
   const targets = [
-    { name: 'Vance', license: 'license:preview444444444444444444444444444' },
-    { name: 'Odile', license: 'license:preview555555555555555555555555555' },
+    { name: 'Vance', license: VANCE },
+    { name: 'Odile', license: ODILE },
   ]
   return Array.from({ length: n }, (_, k): ProfileIncident => {
     const target = cycle(targets, k)
@@ -506,6 +523,219 @@ const SERVED_BAN: Ban = {
   reason: 'Griefing — 24 hours',
   expiresAt: BASE - 10 * HOUR,
 }
+
+/* ---------------------------------------------------------------------------
+ * ACTIONS TAKEN — the audit log read the other way round, and the two ways it
+ * double-counts.
+ *
+ * THESE ARE RAW AUDIT ROWS, NOT FINISHED VIEW ROWS, and that is the entire point
+ * of the fixture. `actionsTakenFrom` is what decides that a ban issued as an
+ * incident verdict is ONE action rather than two, and a fixture that handed the
+ * page a pre-collapsed list would review the markup while leaving the rule — the
+ * only part that can be wrong — untested. The preview runs the shipped function
+ * over rows shaped exactly as `/api/bans`, `/api/kick` and `closeWithVerdict`
+ * actually write them.
+ *
+ * THIRTEEN ROWS, EIGHT OF WHICH SURVIVE. Both traps are in here:
+ *
+ *   INC_A   ban.issue + incident.resolve, same incidentId, verdict `ban`. The
+ *           owner's case, written by /api/bans when it is handed an incident.
+ *           ONE row reading "Banned Vance", linked to the incident, and NO
+ *           `banned` verdict chip — the label already says it.
+ *   Odile   ban.issue + player.kick carrying `becauseOf: 'ban.issue'`. The
+ *           SECOND trap, and the one nobody thinks of: banning a connected
+ *           player writes an enforcement kick a few milliseconds later. ONE row.
+ *   INC_B   player.kick + incident.resolve, verdict `kick`. Same collapse from
+ *           the other route. The kick row is `pending` on purpose — /api/kick
+ *           deliberately never marks it `ok`.
+ *   INC_C   a lone closure with verdict `none`. Survives, with a quiet "No
+ *           action" chip: an admin who looked and found nothing did the job.
+ *   INC_D   a closure with NO verdict in its detail — a row from before #28. No
+ *           chip at all, because nobody recorded a decision and the page must
+ *           not invent one.
+ *
+ * AND THREE ROWS THAT MUST NOT APPEAR AT ALL: a `maintenance.schedule`, a
+ * `discord.unresolved`, and the enforcement kick above. Eight rows at five a page
+ * also puts the collapse on both sides of a page boundary.
+ * ------------------------------------------------------------------------- */
+
+const INC_A = 'dddddddd-0000-4000-8000-00000000000a'
+const INC_B = 'dddddddd-0000-4000-8000-00000000000b'
+const INC_C = 'dddddddd-0000-4000-8000-00000000000c'
+const INC_D = 'dddddddd-0000-4000-8000-00000000000d'
+
+const RAW_TAKEN: ActedRow[] = [
+  // ---- INC_A: the owner's case. Two rows, one act. ----
+  {
+    ts: BASE - 1 * HOUR,
+    action: 'ban.issue',
+    outcome: 'ok',
+    targetLicense: VANCE,
+    targetName: 'Vance',
+    reason: 'Aimbot, confirmed on capture',
+    detail: { expiresAt: null, permanent: true, incidentId: INC_A },
+  },
+  {
+    // Written afterwards by closeWithVerdict, in the same request. Forty
+    // milliseconds later, which is why the collapsed row takes the EARLIER
+    // instant — the moment the admin acted.
+    ts: BASE - 1 * HOUR + 40,
+    action: 'incident.resolve',
+    outcome: 'ok',
+    targetLicense: VANCE,
+    targetName: 'Vance',
+    reason: 'Aimbot, confirmed on capture',
+    detail: { incidentId: INC_A, kind: 'report', verdict: 'ban', expiresAt: null },
+  },
+
+  // ---- The enforcement kick: a ban against somebody who was connected. ----
+  {
+    ts: BASE - 5 * HOUR,
+    action: 'ban.issue',
+    outcome: 'ok',
+    targetLicense: ODILE,
+    targetName: 'Odile',
+    reason: 'Griefing — 7 days',
+    detail: { expiresAt: BASE + 7 * 24 * HOUR, permanent: false },
+  },
+  {
+    ts: BASE - 5 * HOUR + 12,
+    action: 'player.kick',
+    outcome: 'ok',
+    targetLicense: ODILE,
+    targetName: 'Odile',
+    reason: 'Griefing — 7 days',
+    // The tell. Not a second decision — the ban being carried out.
+    detail: { becauseOf: 'ban.issue' },
+  },
+
+  // ---- INC_B: a kick chosen as a verdict. Two rows, one act. ----
+  {
+    ts: BASE - 9 * HOUR,
+    action: 'player.kick',
+    outcome: 'pending',
+    targetLicense: XEON,
+    targetName: 'Xeon',
+    reason: 'Abusive in voice',
+    detail: { incidentId: INC_B },
+  },
+  {
+    ts: BASE - 9 * HOUR + 30,
+    action: 'incident.resolve',
+    outcome: 'ok',
+    targetLicense: XEON,
+    targetName: 'Xeon',
+    reason: 'Abusive in voice',
+    detail: { incidentId: INC_B, kind: 'report', verdict: 'kick' },
+  },
+
+  // ---- INC_C: closed with no action. A decision, and it counts. ----
+  {
+    ts: BASE - 20 * HOUR,
+    action: 'incident.resolve',
+    outcome: 'ok',
+    targetLicense: KESTREL,
+    targetName: 'Kestrel',
+    reason: 'Watched a match, looked fine',
+    detail: { incidentId: INC_C, kind: 'report', verdict: 'none' },
+  },
+
+  // ---- An ordinary kick, decided on nothing. ----
+  {
+    ts: BASE - 30 * HOUR,
+    action: 'player.kick',
+    outcome: 'ok',
+    targetLicense: MARLA,
+    targetName: 'Marla',
+    reason: 'AFK in the bus door',
+  },
+
+  // ---- A kick the game host refused. Must say so. ----
+  {
+    ts: BASE - 44 * HOUR,
+    action: 'player.kick',
+    outcome: 'failed',
+    targetLicense: ODILE,
+    targetName: 'Odile',
+    reason: 'Spawn camping the lobby',
+  },
+
+  // ---- A lift. Not in the owner's three words; see COUNTED for why it is in. ----
+  {
+    ts: BASE - 60 * HOUR,
+    action: 'ban.lift',
+    outcome: 'ok',
+    targetLicense: ODILE,
+    targetName: 'Odile',
+    reason: 'Appealed — capture was inconclusive',
+  },
+
+  // ---- Two rows that are not moderation of a player. Must NOT render. ----
+  {
+    ts: BASE - 70 * HOUR,
+    action: 'maintenance.schedule',
+    outcome: 'ok',
+    targetLicense: null,
+    targetName: null,
+    reason: 'a server update',
+  },
+  {
+    ts: BASE - 71 * HOUR,
+    action: 'discord.unresolved',
+    outcome: 'ok',
+    targetLicense: null,
+    targetName: null,
+    reason: 'Discord answered 500',
+    detail: { scope: 'ban', allowed: true },
+  },
+
+  // ---- INC_D: a closure from before verdicts existed. No chip. ----
+  {
+    ts: BASE - 90 * HOUR,
+    action: 'incident.resolve',
+    outcome: 'ok',
+    targetLicense: XEON,
+    targetName: 'Xeon',
+    reason: 'Handled at the time',
+    detail: { incidentId: INC_D, kind: 'report' },
+  },
+]
+
+/**
+ * The panel's two states, and the empty one is not a degenerate case.
+ *
+ * With `none` the panel renders ONLY when the ADMIN chip is showing, and shows
+ * the house empty state inside it. Flip `?admin=` against `?taken=none` to watch
+ * the panel appear and disappear.
+ */
+const TAKEN_CASES = {
+  some: RAW_TAKEN,
+  none: [] as ActedRow[],
+} satisfies Record<string, ActedRow[]>
+
+type TakenKey = keyof typeof TAKEN_CASES
+
+/**
+ * EVERY ANSWER THE DISCORD ROLE CHECK CAN GIVE, and three of them are invisible
+ * anywhere else.
+ *
+ * `yes` and `no` need a real bot token, a real guild and a person who does or
+ * does not hold the role. `unknown` needs Discord to be broken on demand.
+ * `unchecked` needs the token removed from the environment. All four are one
+ * click here.
+ *
+ * TWO OF THEM RENDER NOTHING, WHICH IS THE POINT OF HAVING THEM. `no` and
+ * `unchecked` must produce no chip at all, and an absence is exactly the kind of
+ * thing that ships broken because nobody looked at it on purpose.
+ */
+const ADMIN_CASES = {
+  yes: 'yes',
+  no: 'no',
+  unknown: 'unknown',
+  unchecked: 'unchecked',
+} satisfies Record<string, AdminRole>
+
+type AdminKey = keyof typeof ADMIN_CASES
 
 const MOD_CASES = {
   online: { online: true, canBan: true, ban: null },
@@ -632,7 +862,20 @@ type NameKey = keyof typeof NAME_CASES
 
 const PREVIEW_DISCORD_ID = '000000000000000001'
 
-function chrome(overrides: Partial<DiscordChrome> = {}): DiscordChrome {
+function chrome(
+  /**
+   * THE ADMIN ANSWER TRAVELS WITH THE CHROME, exactly as it does in production:
+   * lib/discord.ts resolves the role check alongside the user fetch and puts it
+   * on this object, so the chip cannot arrive separately from the face.
+   *
+   * A REQUIRED PARAMETER RATHER THAN AN OVERRIDE WITH A DEFAULT. A harness that
+   * quietly defaulted this would make three of the four answers unreachable by
+   * accident, which is the exact way `bans: []` made the ban chip unreviewable
+   * here for months.
+   */
+  admin: AdminRole,
+  overrides: Partial<DiscordChrome> = {},
+): DiscordChrome {
   return {
     id: PREVIEW_DISCORD_ID,
     answered: true,
@@ -643,6 +886,7 @@ function chrome(overrides: Partial<DiscordChrome> = {}): DiscordChrome {
     username: 'preview_player',
     globalName: 'preview~',
     formerNames: FORMER_NAMES,
+    admin,
     ...overrides,
   }
 }
@@ -683,8 +927,10 @@ const DISCORD_CASES = {
    */
   slow: {
     label: 'slow then full',
-    make: () =>
-      new Promise<DiscordChrome>((resolve) => setTimeout(() => resolve(chrome()), 4_000)),
+    make: (admin: AdminRole) =>
+      new Promise<DiscordChrome>((resolve) =>
+        setTimeout(() => resolve(chrome(admin)), 4_000),
+      ),
   },
 
   /*
@@ -694,8 +940,8 @@ const DISCORD_CASES = {
    */
   timeout: {
     label: 'timed out',
-    make: async () =>
-      chrome({
+    make: async (admin: AdminRole) =>
+      chrome(admin, {
         answered: false,
         avatarUrl: PREVIEW_DEFAULT_AVATAR,
         real: false,
@@ -705,7 +951,10 @@ const DISCORD_CASES = {
   },
 
   /* The whole thing: real avatar, banner, accent, both names, four renames. */
-  full: { label: 'full profile', make: async () => chrome() },
+  full: {
+    label: 'full profile',
+    make: async (admin: AdminRole) => chrome(admin),
+  },
 
   /*
    * THE TWO ACCENTS THAT BREAK A NAIVE IMPLEMENTATION.
@@ -718,8 +967,16 @@ const DISCORD_CASES = {
    * LOOK AT THESE IN BOTH THEMES. The failure they exist to catch is a surface
    * dissolving into the page, and each of them only dissolves in one of the two.
    */
-  white: { label: 'accent #ffffff', make: async () => chrome({ accent: accentSurface('#ffffff') }) },
-  black: { label: 'accent #000000', make: async () => chrome({ accent: accentSurface('#000000') }) },
+  white: {
+    label: 'accent #ffffff',
+    make: async (admin: AdminRole) =>
+      chrome(admin, { accent: accentSurface('#ffffff') }),
+  },
+  black: {
+    label: 'accent #000000',
+    make: async (admin: AdminRole) =>
+      chrome(admin, { accent: accentSurface('#000000') }),
+  },
 
   /*
    * No accent and no banner: an ordinary Discord account. The card has a face
@@ -733,21 +990,30 @@ const DISCORD_CASES = {
    */
   plain: {
     label: 'no accent',
-    make: async () => chrome({ accent: null, bannerUrl: null, formerNames: [] }),
+    make: async (admin: AdminRole) =>
+      chrome(admin, { accent: null, bannerUrl: null, formerNames: [] }),
   },
 
   /*
    * AN ACCOUNT WITH NO DISPLAY NAME. Discord allows `global_name` to be cleared,
-   * and the client then shows the @handle in its place — so the identifiers
-   * panel has a labelled row with nothing in it. It says "not set" rather than
-   * rendering an empty row or silently disappearing, and this is the only way to
-   * see which.
+   * and the client then shows the @handle in its place.
+   *
+   * WHAT THIS CASE SHOWS HAS CHANGED, and it is the cost of merging the two name
+   * rows into "Other names". It used to be the labelled row that reads "not set"
+   * — absence rendered as absence. A row that is a LIST OF NAMES cannot say that:
+   * with no display name and no Discord renames, the row falls back to whatever
+   * IN-GAME names there are, and with `?names=one` beside this it disappears
+   * entirely. That absence is the thing to look at here now.
    */
   noname: {
     label: 'no display name',
-    make: async () => chrome({ globalName: null, formerNames: [] }),
+    make: async (admin: AdminRole) =>
+      chrome(admin, { globalName: null, formerNames: [] }),
   },
-} satisfies Record<string, { label: string; make: () => Promise<DiscordChrome> | null }>
+} satisfies Record<
+  string,
+  { label: string; make: (admin: AdminRole) => Promise<DiscordChrome> | null }
+>
 
 type DiscordKey = keyof typeof DISCORD_CASES
 
@@ -759,6 +1025,7 @@ function fixture(
   mod: ModKey,
   discord: DiscordKey,
   names: NameKey,
+  taken: TakenKey,
 ): Profile {
   const counts = INCIDENT_CASES[incidents]
   return {
@@ -897,6 +1164,14 @@ function fixture(
         reason: null,
       },
     ],
+    /*
+     * THE REAL FUNCTION, ON REAL AUDIT SHAPES. This is not a list of finished
+     * rows — it is `RAW_TAKEN` put through the same `actionsTakenFrom` the
+     * profile route calls, so the collapse the owner asked for ("it shouldn't be
+     * counted twice") is exercised here rather than imitated. Thirteen rows in,
+     * eight out. See RAW_TAKEN for which five vanish and why.
+     */
+    actionsTaken: actionsTakenFrom(TAKEN_CASES[taken]),
     matches,
   }
 }
@@ -970,16 +1245,18 @@ async function Preview({
   const mod = pick(sp.mod, MOD_CASES, 'online' as ModKey)
   const discord = pick(sp.discord, DISCORD_CASES, 'full' as DiscordKey)
   const names = pick(sp.names, NAME_CASES, 'renamed' as NameKey)
+  const admin = pick(sp.admin, ADMIN_CASES, 'yes' as AdminKey)
+  const taken = pick(sp.taken, TAKEN_CASES, 'some' as TakenKey)
 
-  const params = { state, incidents, xp, mod, discord, names }
+  const params = { state, incidents, xp, mod, discord, names, admin, taken }
   const { matches, stats } = MATCH_CASES[state]
-  const p = fixture(matches, stats, xp, incidents, mod, discord, names)
+  const p = fixture(matches, stats, xp, incidents, mod, discord, names, taken)
   const now = BASE + 5 * 60_000
   const banRow = MOD_CASES[mod].ban
 
   // Built here and NOT awaited, exactly as the real page builds it — awaiting it
   // would hide the one behaviour half these cases exist to show.
-  const chromePromise = DISCORD_CASES[discord].make()
+  const chromePromise = DISCORD_CASES[discord].make(ADMIN_CASES[admin])
 
   const body = (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -1006,6 +1283,25 @@ async function Preview({
           name="discord"
           keys={Object.keys(DISCORD_CASES)}
           current={discord}
+          params={params}
+        />
+        {/* The Discord role check's four answers, and the two of them that must
+            render nothing at all. Independent of `discord` on purpose: the role
+            lookup is a SECOND call to a different endpoint, and it can answer
+            while the user fetch times out. `?discord=timeout&admin=yes` is that
+            pair, and the chip must survive it. */}
+        <Axis
+          name="admin"
+          keys={Object.keys(ADMIN_CASES)}
+          current={admin}
+          params={params}
+        />
+        {/* The "Actions taken" panel. With `none` it appears only while the
+            ADMIN chip does — flip `admin` against it. */}
+        <Axis
+          name="taken"
+          keys={Object.keys(TAKEN_CASES)}
+          current={taken}
           params={params}
         />
         {/*

@@ -236,27 +236,56 @@ export async function audited<T>(
  * "latest" out of DynamoDB without sorting client-side.
  */
 /**
- * Every action taken against one player.
+ * How far back one profile's moderation history reaches.
  *
- * THE BANS TABLE CANNOT ANSWER THIS. It is keyed on license alone — one row per
- * player — so issuing a second ban overwrites the first and the history is
- * gone. The audit log is append-only and is the only place a player's
+ * A CEILING ON THE READ, NOT ON THE TRUTH. Anything older than this many rows is
+ * still in the table and still in `/audit`; it simply is not on the profile. The
+ * number is named rather than inlined because both halves of `forPlayer` are
+ * bounded by it and a reader deserves to know which one they are looking at.
+ */
+const PROFILE_WINDOW = 400
+
+/**
+ * Both directions of one player's audit history, from ONE read of the log.
+ *
+ * TWO QUESTIONS, ONE QUERY, AND THAT IS WHY THIS REPLACED `forTarget`. The
+ * profile page now asks what was done TO this person AND — because they may be an
+ * admin — what they DID. Those are two filters over the same recent slice, and a
+ * second exported reader would have meant a second `recent(400)` on every profile
+ * view for rows we already had in hand.
+ *
+ * THE BANS TABLE CANNOT ANSWER THE FIRST OF THEM. It is keyed on license alone —
+ * one row per player — so issuing a second ban overwrites the first and the
+ * history is gone. The audit log is append-only and is the only place a player's
  * moderation past actually survives, which is exactly what an audit log is for.
  *
  * READS THE WHOLE RECENT LOG AND FILTERS, rather than querying an index. Admin
  * actions are measured in tens per day, so scanning the last few hundred is
  * cheaper than the GSI it would take to avoid it — and the whole log lives in
  * one partition anyway (see the note on `pk`). When either of those stops being
- * true this needs a `targetLicense` index, and the same comment on `pk` marks
- * the moment.
+ * true this needs `targetLicense` and `actorLicense` indexes, and the same
+ * comment on `pk` marks the moment.
  *
  * INTENT ROWS WITHOUT AN OUTCOME ARE INCLUDED, deliberately. A kick that was
  * dispatched and never confirmed is a thing a moderator needs to see — dropping
  * it would present a cleaner history than actually happened.
+ *
+ * `taken` IS NOT SLICED HERE AND THAT IS NOT AN OVERSIGHT. Those rows still have
+ * to be COLLAPSED — a ban issued as an incident verdict is two rows of one act,
+ * see lib/actionsTaken.ts — and slicing before collapsing could cut a pair in
+ * half at the boundary and leave the second row of it standing alone. The caller
+ * groups first and bounds the result afterwards; `PROFILE_WINDOW` is the real
+ * ceiling either way.
  */
-export async function forTarget(license: string, limit = 50): Promise<AuditRow[]> {
-  const rows = await recent(400)
-  return rows.filter((r) => r.targetLicense === license).slice(0, limit)
+export async function forPlayer(
+  license: string,
+  limit = 50,
+): Promise<{ against: AuditRow[]; taken: AuditRow[] }> {
+  const rows = await recent(PROFILE_WINDOW)
+  return {
+    against: rows.filter((r) => r.targetLicense === license).slice(0, limit),
+    taken: rows.filter((r) => r.actorLicense === license),
+  }
 }
 
 export async function recent(limit = 100): Promise<AuditRow[]> {

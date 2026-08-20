@@ -18,11 +18,35 @@
  *   moderation Ringmaster's own tables — bans, audit, incidents.
  */
 
-import type { IncidentVerdict } from './incidents'
+import type { IncidentVerdict, VerdictAction } from './incidents'
 
 import type { AccentSurface } from './contrast'
 
 export type Provenance = 'live' | 'identity' | 'stats' | 'moderation'
+
+/**
+ * Whether this account holds the Discord admin role, AND HOW SURE WE ARE.
+ *
+ * FOUR STATES, NOT A BOOLEAN, and the two middle ones are the whole reason. The
+ * admin test in this project is the Discord role — `lib/discordRole.ts`, the same
+ * check that gates every write — and that check is a live HTTP call to somebody
+ * else's API. A boolean would collapse "Discord said no" into "Discord did not
+ * answer", which is the one collapse `RoleCheck` was written to prevent, and the
+ * profile page would then hide a red ADMIN chip because a request timed out.
+ *
+ *   `yes`        Discord answered, and the role is held. The red chip.
+ *   `no`         Discord answered, and it is not. No chip, and that is correct.
+ *   `unknown`    We asked and did not learn: a timeout, a 429, a 5xx, a guild we
+ *                cannot see. The page SAYS SO rather than rendering the `no`
+ *                treatment on evidence it does not have.
+ *   `unchecked`  There is no bot token, so this console cannot answer the
+ *                question about ANYBODY. A configuration state rather than an
+ *                event — the same distinction `NO_TOKEN_REASON` already draws in
+ *                lib/discordRole.ts, and the reason that case writes no audit
+ *                row. It renders nothing at all: an "unknown" chip on every
+ *                profile forever is furniture, not a finding.
+ */
+export type AdminRole = 'yes' | 'no' | 'unknown' | 'unchecked'
 
 /**
  * One Discord name we watched get replaced.
@@ -116,6 +140,23 @@ export interface DiscordChrome {
   globalName: string | null
   /** Formerly known as, newest first. From the registry row, not from the API. */
   formerNames: DiscordNameChange[]
+
+  /**
+   * Whether this account holds the Discord admin role. See {@link AdminRole}.
+   *
+   * IT RIDES ON THE CHROME BECAUSE IT IS THE SAME FACT FROM THE SAME PLACE, and
+   * because of what that buys: the whole profile already waits behind one
+   * skeleton for Discord, so the chip arrives in the same instant as the face and
+   * the banner rather than popping in afterwards — which is requirement 3 of
+   * components/DiscordChrome ("nothing pops in late"). A second promise with a
+   * second provider would be a second wait with nothing keeping the two in step.
+   *
+   * IT COSTS NO EXTRA WALL TIME. `discordChromeFor` runs the role check in
+   * PARALLEL with `GET /users/{id}` under the same budget, so the page's worst
+   * case is the max of the two rather than their sum — unchanged from before this
+   * field existed.
+   */
+  admin: AdminRole
 }
 
 export interface ProfileIdentifier {
@@ -217,6 +258,48 @@ export interface ProfileAction {
   /** Links to the acting admin's own profile. Null for system actions. */
   actorLicense: string | null
   reason?: string | null
+}
+
+/**
+ * One moderation action this person TOOK, as opposed to one taken against them.
+ *
+ * THE OTHER DIRECTION THROUGH THE SAME TABLE. `ProfileAction` above is the audit
+ * log filtered on `targetLicense`; this is the same log filtered on
+ * `actorLicense`. They are different questions about the same person and the
+ * profile page now asks both — "what has been done to them" and, for the people
+ * who are admins, "what have they done".
+ *
+ * IT IS ONE ROW PER ACT, NOT ONE ROW PER AUDIT ROW, and that is the whole reason
+ * this shape exists rather than reusing `AuditRow`. A ban issued as an incident
+ * verdict writes TWO rows on purpose (`ban.issue` and `incident.resolve`, sharing
+ * an `incidentId`), and a ban against somebody who is online writes a third (the
+ * `player.kick` that enforces it). Listing the log raw shows one decision as
+ * three lines. See lib/actionsTaken.ts, which does the collapsing.
+ */
+export interface ProfileActionTaken {
+  at: number
+  /**
+   * The audit action this row IS, after collapsing — `ban.issue`, `ban.lift`,
+   * `player.kick` or `incident.resolve`. Never the row that was folded into it.
+   */
+  action: string
+  outcome: string
+  /** Who it was done to. Null only for a row the log recorded without one. */
+  targetName: string | null
+  /** Links to their profile, when we have a license. */
+  targetLicense: string | null
+  reason: string | null
+  /** The incident it was decided on, when it was decided on one. */
+  incidentId: string | null
+  /**
+   * What the incident recorded as the outcome, when there was an incident.
+   *
+   * ONLY RENDERED WHEN NO ACTION ROW WAS FOLDED IN. On a collapsed ban-from-an-
+   * incident the row's own label already reads "Banned", and a `banned` chip
+   * beside it would be the same word twice — which is the duplication this whole
+   * module exists to remove, reintroduced one line lower.
+   */
+  verdict: VerdictAction | null
 }
 
 export interface Profile {
@@ -359,6 +442,17 @@ export interface Profile {
    * the append-only log.
    */
   actions: ProfileAction[]
+
+  /**
+   * Moderation actions THIS person took, newest first, one row per act.
+   *
+   * SAME LOG, OTHER DIRECTION. `actions` above is `targetLicense === license`;
+   * this is `actorLicense === license`, collapsed by `actionsTakenFrom` so a ban
+   * issued as an incident verdict is one row rather than two. Empty for the
+   * overwhelming majority of profiles, which is exactly what it should be — see
+   * ProfileView for when the panel renders at all.
+   */
+  actionsTaken: ProfileActionTaken[]
 
   /**
    * Per-match history, newest first — REAL SINCE #153.

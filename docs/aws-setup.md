@@ -55,12 +55,18 @@ Create nine tables. For every one of them:
 > place table names are constructed. Nothing asserts that this table and that
 > file agree — so when they disagree, the file is right.
 
-> **`ringmaster-telemetry` is provisioned and unwritten.** Host CPU/memory/
-> network is polled over SSH and held in memory on the Ringmaster box
-> (`src/lib/telemetry.ts`), so the graphs are lost on restart and the durable
-> record is an M3b follow-up that has not landed. Create the table and the TTL
-> anyway — provisioning it later is the same work plus a migration. **The game
-> box never writes it**, and never did; see the 2026-08-09 note in section 3.
+> **`ringmaster-telemetry` is provisioned, unwritten, and RESERVED — not
+> vestigial.** The owner has earmarked it for FXServer telemetry feeding a
+> planned server analytics page (2026-08-19). Do not delete it in a cleanup
+> pass, and do not repurpose it.
+>
+> Host CPU/memory/network is a **different** thing and is not stored here: it is
+> polled over SSH every 15s (`src/lib/telemetry.ts` via `dispatch.sh`'s
+> `do_telemetry`) and held in memory, which the owner has confirmed is fine for
+> the Host page — its charts show what this console has observed since it last
+> started, by design. Create the table and the TTL anyway; provisioning it later
+> is the same work plus a migration. **The game box never writes it**, and never
+> did; see the 2026-08-09 note in section 3.
 
 ### The secondary index on `ringmaster-sessions`
 

@@ -1,7 +1,8 @@
+import { adminRoleFrom, checkAdminRole } from './discordRole'
 import { accentSurface, hexFromInt } from './contrast'
 import { env } from './env'
 import * as players from './players'
-import type { DiscordChrome } from './profile'
+import type { AdminRole, DiscordChrome } from './profile'
 
 /**
  * Discord, as a source of what a player looks like.
@@ -188,6 +189,51 @@ export async function fetchDiscordUser(
   }
 }
 
+/**
+ * Is this account an admin? Asked of Discord, on the page's budget, never blocking.
+ *
+ * ═══ THE COST, STATED, BECAUSE IT IS THE WHOLE DESIGN DECISION ═══
+ *
+ * `checkAdminRole` is a live call to `GET /guilds/{guild}/members/{user}`. This
+ * page already makes one live Discord call (`fetchDiscordUser` above) and already
+ * sits behind a full-page skeleton until it answers, so the questions are:
+ *
+ *   HOW LONG DOES IT ADD?  Nothing. It runs in `Promise.all` beside the user
+ *                          fetch on the PAGE's budget (DISCORD_TIMEOUT_MS), not
+ *                          on the write gate's own ROLE_CHECK_TIMEOUT_MS — those
+ *                          two are separate constants precisely so a page and a
+ *                          ban can wait for different lengths of time, and this
+ *                          is a page. Worst case for the profile is the max of
+ *                          the two calls, which is exactly what it was before.
+ *
+ *   HOW OFTEN DOES IT FIRE?  Once per profile page view, and nowhere else.
+ *                          `discordChromeFor` has exactly one caller — the
+ *                          profile route — and no list, table or poll touches it.
+ *                          That is the bound on "not an unbounded number of times
+ *                          on a list", and it is structural rather than a
+ *                          promise: a list would have to import this function to
+ *                          break it.
+ *
+ *   WHY NOT CACHE IT?      For the reason lib/discordRole.ts gives about the
+ *                          write gate, which applies here too: a TTL is exactly a
+ *                          window in which a removed admin still wears the chip.
+ *                          Profile views are tens per day against a global
+ *                          ceiling of fifty requests per SECOND. There is nothing
+ *                          to save.
+ *
+ * NEVER THROWS. `checkAdminRole` does not, but `env()` inside it does when a
+ * variable is missing, and this promise is resolved through a Suspense boundary
+ * where a rejection costs the page rather than the chip. An unreadable
+ * environment is `unknown`, which is the honest answer anyway.
+ */
+async function adminRoleFor(discordId: string, timeoutMs: number): Promise<AdminRole> {
+  try {
+    return adminRoleFrom(await checkAdminRole(discordId, timeoutMs))
+  } catch {
+    return 'unknown'
+  }
+}
+
 /** Empty strings are how Discord spells "not set" in some fields. Treat as null. */
 function text(value: string | null | undefined): string | null {
   const trimmed = typeof value === 'string' ? value.trim() : ''
@@ -223,8 +269,17 @@ export async function discordChromeFor(input: {
   timeoutMs?: number
 }): Promise<DiscordChrome> {
   const { discordId, license, stored, now } = input
+  const timeoutMs = input.timeoutMs ?? DISCORD_TIMEOUT_MS
 
-  const user = await fetchDiscordUser(discordId, input.timeoutMs ?? DISCORD_TIMEOUT_MS)
+  /*
+   * TWO CALLS, ONE WAIT. `Promise.all` rather than two awaits: these are
+   * independent questions to the same host, and sequencing them would make a slow
+   * Discord cost the page ten seconds instead of five. See `adminRoleFor`.
+   */
+  const [user, admin] = await Promise.all([
+    fetchDiscordUser(discordId, timeoutMs),
+    adminRoleFor(discordId, timeoutMs),
+  ])
 
   // The floor: a real id, no answer. Still a face, still a page.
   const fallback: DiscordChrome = {
@@ -239,6 +294,11 @@ export async function discordChromeFor(input: {
     // The stored history still shows when Discord is down: it is Ringmaster's
     // own record, and it is the half of this panel with moderation value.
     formerNames: stored?.former ?? [],
+    // NOT FORCED TO `unknown` HERE. The two calls fail independently — a 429 on
+    // `GET /users/{id}` says nothing about whether the member lookup answered —
+    // and flattening a real "yes" into "we could not check" because the AVATAR
+    // request timed out would hide a chip we actually have the evidence for.
+    admin,
   }
 
   if (!user) return fallback
@@ -284,6 +344,7 @@ export async function discordChromeFor(input: {
       username,
       globalName,
       formerNames: identity.former,
+      admin,
     }
   } catch {
     return fallback
