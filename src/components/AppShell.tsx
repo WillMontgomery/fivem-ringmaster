@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 
 import { IdleGuard } from '@/components/IdleGuard'
+import { IncidentBadge, MaintenanceBadge } from '@/components/NavBadges'
 import { OffMainBanner } from '@/components/OffMainBanner'
 import { PlayerSearchTrigger } from '@/components/PlayerSearch'
 import { PrefsDialog } from '@/components/PrefsDialog'
@@ -43,10 +44,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { DEMO_BADGES } from '@/lib/demo'
 import { activityDeadline, hasSessionCookie } from '@/lib/activity'
 import * as incidents from '@/lib/incidents'
-import * as maint from '@/lib/maintenance'
 import { ensureDriver, maintenanceView } from '@/lib/maintenanceDriver'
 import { readPrefs } from '@/lib/prefs'
 import { deployPhase } from '@/lib/serverPhase'
@@ -123,8 +122,23 @@ function GithubMark({ className }: { className?: string }) {
   )
 }
 
+/**
+ * What the sidebar badges START from.
+ *
+ * SEEDS, NOT THE LAST WORD, and that changed when the badges stopped being
+ * awaited. Whatever is here is what the SERVER render draws; from there the
+ * badges follow the two-second poll like the header chips do, unless polling is
+ * off (the design harness), in which case these values stand for good. See
+ * `NavBadges` in `components/NavBadges.tsx`.
+ */
 export interface NavBadges {
-  /** Incidents nobody has looked at. The number that should make you click. */
+  /**
+   * Incidents nobody has looked at. The number that should make you click.
+   *
+   * `undefined` means "we have not managed to count", NOT zero — the badge
+   * draws nothing for it, which is a different silence from the one a genuinely
+   * empty queue produces. See `lib/incidents`.
+   */
   incidents?: number
   /** A maintenance window scheduled, draining, or deploying right now. */
   maintenance?: 'scheduled' | 'draining' | 'updating' | null
@@ -152,68 +166,14 @@ interface NavItem {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   /** Absent when the page is real. Present = what it is waiting on. */
   soon?: string
-  badge?: (b: NavBadges) => React.ReactNode
+  /**
+   * `b` is the SEED — what this server render knew. `live` says whether the
+   * badge may then follow the poll. Both are needed because the badges are
+   * client components now; see `NavBadges`.
+   */
+  badge?: (b: NavBadges, live: boolean) => React.ReactNode
   /** Absent = always shown. Present and false = not in the nav at all. */
   when?: (ctx: NavContext) => boolean
-}
-
-/**
- * The unread-incident count.
- *
- * URGENT-COLOURED AND CAPPED. Amber rather than red because red in this
- * console means "dead", and an unreviewed report is not an emergency — it is
- * a queue. Capped at 99+ because the difference between 140 and 200 unread
- * incidents changes nothing about what you do next, and four digits wreck the
- * column.
- */
-function IncidentBadge({ n }: { n: number }) {
-  if (!n) return null
-  return (
-    <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-warn/15 px-1.5 py-0.5 text-xs font-semibold tabular-nums text-warn ring-1 ring-inset ring-warn/30">
-      {n > 99 ? '99+' : n}
-    </span>
-  )
-}
-
-/**
- * The maintenance state, beside the nav item it belongs to.
- *
- * THE BARE STATE WORD, and here it always was — this badge sits inside the
- * "Maintenance" nav row, so prefixing it would have read "Maintenance
- * maintenance draining". The header chip has now been cut to match (it said
- * "Maintenance draining"), which is what makes the two agree word for word
- * rather than merely in meaning.
- *
- * `updating` PULSES LIKE `draining` DOES. The dot marks the states where
- * something is happening to the server right now as opposed to being planned
- * for later, and a deploy in progress is the strongest case of that there is.
- */
-function MaintenanceBadge({
-  state,
-}: {
-  state: 'scheduled' | 'draining' | 'updating'
-}) {
-  const active = state === 'draining' || state === 'updating'
-  return (
-    <span
-      className={cn(
-        'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-semibold uppercase tracking-wider ring-1 ring-inset',
-        state === 'draining'
-          ? 'bg-warn/15 text-warn ring-warn/30'
-          : 'bg-info/15 text-info ring-info/30',
-      )}
-    >
-      {active && (
-        <span
-          className={cn(
-            'size-1.5 animate-pulse rounded-full',
-            state === 'draining' ? 'bg-warn' : 'bg-info',
-          )}
-        />
-      )}
-      {state}
-    </span>
-  )
 }
 
 const NAV: Array<{ group: string; items: NavItem[] }> = [
@@ -233,7 +193,9 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
         href: '/incidents',
         label: 'Incidents',
         icon: FileSearch,
-        badge: (b) => <IncidentBadge n={b.incidents ?? 0} />,
+        badge: (b, live) => (
+          <IncidentBadge seed={b.incidents ?? null} live={live} />
+        ),
       },
       { href: '/audit', label: 'Audit log', icon: ScrollText },
     ],
@@ -245,8 +207,9 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
         href: '/maintenance',
         label: 'Maintenance',
         icon: CalendarClock,
-        badge: (b) =>
-          b.maintenance ? <MaintenanceBadge state={b.maintenance} /> : null,
+        badge: (b, live) => (
+          <MaintenanceBadge seed={b.maintenance ?? null} live={live} />
+        ),
       },
       /**
        * LIVE CONFIG APPEARS ONLY ON A BOX PARKED OFF MAIN (#20).
@@ -363,9 +326,56 @@ export async function AppShell({
       : user
 
   /**
-   * BOTH BADGES, RESOLVED HERE, ON EVERY PAGE.
+   * THE FEED READING FOR THE HEADER CHIP, RESOLVED HERE RATHER THAN PASSED IN.
    *
-   * ═══ THE BUG THIS CLOSES, WHICH WAS REPORTED TWICE ═══
+   * Exactly the argument the badges below were moved for, and it had produced
+   * exactly the same three wrongs. `feed` was a per-page prop, seven of the
+   * eleven real pages passed it, and on the other four — Audit log, Live config,
+   * Kick & ban, Settings — the Live chip was simply absent. Not stale, not
+   * greyed: gone, on a quarter of the console, for no reason a reader could
+   * infer. "Is the data arriving" is a fact about the server and is true of
+   * every page drawn from it.
+   *
+   * `liveView` IS AN IN-MEMORY READ, so resolving it here costs nothing and the
+   * pages that already pass `feed` are not doing a second lookup worth saving —
+   * they keep the prop only because the preview harness needs it to hand over a
+   * fixture and, crucially, to turn POLLING OFF. That is why `live` defaults to
+   * true here and is only false when a caller says so: a harness must not fetch
+   * real state over the top of its own fixture.
+   *
+   * IT COMES FIRST NOW because everything below is dated from `chipFeed.now` —
+   * the badge, the deploy phase and the chips all describe the same instant.
+   */
+  const chipFeed = feed
+    ? {
+        lastPushAt: feed.lastPushAt,
+        bootEpoch: feed.bootEpoch,
+        now: feed.now,
+        live: feed.live ?? false,
+      }
+    : { ...liveView(Date.now()), now: Date.now(), live: true }
+
+  /**
+   * THE MAINTENANCE ROW, READ ONCE, FOR EVERY SURFACE THAT DRAWS FROM IT.
+   *
+   * IN-MEMORY AND FREE — this is the driver's own cache, not a GetItem. It is
+   * the read `/api/state` answers the poll from, which is precisely why the
+   * sidebar badge and the header chip are seeded from it too: three surfaces,
+   * one row, one reading, no way for them to contradict each other.
+   *
+   * NULL FOR A COLD CACHE, WHICH SHOWS NO BADGE RATHER THAN A WRONG ONE. A
+   * console that has just restarted has not ticked the driver yet, so the badge
+   * is absent for the first render and the browser's first poll (two seconds)
+   * supplies it. `initialPhase` has always behaved exactly this way; the badge
+   * used to be the odd one out, reading the row afresh and therefore able to
+   * disagree with the very chip beside it.
+   */
+  const mv = maintenanceView(chipFeed.now)
+
+  /**
+   * BOTH BADGES, SEEDED HERE, ON EVERY PAGE, AND NEITHER OF THEM AWAITED.
+   *
+   * ═══ THE BUG THAT WAS CLOSED HERE, WHICH WAS REPORTED TWICE ═══
    *
    * The owner: "The incidents # chip in the side bar doesn't appear unless I'm
    * on the Incidents page. The same is true for the chip on the maintenance
@@ -395,99 +405,119 @@ export async function AppShell({
    * the sidebar. A page-supplied badge was simply the only way an incident
    * count ever reached it.
    *
-   * SO BOTH ARE READ HERE, INDEPENDENTLY, AND `badges` NOW OVERRIDES PER KEY
+   * SO BOTH ARE RESOLVED HERE, INDEPENDENTLY, AND `badges` OVERRIDES PER KEY
    * rather than replacing the object. The preview harness still passes
    * DEMO_BADGES and still gets exactly what it asked for; a real page that
    * passes one badge no longer silently blanks the other.
    *
-   * NEITHER READ IS EXPENSIVE ENOUGH TO CARE. `openCount` is cached for fifteen
-   * seconds inside `lib/incidents` for precisely this reason — the comment
-   * there says "the badge renders on every page and this is a scan" — and
-   * `maint.current()` is the row the driver already polls. They are resolved
-   * together so one failing cannot take the other down with it.
+   * ═══ AND THE FIX USED TO BE PAID FOR ON THE CRITICAL PATH ═══
    *
-   * A FAILED READ SHOWS NO BADGE, NEVER A ZERO. `openCount` already returns its
-   * last known value rather than 0 on an error, and a rejected `current()`
-   * yields undefined here, which `MaintenanceBadge` renders as nothing. "We
-   * could not look" and "there is nothing waiting" must not look alike.
+   * THE REQUIREMENT ABOVE IS NOT IN QUESTION. How it was funded is. Resolving
+   * both badges here meant `await Promise.all([incidents.openCount(),
+   * maint.current()])` — a DynamoDB scan and a GetItem — BEFORE the shell could
+   * render, on all eleven routes, on every navigation. The owner felt it:
+   * "switching between pages taking longer".
+   *
+   * MEASURED BEFORE IT WAS CHANGED, because the obvious culprit was not the
+   * whole story. The shell's blocking DynamoDB work per navigation was FIVE
+   * strictly sequential round trips. FOUR are the session lookup every page
+   * awaits before this component is even entered — `auth()` is a Query then a
+   * GetItem, then `discordIdFor`, then `grantsForDiscordId` — and ONE was this
+   * badge pair, whose two reads at least ran concurrently with each other.
+   *
+   * SO THE BADGES WERE ONE ROUND TRIP IN FIVE, AND WHAT THAT COST DEPENDED
+   * ENTIRELY ON THE INCIDENT CACHE. Warm, it was a single GetItem — about a
+   * fifth of the blocking time. Cold, once every fifteen seconds, it was a
+   * TABLE SCAN, the most expensive read in this application, and it became the
+   * largest single item on the path: roughly 45ms against the session's 32ms at
+   * same-region latency, and the gap widens as the incidents table grows.
+   *
+   * WHICH MEANS THE HONEST ANSWER IS "BOTH". The badges dominated by TIME
+   * whenever the cache had lapsed, which is exactly the navigation a human
+   * notices; the session lookup dominates by COUNT on every navigation without
+   * exception and is the deeper problem. This change removes the badge round
+   * trip entirely. IT DOES NOT TOUCH THE SESSION LOOKUP, which is still four
+   * sequential reads on every page load and is where the next real win is.
+   *
+   * NEITHER BADGE IS AWAITED ANY MORE. Both seeds are synchronous in-memory
+   * reads of what this process already learned, and the browser takes them from
+   * there on the two-second poll that every page was already running for the
+   * header chips. See `NavBadges`.
+   *
+   * ═══ AND THE MAINTENANCE BADGE NOW HAS ONE SOURCE INSTEAD OF TWO ═══
+   *
+   * It had two readings of one row with nothing asserting they agreed: this
+   * component's own `maint.current()` GetItem, and `/api/state`'s
+   * `maintenanceView()`. They could genuinely disagree — a console whose driver
+   * had not ticked yet served a null badge on the poll while a fresh GetItem
+   * here said "draining", so the sidebar and the header contradicted each other
+   * about the same window. Both now read the driver's cache, which is also what
+   * `initialPhase` below has always read. One row, one reader, three surfaces.
+   *
+   * A FAILED READ SHOWS NO BADGE, NEVER A ZERO. `openCountView` returns null
+   * when it has never managed a count, and a failed recount leaves the previous
+   * value alone rather than substituting a zero — see `lib/incidents`. Null and
+   * zero both draw nothing, but they arrive here as different values and the
+   * badge is written knowing the difference. "We could not look" and "there is
+   * nothing waiting" must not become the same fact on the way.
    *
    * ONLY WHAT THE CALLER DID NOT SUPPLY IS READ. The design harness passes both
    * and must not reach DynamoDB to render a fixture; a real page that has
-   * already counted the queue for its own body (both incident routes do) does
-   * not pay for a second count.
+   * already counted the queue for its own body (both incident routes do) seeds
+   * first paint with the fresher number it already holds.
    */
-  const [liveIncidents, liveMaintenance] = await Promise.all([
-    badges?.incidents === undefined
-      ? incidents.openCount().catch(() => undefined)
-      : undefined,
-    badges?.maintenance === undefined
-      ? maint
-          .current()
-          .then((w) => maint.badgeState(w))
-          .catch(() => undefined)
-      : undefined,
-  ])
-
   const b: NavBadges = {
-    incidents: badges?.incidents ?? liveIncidents,
+    incidents: badges?.incidents ?? incidents.openCountView() ?? undefined,
     maintenance:
-      badges?.maintenance !== undefined ? badges.maintenance : liveMaintenance,
+      badges?.maintenance !== undefined ? badges.maintenance : mv.badge,
   }
 
   /**
-   * THE FEED READING FOR THE HEADER CHIP, RESOLVED HERE RATHER THAN PASSED IN.
+   * AND THE RECOUNT IS KICKED OFF WITHOUT BEING WAITED FOR.
    *
-   * Exactly the argument the badges above were moved for, and it had produced
-   * exactly the same three wrongs. `feed` was a per-page prop, seven of the
-   * eleven real pages passed it, and on the other four — Audit log, Live config,
-   * Kick & ban, Settings — the Live chip was simply absent. Not stale, not
-   * greyed: gone, on a quarter of the console, for no reason a reader could
-   * infer. "Is the data arriving" is a fact about the server and is true of
-   * every page drawn from it.
+   * NOT `await`. This returns immediately when the cached count is inside its
+   * TTL and otherwise starts one shared scan that some later render or poll
+   * will benefit from — so a navigation warms the number for the next one
+   * instead of paying for it itself. `/api/state` is what actually keeps it
+   * fresh while the console is open; this exists so the first navigation after
+   * a console restart leaves a value behind for the second, rather than every
+   * page waiting on the browser to come back and ask.
    *
-   * `liveView` IS AN IN-MEMORY READ, so resolving it here costs nothing and the
-   * pages that already pass `feed` are not doing a second lookup worth saving —
-   * they keep the prop only because the preview harness needs it to hand over a
-   * fixture and, crucially, to turn POLLING OFF. That is why `live` defaults to
-   * true here and is only false when a caller says so: a harness must not fetch
-   * real state over the top of its own fixture.
+   * The same lazy, idempotent, fire-and-forget shape as `ensurePolling` and
+   * `ensureDriver` below, and for the same reason: the work belongs to the
+   * process, not to whoever happened to click.
    */
-  const chipFeed = feed
-    ? {
-        lastPushAt: feed.lastPushAt,
-        bootEpoch: feed.bootEpoch,
-        now: feed.now,
-        live: feed.live ?? false,
-      }
-    : { ...liveView(Date.now()), now: Date.now(), live: true }
+  void incidents.refreshOpenCount()
 
   /**
    * WHERE THE LAST DEPLOY HAS GOT TO, resolved on the server so the header is
    * right on first paint rather than two seconds later.
    *
-   * BOTH HALVES ARE FREE READS. `maintenanceView` hands out the row the driver
-   * last read on its own fifteen-second tick, and `liveView` is in-memory
-   * state — neither is a database round trip, which is what makes doing this on
-   * every page render reasonable. A console whose driver has never ticked gets
-   * a null window and therefore `idle`, which asserts nothing: the same
-   * "not knowing shows less" direction the phase is built on.
+   * BOTH HALVES ARE FREE READS. `mv` above is the row the driver last read on
+   * its own fifteen-second tick, and `liveView` is in-memory state — neither is
+   * a database round trip, which is what makes doing this on every page render
+   * reasonable. A console whose driver has never ticked gets a null window and
+   * therefore `idle`, which asserts nothing: the same "not knowing shows less"
+   * direction the phase is built on.
    *
    * THE SAME FUNCTION THE BROWSER CALLS TWO SECONDS LATER, so the seed and the
    * first poll cannot disagree about the same row.
+   *
+   * `mv.window` RATHER THAN A SECOND `maintenanceView()` CALL. It used to open
+   * with one of its own, which meant this render could sample the row at one
+   * instant for the phase and at another for the badge. One read, one instant,
+   * every surface below drawn from it.
    */
-  const initialPhase = (() => {
-    const mw = maintenanceView(chipFeed.now).window
-    return deployPhase({
-      state: mw?.state,
-      completedAt: mw?.completedAt,
-      deployError: mw?.deployError,
-      deployBootEpoch: mw?.deployBootEpoch,
-      deployConfirmedAt: mw?.deployConfirmedAt,
-      bootEpoch: chipFeed.bootEpoch,
-      lastPushAt: chipFeed.lastPushAt,
-      now: chipFeed.now,
-    })
-  })()
+  const initialPhase = deployPhase({
+    state: mv.window?.state,
+    completedAt: mv.window?.completedAt,
+    deployError: mv.window?.deployError,
+    deployBootEpoch: mv.window?.deployBootEpoch,
+    deployConfirmedAt: mv.window?.deployConfirmedAt,
+    bootEpoch: chipFeed.bootEpoch,
+    lastPushAt: chipFeed.lastPushAt,
+    now: chipFeed.now,
+  })
 
   const jar = await cookies()
   const prefs = readPrefs(jar)
@@ -644,7 +674,7 @@ export async function AppShell({
                 <SidebarMenu>
                   {items.map((item) => {
                     const Icon = item.icon
-                    const badge = item.badge?.(b)
+                    const badge = item.badge?.(b, chipFeed.live)
                     return (
                       <SidebarMenuItem key={item.href}>
                         {/* Base UI takes `render`, not Radix's `asChild` — the

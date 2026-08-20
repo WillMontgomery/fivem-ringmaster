@@ -287,25 +287,84 @@ export async function filedBy(license: string): Promise<Incident[]> {
  * seconds is far fresher than the thing it describes — an incident that has
  * been waiting four minutes is not different from one waiting four minutes and
  * ten seconds.
+ *
+ * ═══ WHY THIS IS A VIEW PLUS A REFRESHER RATHER THAN ONE `await` ═══
+ *
+ * It used to be a single `openCount(): Promise<number>` that the app shell
+ * awaited on every navigation. The cache made that cheap most of the time and
+ * expensive on a fifteen-second rhythm — but "most of the time" is the wrong
+ * property for something on the critical path of every page load, because the
+ * miss lands on whoever happens to navigate next and a scan is the most
+ * expensive read in this module.
+ *
+ * SO IT IS SPLIT THE WAY `hostView` AND `maintenanceView` ARE SPLIT, which is
+ * the pattern this codebase already uses for exactly this shape of problem: a
+ * synchronous reader that hands out what we last learned and never blocks, and
+ * a refresher somebody else drives on its own cadence. The shell reads the
+ * view; `/api/state` drives the refresh on the poll that is already running.
  */
 let countCache: { at: number; n: number } | null = null
 const COUNT_TTL_MS = 15_000
 
-export async function openCount(): Promise<number> {
-  const now = Date.now()
-  if (countCache && now - countCache.at < COUNT_TTL_MS) return countCache.n
+/**
+ * A recount already on the wire.
+ *
+ * WITHOUT THIS THE POLL WOULD STAMPEDE. `/api/state` is answered every two
+ * seconds per open console, and the scan can take longer than that — so once
+ * the TTL lapses, every console in flight would start its own scan of the same
+ * table and each would overwrite the same cache entry. Sharing the promise
+ * means the table is scanned once per TTL for the whole process no matter how
+ * many browsers are watching.
+ */
+let countInFlight: Promise<void> | null = null
 
-  try {
-    const rows = await scanAll()
-    const n = rows.filter((i) => i.state === 'pending_review').length
-    countCache = { at: now, n }
-    return n
-  } catch (e) {
-    console.error('[incidents] open count failed', e)
-    // A badge that cannot be computed shows nothing rather than zero. Zero is a
-    // claim that the queue is empty, which is the one wrong answer here.
-    return countCache?.n ?? 0
-  }
+/**
+ * The last count we actually managed, or `null` if we never have.
+ *
+ * SYNCHRONOUS AND NEVER A DATABASE READ — that is the entire point. Callers on
+ * a render path use this and get last-known-good with no await.
+ *
+ * `null` IS NOT `0` AND THE DIFFERENCE IS THE WHOLE CONTRACT. Zero is a claim
+ * that the queue is empty; null is "we have not managed to count". They must
+ * not render the same way by accident, so this hands back the distinction and
+ * lets the badge decide. See `NavBadges`.
+ */
+export function openCountView(): number | null {
+  return countCache?.n ?? null
+}
+
+/**
+ * Recount if what we hold has aged past the TTL.
+ *
+ * NEVER THROWS AND NEVER ZEROES. A failed scan leaves the previous value
+ * exactly where it was rather than replacing it with a zero or a null: the
+ * queue did not empty because DynamoDB was briefly unreachable, and a badge
+ * that blinks out on a transient error teaches people to distrust it. The only
+ * thing a failure costs is freshness, and the next tick tries again.
+ *
+ * RESOLVES WHEN THE CACHE IS CURRENT, so a caller that wants the freshest
+ * available number can await it before reading the view. Nothing on a
+ * navigation path does.
+ */
+export async function refreshOpenCount(): Promise<void> {
+  if (countCache && Date.now() - countCache.at < COUNT_TTL_MS) return
+  if (countInFlight) return countInFlight
+
+  countInFlight = (async () => {
+    try {
+      const rows = await scanAll()
+      countCache = {
+        at: Date.now(),
+        n: rows.filter((i) => i.state === 'pending_review').length,
+      }
+    } catch (e) {
+      console.error('[incidents] open count failed', e)
+    } finally {
+      countInFlight = null
+    }
+  })()
+
+  return countInFlight
 }
 
 /**

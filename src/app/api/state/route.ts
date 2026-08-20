@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { auth } from '@/auth'
 import { isIdle } from '@/lib/activity'
 import { IDLE_ERROR_CODE } from '@/lib/idle'
+import * as incidents from '@/lib/incidents'
 import { maintenanceView } from '@/lib/maintenanceDriver'
 import { liveView } from '@/lib/state'
 
@@ -61,9 +62,37 @@ export async function GET(): Promise<Response> {
    */
   const m = maintenanceView(now)
 
+  /**
+   * THE INCIDENT COUNT IS REFRESHED HERE, WHICH IS WHERE ITS COST BELONGS.
+   *
+   * It used to be awaited inside `AppShell`, so every navigation on every route
+   * could land on the fifteen-second cache miss and pay for a table scan before
+   * the sidebar could render. Nothing about the number justified that: it
+   * changes when a player reports somebody, which is not a per-navigation event.
+   *
+   * DRIVEN OFF THE POLL THAT ALREADY EXISTS rather than a second timer. This
+   * endpoint is answered every two seconds while anybody has the console open,
+   * so the count stays fresh at its own TTL for free — and when nobody is
+   * looking, nothing scans at all, which a standalone interval could not say.
+   *
+   * AWAITED, AND THAT IS DELIBERATE. `refreshOpenCount` returns immediately
+   * when the cache is current, so all but one poll in fifteen seconds pays
+   * nothing; the one that does pay is a poll rather than a page load, and a
+   * poll arriving late costs a tick of staleness on a surface that is already
+   * asynchronous. Sharing the in-flight promise keeps it to one scan per TTL
+   * across every console. See `lib/incidents`.
+   */
+  await incidents.refreshOpenCount()
+
   return Response.json({
     view: liveView(now),
     now,
+    /**
+     * `null` RATHER THAN `0` WHEN WE COULD NOT COUNT. "Nothing is waiting" and
+     * "we could not ask" are different facts and the badge draws them
+     * differently — see `NavBadges`.
+     */
+    incidents: incidents.openCountView(),
     maintenance: {
       state: m.window?.state ?? null,
       completedAt: m.window?.completedAt ?? null,

@@ -51,6 +51,22 @@ export interface LivePayload {
   now: number
   /** Absent from an older payload; every reader treats that as "not known". */
   maintenance?: MaintenancePhase
+
+  /**
+   * Incidents awaiting review — the sidebar's count.
+   *
+   * IT RIDES THIS POLL FOR THE REASON THE MAINTENANCE PHASE ABOVE DOES: the
+   * console is already asking this endpoint every two seconds, and the badge
+   * was previously a DynamoDB scan on the critical path of every navigation.
+   * Moving it here takes it off that path without inventing a second timer.
+   *
+   * THREE STATES, ALL DISTINCT AND ALL LOAD-BEARING.
+   *   a number  — that many are waiting (0 = the queue is genuinely empty)
+   *   null      — we have not managed to count; the badge shows nothing
+   *   undefined — an older payload that predates this field; also "not known"
+   * A zero and a failure must never render alike. See `lib/incidents`.
+   */
+  incidents?: number | null
 }
 
 const POLL_MS = 2_000
