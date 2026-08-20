@@ -227,6 +227,16 @@ wait**, not to write something reasonable-sounding. A hover card asserting a
 date we do not have is worse than no hover card, and a paragraph nobody asked
 for is worse than a blank.
 
+**And what it permits, which is the other half of the rule.** The artifacts
+panel's header carries one sentence — *"Only shows game engine. Inventory, etc.
+will not be shown."* — and it is there because the owner asked for it by name and
+gave those words. It is `COVERAGE_NOTE` in `IncidentArtifacts.tsx`, a constant so
+that the wording is in one greppable place, and it is **verbatim**: not
+re-punctuated, not expanded into two sentences, not given a second one
+explaining why. Where wording is given, it is used as given. The reason it is
+true — `screenshot-basic` captures the game's framebuffer, and the NUI layer is
+composited afterwards — lives in that constant's comment and stays off the page.
+
 ---
 
 ## What happened to the nine
@@ -272,10 +282,11 @@ two-sentence paragraphs in a single-line pill.
   Enabling `utc` there needs that line restructured first.
 
   **It moved to `IncidentTimeline.tsx` with #30 and the constraint did not
-  change.** That line is now `<LocalTime /> · {byName} · +4:00`, which is the
-  same inline run with one more item in it, so the block box would still break
-  it. Worth writing down only because "the timeline was rebuilt" reads like the
-  restructure this was waiting for, and it was not.
+  change.** That line is now `<LocalTime /> · {byName} · -4:00` — the offset
+  counts from the moment the incident was opened, so it is signed both ways —
+  which is the same inline run with one more item in it, so the block box would
+  still break it. Worth writing down only because "the timeline was rebuilt"
+  reads like the restructure this was waiting for, and it was not.
 
 - **Touch is still unfixed** for every site that remains a hover affordance. Only
   the inline conversions improved anything on a phone; this work should not be
@@ -289,13 +300,24 @@ two-sentence paragraphs in a single-line pill.
 - **`PlayerActions.tsx`** has the disabled-button defect twice more, worked
   around with a bare wrapper `<span>` that restores the mouse case and nothing
   else.
+- **The incident page's Ban button is disabled with nothing saying why**, and
+  that is rule 8 outranking the trap above rather than an oversight. The resolve
+  buttons moved into the player-report bar at the owner's request — *"No helper
+  text is needed there either"* — and the two visible sentences that explained a
+  greyed control went with the bar's other prose. Kick no longer needs one: it is
+  not drawn at all when there is nobody to kick. Ban on an already-banned player
+  is the one control left greyed and unexplained. It was **not** converted to a
+  tooltip, which would have been the same words in the one place a disabled
+  button cannot show them; `/preview/incident?subject=banned` is the state.
 - **There is no lint rule behind any of this, and `npm run lint` is not one
   either.** The script exists in `package.json` and there is no ESLint config
   file and no `eslint` dependency anywhere in the repo, so it is a name rather
   than a gate — and it is *not* part of `npm run verify`, which is what actually
-  runs (`check:secrets`, `check:banrule`, `check:xpcurve`, `check:verdict`,
-  `check:discordrole`, `check:chips`, `check:deployphase`, `check:contrast`,
-  `typecheck`). An ESLint rule banning the `title` JSX
+  runs (read the `verify` script for the current list; it has gained
+  `check:artifacts`, `check:handoff`, `check:origin`, `check:framed`,
+  `check:timeline` and `check:cef` since this paragraph was written, which is
+  why it now points at the script rather than copying it). An ESLint rule
+  banning the `title` JSX
   attribute on DOM elements — allowlisting `<iframe>`/`<svg>`, never matching
   component props — is what would keep this from decaying, but standing ESLint
   up at all is the bootstrap task in front of it.
