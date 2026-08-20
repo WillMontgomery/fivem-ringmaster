@@ -841,6 +841,25 @@ check(
   component?.text.includes('sr-only') === true,
 )
 
+/*
+ * THE ZERO POINT, ASSERTED AT THE CALL SITE AND NOT ONLY IN THE MATHS.
+ *
+ * `matchOffset` is thoroughly covered: pointing it at `startedAt` instead of
+ * `origin` fails thirteen cases above. But every one of those hands the
+ * function a span the test built, so none of them can see which field the
+ * COMPONENT actually puts in it. Swapping `incident.openedAt` for
+ * `incident.matchStartedAt` in IncidentTimeline.tsx passed the entire suite
+ * -- verified by doing it -- which would have quietly restored the exact
+ * behaviour the owner asked to have changed.
+ *
+ * A grep is a blunt instrument and cannot prove the value is used correctly.
+ * It can prove the right field was named, which is the half that regressed.
+ */
+check(
+  'the component counts from the incident, not from the match start',
+  /origin:\s*incident\.openedAt/.test(component?.text ?? ''),
+)
+
 // ---------------------------------------------------------------------------
 // Landmarks. Printed on every run so a change shows up as different words
 // rather than as nothing — the same reason check-contrast.mjs prints its
