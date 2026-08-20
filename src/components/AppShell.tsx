@@ -288,12 +288,14 @@ export async function AppShell({
   /**
    * The live feed, for the header cluster.
    *
-   * IT NO LONGER DRAWS A FEED CHIP — Live, Falling behind and Feed lost are
-   * gone on the owner's instruction — but the two readings are still what tell
-   * a restarted game server from the one that was just killed, so they still
-   * have to reach the shell. `live` is the other half: it turns polling on, and
-   * the design harness sets it false so a fixture page does not fetch real
-   * state over the top of itself.
+   * IT DRAWS A FEED CHIP AGAIN — Live, Falling behind and Feed lost were hidden
+   * on the owner's instruction and are back on it ("yes please put the live
+   * chip back"). Through both changes these readings never stopped mattering:
+   * they are what tell a restarted game server from the one that was just
+   * killed, so they always had to reach the shell whether or not anything drew
+   * them. `live` is the other half: it turns polling on, and the design harness
+   * sets it false so a fixture page does not fetch real state over the top of
+   * itself.
    */
   feed?: {
     lastPushAt: number | null
@@ -785,9 +787,9 @@ export async function AppShell({
           flow, centred on the header, reserving a hard-coded 112px on each side.
           That reserve was the bug. The right-hand cluster is in normal flow and
           ran to ~340px when the feed chip, an update badge and a maintenance
-          window were all present (the feed chip is gone now, so the worst case
-          is narrower -- the layout below is what makes that irrelevant rather
-          than lucky), so `ml-auto` (which only measures in-flow
+          window were all present (the feed chip left and has since come back, so
+          that worst case is live again -- the layout below is what makes it
+          irrelevant rather than lucky), so `ml-auto` (which only measures in-flow
           siblings) grew it leftward UNDERNEATH the search, and the positioned
           element painted on top: "Ctrl K" and the LIVE chip rendered over each
           other. No amount of min-w-0 or shrink fixes that, because the two boxes
@@ -849,16 +851,20 @@ export async function AppShell({
             They describe the SERVER, so they belong on every page that shows the
             shell, and deciding WHICH of them to show — during a deploy, after
             one that failed — belongs to the cluster rather than to components
-            that cannot see each other. See `ServerChips`; the feed chips it used
-            to hold have since been removed outright, and the decision it makes
-            now is which of Updating, Update failed and the ordinary badges is
-            the one true thing to say.
+            that cannot see each other. See `ServerChips`, which paints the
+            cluster, and `chipCluster` in lib/serverPhase, which decides it: one
+            function saying which of the feed chip, Updating, Update failed, the
+            update badge and the window badge may appear together. The owner's
+            rule that draining supersedes "update available" is a rung in that
+            ladder rather than a test any component makes for itself.
           */}
           <div className="flex items-center justify-end gap-2">
             <ServerChips
               live={chipFeed.live}
               initialBadge={b.maintenance ?? null}
               initialPhase={initialPhase}
+              lastPushAt={chipFeed.lastPushAt}
+              now={chipFeed.now}
             />
             <ThemeToggle />
           </div>

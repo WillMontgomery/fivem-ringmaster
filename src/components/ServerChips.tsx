@@ -3,10 +3,11 @@
 import { CalendarClock, Loader2, TriangleAlert } from 'lucide-react'
 import Link from 'next/link'
 
+import { FeedStatus } from '@/components/FeedStatus'
 import { UpdateBadge } from '@/components/UpdateBadge'
 import { Badge } from '@/components/ui/badge'
 import { phaseOf, useLiveState } from '@/lib/livePoll'
-import type { DeployPhase } from '@/lib/serverPhase'
+import { chipCluster, type DeployPhase } from '@/lib/serverPhase'
 import { cn } from '@/lib/utils'
 
 /**
@@ -19,22 +20,29 @@ import { cn } from '@/lib/utils'
  * That is a decision about the CLUSTER, so the cluster is a component and the
  * decision is made once, here.
  *
- * THE FEED CHIPS ARE GONE — Live, Falling behind, Feed lost, No data. The
- * owner: "let's hide the live/delayed/feed lost chips." They answered "how old
- * is the picture", which is a real question, but in the header they answered it
- * permanently and loudly: a chip that is present on every page of every route
- * all day is wallpaper until the one time it is not, and the state it most
- * often reported — a restarting server — is now stated properly by the deploy
- * chips below.
+ * THE PRECEDENCE ITSELF LIVES IN `chipCluster`, in lib/serverPhase, and this
+ * file only paints what it returns. It was a chain of early returns right here,
+ * which was one representation and therefore fine as far as it went — but the
+ * thing most worth guaranteeing about this cluster is which chips may NOT
+ * appear together, and nothing could assert JSX. As a pure function it is the
+ * same single expression AND a case table in `check-chip-suppression.mjs`.
+ * Nothing below re-tests a phase or a badge to decide whether to render.
  *
- * WHAT WAS REMOVED IS THE DISPLAY, NOT THE READING. `lastPushAt` and
- * `bootEpoch` still arrive on every poll and are still what decides whether a
- * deploy has landed — see `deployPhase`. The chip was a renderer of that state,
- * never its owner, and taking it away changed nothing about what the console
- * knows. It does mean the console no longer surfaces feed staleness OUTSIDE a
- * deploy window; that is the owner's call and it is worth knowing it was made.
+ * THE FEED CHIPS LEFT AND CAME BACK — Live, Falling behind, Feed lost, No data.
+ * The owner asked for them hidden ("let's hide the live/delayed/feed lost
+ * chips") and `FeedStatus` was deleted outright; they have since asked for it
+ * back ("yes please put the live chip back"). It sits ALONGSIDE `UpdateBadge`
+ * rather than instead of it: one answers "is the data I am looking at current",
+ * the other "is the deployed code current", and the two were conflated once
+ * already when the header went silent and `Up to date` was added to fill it.
  *
- * ═══ AND THE CLUSTER HAS A RESTING STATE AGAIN, WHICH IT LOST WITH THEM ═══
+ * WHAT NEVER DEPENDED ON THE DISPLAY, through both changes: `lastPushAt` and
+ * `bootEpoch` arrive on every poll and are what decide whether a deploy has
+ * landed — see `deployPhase`. The chip renders that state and has never owned
+ * it, which is why removing it changed nothing about what the console knows and
+ * why restoring it needed no new data on the wire.
+ *
+ * ═══ AND THE CLUSTER HAS A RESTING STATE, WHICH IT ONCE LOST ═══
  *
  * TAKING THE FEED CHIPS OUT LEFT NOTHING THAT COULD APPEAR ON AN ORDINARY DAY.
  * Every chip below needs a POSITIVE abnormal reading — a deploy running, a
@@ -73,10 +81,22 @@ export function ServerChips({
    * deploy it is actively waiting on is over.
    */
   initialPhase,
+  /**
+   * The feed reading the SERVER render resolved, for `FeedStatus`.
+   *
+   * SAME TWO SECONDS, SAME REASON as the two above — and here it also keeps
+   * hydration clean, because the chip's tone is a function of a clock. Rendering
+   * the age against a fresh `Date.now()` on the client would let the first
+   * client render disagree with the markup it is hydrating.
+   */
+  lastPushAt,
+  now,
 }: {
   live: boolean
   initialBadge: 'scheduled' | 'draining' | 'updating' | null
   initialPhase: DeployPhase
+  lastPushAt: number | null
+  now: number
 }) {
   const polled = useLiveState(live)
 
@@ -92,61 +112,85 @@ export function ServerChips({
   const phase = polled ? phaseOf(polled) : initialPhase
 
   /**
-   * MID-UPDATE: ONE CHIP, AND IT IS THE ONLY THING IN THE CLUSTER.
-   *
-   * IT OUTLIVES THE DEPLOY STEP ON PURPOSE. The phase stays `confirming` after
-   * the window is marked complete, until br_ringmaster reports from a process
-   * that is not the one we restarted — because the restart is the part an
-   * operator actually waits through, and the row going `complete` while
-   * FXServer is still booting is precisely when the old code put a green tick
-   * over a dead server.
+   * THE ONE DECISION, MADE ONCE, SOMEWHERE A GATE CAN REACH IT. Everything
+   * below is a `&&` on a field of this object — no phase is re-tested and no
+   * badge is re-inspected to decide whether a chip appears.
    */
-  if (phase === 'deploying' || phase === 'confirming') {
-    return (
-      <span
-        role="status"
-        aria-live="polite"
-        className="inline-flex items-center gap-1.5 rounded-md bg-info/10 px-2 py-1 text-xs font-medium uppercase tracking-wider text-info ring-1 ring-inset ring-info/30"
-      >
-        <Loader2 className="size-3 animate-spin" />
-        Updating
-      </span>
-    )
-  }
-
-  /**
-   * IT WENT WRONG, AND THE CLUSTER SAYS SO RATHER THAN GOING QUIET.
-   *
-   * THIS IS THE HALF THAT HAD TO REPLACE "FEED LOST". With the health chips
-   * removed, a deploy that killed the game server would otherwise leave the
-   * header showing nothing at all — the calmest possible display over the worst
-   * state the console can be in. Both terminal phases land here: a host that
-   * refused the deploy, and a deploy that ran and never came back.
-   *
-   * IT CLEARS ITSELF ON EVIDENCE, NOT ON A TIMER. The moment br_ringmaster
-   * reports from a new process the phase returns to `idle` and this disappears,
-   * so a server that recovers late is not left wearing a failure. A deploy the
-   * host refused stays flagged until somebody schedules the next window, which
-   * is correct: nothing about it has been resolved.
-   */
-  if (phase === 'failed' || phase === 'unconfirmed') {
-    return (
-      <Link
-        href="/maintenance"
-        role="status"
-        aria-live="polite"
-        className="inline-flex items-center gap-1.5 rounded-md bg-danger/10 px-2 py-1 text-xs font-medium uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30 transition-colors hover:bg-danger/20"
-      >
-        <TriangleAlert className="size-3" />
-        {phase === 'failed' ? 'Update failed' : 'Server not back'}
-      </Link>
-    )
-  }
+  const cluster = chipCluster(phase, badge)
 
   return (
     <>
-      <UpdateBadge />
-      {badge && (
+      {/*
+        HOW OLD THE PICTURE IS. Suppressed only while a deploy explains the
+        silence — see `chipCluster` rungs 1 and 2, where the deploy chip is
+        already reporting the dead feed WITH its cause. A drain is not one of
+        those: players are still on and the data still matters, which is the
+        call `check-chip-suppression.mjs` has made for this state since it was
+        written ("draining and the feed has died — must NOT be hidden").
+      */}
+      {cluster.feed && (
+        <FeedStatus lastPushAt={lastPushAt} now={now} live={live} />
+      )}
+
+      {/*
+        MID-UPDATE: ONE CHIP, AND IT IS THE ONLY THING IN THE CLUSTER.
+
+        IT OUTLIVES THE DEPLOY STEP ON PURPOSE. The phase stays `confirming`
+        after the window is marked complete, until br_ringmaster reports from a
+        process that is not the one we restarted — because the restart is the
+        part an operator actually waits through, and the row going `complete`
+        while FXServer is still booting is precisely when the old code put a
+        green tick over a dead server.
+      */}
+      {cluster.phase === 'updating' && (
+        <span
+          role="status"
+          aria-live="polite"
+          className="inline-flex items-center gap-1.5 rounded-md bg-info/10 px-2 py-1 text-xs font-medium uppercase tracking-wider text-info ring-1 ring-inset ring-info/30"
+        >
+          <Loader2 className="size-3 animate-spin" />
+          Updating
+        </span>
+      )}
+
+      {/*
+        IT WENT WRONG, AND THE CLUSTER SAYS SO RATHER THAN GOING QUIET.
+
+        THIS IS THE HALF THAT REPLACED "FEED LOST", and it still outranks it now
+        that the feed chip is back. Both terminal phases land here: a host that
+        refused the deploy, and a deploy that ran and never came back. Beside
+        either of them "Feed lost" is the same alarm without the cause attached,
+        and the cause is the entire value of these two words.
+
+        IT CLEARS ITSELF ON EVIDENCE, NOT ON A TIMER. The moment br_ringmaster
+        reports from a new process the phase returns to `idle` and this
+        disappears, so a server that recovers late is not left wearing a
+        failure. A deploy the host refused stays flagged until somebody
+        schedules the next window, which is correct: nothing about it has been
+        resolved.
+      */}
+      {(cluster.phase === 'failed' || cluster.phase === 'unconfirmed') && (
+        <Link
+          href="/maintenance"
+          role="status"
+          aria-live="polite"
+          className="inline-flex items-center gap-1.5 rounded-md bg-danger/10 px-2 py-1 text-xs font-medium uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30 transition-colors hover:bg-danger/20"
+        >
+          <TriangleAlert className="size-3" />
+          {cluster.phase === 'failed' ? 'Update failed' : 'Server not back'}
+        </Link>
+      )}
+
+      {/*
+        IS THE DEPLOYED CODE CURRENT. Gone while a deploy is in flight or has
+        just failed, and gone while the server is DRAINING — the owner:
+        "'update available' should be superseded by 'draining' chips - they
+        should never be displayed together". The reasoning is in `chipCluster`;
+        the point here is that this line does not know it, it only renders.
+      */}
+      {cluster.update && <UpdateBadge />}
+
+      {cluster.window && (
         /*
           THE WIDEST THING IN THE HEADER, and the one that made the old overlap
           reachable. Below `xl` it keeps the icon and drops the words.
@@ -172,14 +216,14 @@ export function ServerChips({
           variant="outline"
           className={cn(
             'gap-1.5 border-0 text-xs font-medium uppercase tracking-wider ring-1 ring-inset',
-            badge === 'draining'
+            cluster.window === 'draining'
               ? 'bg-warn/10 text-warn ring-warn/30'
               : 'bg-info/10 text-info ring-info/30',
           )}
         >
           <CalendarClock className="size-3" />
           <span className="sr-only xl:not-sr-only xl:whitespace-nowrap">
-            {badge}
+            {cluster.window}
           </span>
         </Badge>
       )}

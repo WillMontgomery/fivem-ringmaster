@@ -37,7 +37,11 @@
  * second copy here to drift out of step with it.
  */
 
-import { RESTART_GRACE_MS, updateInProgress } from '../src/lib/serverPhase.ts'
+import {
+  RESTART_GRACE_MS,
+  chipCluster,
+  updateInProgress,
+} from '../src/lib/serverPhase.ts'
 
 const NOW = 1_700_000_000_000
 const SEC = 1_000
@@ -98,11 +102,155 @@ for (const lastPushAt of [null, undefined, NOW, NOW - 10 * 60 * SEC]) {
   }
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE OTHER HALF: WHICH CHIPS MAY APPEAR TOGETHER.
+ *
+ * The table above asserts a boolean — may the header claim a deploy is running.
+ * That was the whole of this contract while the cluster was two chips. It is
+ * now four, and the rule the owner actually stated is about CO-OCCURRENCE:
+ *
+ *   "'update available' should be superseded by 'draining' chips - they should
+ *    never be displayed together"
+ *
+ * That rule lived in `ServerChips`' JSX as a chain of early returns, where
+ * nothing could reach it, and `draining` fell past every rung into the branch
+ * that renders the update badge and the window badge side by side — which is
+ * exactly what the owner was looking at. `chipCluster` is the same ladder as a
+ * pure function so that this file can hold it to the rule.
+ *
+ * `feed` HERE IS THE FEED CHIP RETURNING. Live / Falling behind / Feed lost
+ * were removed at the owner's request and restored at it, and the question
+ * "does a deploy suppress them" already had an answer in this file: the table
+ * above is the same suppression rule, and the same two phases hide them.
+ * Draining does NOT, which the case labelled "draining and the feed has died —
+ * must NOT be hidden" has asserted since before those chips were deleted.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/** [label, phase, badge, expected cluster] */
+const clusterCases = [
+  /**
+   * ---- THE OWNER'S RULE. Draining and "update available", never together. ----
+   *
+   * THIS IS THE CASE THAT WOULD HAVE CAUGHT THE BUG had this contract covered
+   * the cluster at the time. Before this change `draining` fell past both of
+   * `ServerChips`' early returns into the branch that renders `UpdateBadge` and
+   * the window badge side by side. `update: false` is the whole fix.
+   *
+   * `feed: true` IS THE OTHER HALF and it is not incidental: a drain is when
+   * staleness matters MOST — players are still on the server — which is the
+   * same call the suppression table above has always made for this state.
+   */
+  ['draining — the rule the owner stated', 'idle', 'draining', { feed: true, update: false, phase: null, window: 'draining' }],
+
+  // ---- A deploy in flight: one chip, and the feed's silence is explained. ----
+  ['deploying', 'deploying', 'updating', { feed: false, update: false, phase: 'updating', window: null }],
+  ['confirming — waiting for br_ringmaster', 'confirming', null, { feed: false, update: false, phase: 'updating', window: null }],
+  ['confirming, with a stale seeded badge still in hand', 'confirming', 'updating', { feed: false, update: false, phase: 'updating', window: null }],
+
+  // ---- Terminal failures: the attributed report outranks the raw one. ----
+  ['failed — the host refused', 'failed', null, { feed: false, update: false, phase: 'failed', window: null }],
+  ['unconfirmed — the server never came back', 'unconfirmed', null, { feed: false, update: false, phase: 'unconfirmed', window: null }],
+  ['a failure outranks a draining badge left over from the window', 'failed', 'draining', { feed: false, update: false, phase: 'failed', window: null }],
+  ['unconfirmed outranks draining too', 'unconfirmed', 'draining', { feed: false, update: false, phase: 'unconfirmed', window: null }],
+
+  // ---- Ordinary. The resting state the header must never lose again. ----
+  ['idle with nothing scheduled — feed and update, both stated', 'idle', null, { feed: true, update: true, phase: null, window: null }],
+  ['scheduled — still shows the update badge, UNCHANGED by this work', 'idle', 'scheduled', { feed: true, update: true, phase: null, window: 'scheduled' }],
+
+  /**
+   * `updating` REACHING THE ORDINARY RUNG IS A MIXED-PAYLOAD CASE, not a normal
+   * one. `badgeState` returns 'updating' only for `state === 'deploying'`, which
+   * `deployPhase` reads as `deploying` — so the two normally arrive together and
+   * land on the first rung. They can separate for one poll: a payload predating
+   * the maintenance field leaves `phaseOf` at `idle` while the SERVER-rendered
+   * seed badge still says 'updating'. Asserted as it BEHAVES rather than as it
+   * ought to, because this is the state the owner has not been asked about.
+   */
+  ['updating badge with an idle phase — the mixed-payload second', 'idle', 'updating', { feed: true, update: true, phase: null, window: 'updating' }],
+]
+
+for (const [label, phase, badge, expected] of clusterCases) {
+  const got = chipCluster(phase, badge)
+  for (const k of ['feed', 'update', 'phase', 'window']) {
+    if (got[k] !== expected[k]) {
+      failed++
+      console.error(
+        `  FAIL  ${label}: ${k} -> ${JSON.stringify(got[k])} (expected ${JSON.stringify(expected[k])})`,
+      )
+    }
+  }
+}
+
+const PHASES = ['idle', 'deploying', 'confirming', 'failed', 'unconfirmed']
+const BADGES = ['scheduled', 'draining', 'updating', null]
+
+/**
+ * THE OWNER'S RULE AS A PROPERTY, over every combination that exists, so no
+ * future rung can reintroduce the pair by covering a case the table missed.
+ */
+for (const phase of PHASES) {
+  const c = chipCluster(phase, 'draining')
+  if (c.update) {
+    failed++
+    console.error(
+      `  FAIL  draining rendered the update badge (phase=${phase}) — the owner's rule`,
+    )
+  }
+}
+
+/**
+ * ONE EXCLUSIVE CHIP AT MOST. `phase` and `window` are different chips and the
+ * ladder must never set both: an "Updating" spinner beside a window badge that
+ * also says "updating" is the cluster arguing with itself, which is what
+ * building this as one component was for.
+ */
+for (const phase of PHASES) {
+  for (const badge of BADGES) {
+    const c = chipCluster(phase, badge)
+    if (c.phase !== null && c.window !== null) {
+      failed++
+      console.error(
+        `  FAIL  two exclusive chips at once (phase=${phase}, badge=${badge})`,
+      )
+    }
+
+    /**
+     * THE FEED CHIP IS SUPPRESSED BY EXACTLY THE DEPLOY STATES AND NO OTHERS.
+     * Tied to `updateInProgress`'s own two phases plus the two terminal ones,
+     * which are the cases where a deploy chip already reports the dead feed and
+     * says why. Anything else — including a drain — leaves it alone.
+     */
+    const deployOwnsTheSilence =
+      phase === 'deploying' ||
+      phase === 'confirming' ||
+      phase === 'failed' ||
+      phase === 'unconfirmed'
+    if (c.feed === deployOwnsTheSilence) {
+      failed++
+      console.error(
+        `  FAIL  feed chip visibility wrong (phase=${phase}, badge=${badge}) -> ${c.feed}`,
+      )
+    }
+
+    /** And the cluster is NEVER empty. That silence is what `Up to date` closed. */
+    if (!c.feed && !c.update && c.phase === null && c.window === null) {
+      failed++
+      console.error(`  FAIL  empty cluster (phase=${phase}, badge=${badge})`)
+    }
+  }
+}
+
 if (failed) {
   console.error(`\nchip suppression: ${failed} case(s) failed.`)
   console.error(
-    'Only a stated deploy may put "Updating" in the header — see src/lib/serverPhase.ts',
+    'Only a stated deploy may put "Updating" in the header, and "update ' +
+      'available" never appears beside "draining" — see src/lib/serverPhase.ts',
   )
   process.exit(1)
 }
-console.log(`chip suppression: ${cases.length} cases match the contract`)
+console.log(
+  `chip suppression: ${cases.length} suppression cases and ` +
+    `${clusterCases.length} cluster cases match the contract`,
+)

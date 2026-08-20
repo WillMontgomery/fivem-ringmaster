@@ -232,3 +232,82 @@ export function updateInProgress(input: {
   const phase = deployPhase(input)
   return phase === 'deploying' || phase === 'confirming'
 }
+
+/**
+ * WHICH CHIPS THE HEADER SHOWS — the whole cluster, decided in one place.
+ *
+ * WHY IT IS HERE AND NOT IN THE COMPONENT. `ServerChips` expressed this as a
+ * chain of early returns in its own JSX, which is one representation and was
+ * therefore fine as far as it went — but nothing could assert it. The rule that
+ * matters most about this cluster is which chips may NOT appear together, and a
+ * rule with no gate behind it is the rule this repo keeps re-breaking. As a pure
+ * function over `(phase, badge)` it is the same single expression AND it is a
+ * case table in `scripts/check-chip-suppression.mjs`. The component paints the
+ * answer; it does not re-decide any part of it.
+ *
+ * ═══ THE LADDER, MOST SPECIFIC FIRST ═══
+ *
+ * 1. A DEPLOY IS RUNNING — one chip, alone. The server is deliberately down, and
+ *    this is the case the whole suppression rule was built for: three chips
+ *    raising three alarms about one intended act. See `updateInProgress`, which
+ *    is the same two phases and is what used to hide the feed chips.
+ *
+ * 2. A DEPLOY ENDED BADLY — one chip, alone. `Update failed` and `Server not
+ *    back` exist BECAUSE the feed chips were removed; they are the feed-lost
+ *    report with the cause attached. Now that `Feed lost` is back, showing both
+ *    would be the raw reading beside the attributed one, and the attributed one
+ *    is strictly more useful.
+ *
+ * 3. THE SERVER IS DRAINING — no `UpdateBadge`. THIS IS THE OWNER'S RULE:
+ *    "'update available' should be superseded by 'draining' chips - they should
+ *    never be displayed together". Draining means the server is refusing players
+ *    RIGHT NOW; an available update is background information that will still be
+ *    true in an hour. The urgent, specific, happening-now state supersedes the
+ *    ambient one. The FEED chip stays, because "is my data current" is a
+ *    different question and a drain is exactly when it is worth answering — the
+ *    same call `check-chip-suppression.mjs` has always made for this state
+ *    ("draining and the feed has died — must NOT be hidden").
+ *
+ * 4. ORDINARY. Feed, deploy state, and a scheduled window if there is one.
+ *
+ * FEED STATUS IS ORTHOGONAL TO DEPLOY STATE, WITH ONE EXCEPTION, and the
+ * exception is the point of rungs 1 and 2: a feed that is dead BECAUSE OF a
+ * deploy is already being reported by the deploy chip, in words that say why.
+ * Everywhere else the two answer different questions and both appear.
+ */
+export interface ChipCluster {
+  /** The feed-freshness chip — Live, Falling behind, Feed lost, No data. */
+  feed: boolean
+  /** The deploy-state chip — Update available, Up to date. */
+  update: boolean
+  /**
+   * The exclusive phase chip: the Updating spinner, or a terminal failure.
+   * Never set at the same time as `window`.
+   */
+  phase: 'updating' | 'failed' | 'unconfirmed' | null
+  /** The maintenance-window badge, which is a different chip from `phase`. */
+  window: 'scheduled' | 'draining' | 'updating' | null
+}
+
+export function chipCluster(
+  phase: DeployPhase,
+  badge: 'scheduled' | 'draining' | 'updating' | null,
+): ChipCluster {
+  /** 1. The deploy is running, or we are waiting for the server to come back. */
+  if (phase === 'deploying' || phase === 'confirming') {
+    return { feed: false, update: false, phase: 'updating', window: null }
+  }
+
+  /** 2. It ended badly, and that chip is the one thing worth saying. */
+  if (phase === 'failed' || phase === 'unconfirmed') {
+    return { feed: false, update: false, phase, window: null }
+  }
+
+  /** 3. Draining supersedes "update available". The owner's rule, in one line. */
+  if (badge === 'draining') {
+    return { feed: true, update: false, phase: null, window: 'draining' }
+  }
+
+  /** 4. Nothing is happening to the server that changes what else may be said. */
+  return { feed: true, update: true, phase: null, window: badge }
+}

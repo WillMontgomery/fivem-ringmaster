@@ -79,6 +79,15 @@ been three throughout and the membership has not:
   when the owner asked for the live/falling-behind/feed-lost chips to be hidden;
   the state it read (`lastPushAt`) survived it and is now what proves a deployed
   server has come back. See `lib/serverPhase`.
+
+  **The component is back and the card is not** ("yes please put the live chip
+  back"). What they asked for is the chip — a tone and a word — and the card was
+  "Last update: 4.2s ago" over "The board refreshes every 2s", which rule 8
+  forbids restoring and rule 5's closing line forbids re-adding in that shape:
+  it was a chip-shaped card whose only affordance was `cursor-help`. So the
+  count is still three, and this entry stays on the list of what is gone. The
+  exact age in seconds is what was lost with it; if the owner wants a number
+  back it is theirs to ask for, in their own words.
 - **`Provenance`** is the oldest survivor: four two-sentence paragraphs that had
   been crammed into a single-line tooltip.
 - **`ProfileView`'s `IdLabel`** was the first that was a *label* rather than a
