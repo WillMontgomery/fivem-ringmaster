@@ -1,47 +1,40 @@
 'use client'
 
-import { CalendarClock, Loader2 } from 'lucide-react'
+import { CalendarClock, Loader2, TriangleAlert } from 'lucide-react'
+import Link from 'next/link'
 
-import { FeedStatus } from '@/components/FeedStatus'
 import { UpdateBadge } from '@/components/UpdateBadge'
 import { Badge } from '@/components/ui/badge'
-import { useLiveState } from '@/lib/livePoll'
-import { updateInProgress } from '@/lib/serverPhase'
+import { phaseOf, useLiveState } from '@/lib/livePoll'
+import type { DeployPhase } from '@/lib/serverPhase'
 import { cn } from '@/lib/utils'
 
 /**
  * The header's status cluster: how the SERVER is, on every page.
  *
- * ONE COMPONENT BECAUSE THEY ARE ONE STATEMENT. Feed health, an available
- * update and a maintenance window were three independent chips rendered side by
- * side, each deciding on its own whether to appear — and during a deploy all
- * three appeared and argued. "Feed lost" (true, the server is restarting),
- * "Maintenance draining" (false, it finished draining and is now deploying) and
- * an update chip, over a box that is deliberately down. The owner: "let's not
- * show the live/falling behind/etc chips while the server is updating — only
- * show the Updating chip." That is a decision about the CLUSTER, so the cluster
- * is a component and the decision is made once, here.
+ * ONE COMPONENT BECAUSE THEY ARE ONE STATEMENT. An available update and a
+ * maintenance window were independent chips rendered side by side, each
+ * deciding on its own whether to appear — and during a deploy they appeared
+ * together and argued with a feed chip about a box that was deliberately down.
+ * That is a decision about the CLUSTER, so the cluster is a component and the
+ * decision is made once, here.
  *
- * ALWAYS RENDERED, ON EVERY PAGE, WHICH IT WAS NOT. `FeedStatus` was behind
- * `{feed && ...}` in the shell and only seven of the eleven real pages passed
- * the prop — so the Live chip simply did not exist on Audit log, Live config,
- * Kick & ban or Settings. A chip that answers "is the data arriving" is
- * describing the server, not the page you happen to be standing on, and one
- * that vanishes on four routes teaches an operator to stop believing it. The
- * shell now resolves the feed itself and renders this unconditionally.
+ * THE FEED CHIPS ARE GONE — Live, Falling behind, Feed lost, No data. The
+ * owner: "let's hide the live/delayed/feed lost chips." They answered "how old
+ * is the picture", which is a real question, but in the header they answered it
+ * permanently and loudly: a chip that is present on every page of every route
+ * all day is wallpaper until the one time it is not, and the state it most
+ * often reported — a restarting server — is now stated properly by the deploy
+ * chips below.
  *
- * WHY THE SUPPRESSION IS HONEST, AND WHERE THE LINE IS. This hides health chips
- * only on a POSITIVE reading — a window that says a deploy is running, or one
- * that says a deploy just finished and the game has not spoken since. Every
- * other case, including "the driver has never read the row" and "this payload
- * predates the maintenance field", falls through to showing everything. See
- * `updateInProgress`: not knowing shows MORE, never less. Hiding a health chip
- * because we had not polled would be the same class of mistake as claiming an
- * update before the first poll (#26), and it is guarded the same way.
+ * WHAT WAS REMOVED IS THE DISPLAY, NOT THE READING. `lastPushAt` and
+ * `bootEpoch` still arrive on every poll and are still what decides whether a
+ * deploy has landed — see `deployPhase`. The chip was a renderer of that state,
+ * never its owner, and taking it away changed nothing about what the console
+ * knows. It does mean the console no longer surfaces feed staleness OUTSIDE a
+ * deploy window; that is the owner's call and it is worth knowing it was made.
  */
 export function ServerChips({
-  lastPushAt,
-  now,
   live,
   /**
    * The badge the SERVER render resolved, used until the first poll answers.
@@ -51,38 +44,48 @@ export function ServerChips({
    * so seeding costs nothing.
    */
   initialBadge,
+  /**
+   * And the deploy phase the SERVER render resolved, for the same two seconds
+   * and the same reason.
+   *
+   * IT MATTERS MORE THAN THE BADGE DOES. `initialBadge` covers `deploying`,
+   * which is a window state; it cannot express `confirming`, because that phase
+   * belongs to a window already marked `complete` and `badgeState` returns null
+   * for it. Without this, every navigation during the wait for the server to
+   * come back would show a clean header for two seconds and then flip to
+   * "Updating" — the console momentarily claiming, on every page load, that a
+   * deploy it is actively waiting on is over.
+   */
+  initialPhase,
 }: {
-  lastPushAt: number | null
-  now: number
   live: boolean
   initialBadge: 'scheduled' | 'draining' | 'updating' | null
+  initialPhase: DeployPhase
 }) {
   const polled = useLiveState(live)
 
   const m = polled?.maintenance
   const badge = m ? m.badge : initialBadge
-  const updating = updateInProgress({
-    state: m?.state,
-    completedAt: m?.completedAt,
-    lastPushAt: polled?.view.lastPushAt ?? lastPushAt,
-    now: polled?.now ?? now,
-  })
+
+  /**
+   * THE SAME READING THE MAINTENANCE PAGE AND THE TOAST USE, from the same
+   * payload. Not a second notion of "are we done": `phaseOf` is the one
+   * definition, and if this chip and that page ever disagree it is because they
+   * polled at different instants, not because they decided differently.
+   */
+  const phase = polled ? phaseOf(polled) : initialPhase
 
   /**
    * MID-UPDATE: ONE CHIP, AND IT IS THE ONLY THING IN THE CLUSTER.
    *
-   * Not the feed chip greyed, not the update chip alongside — gone. The three
-   * suppressed chips all answer questions whose honest answer right now is "the
-   * server is restarting", and this chip says that in one place instead of
-   * leaving the reader to assemble it from three that look like problems.
-   *
-   * IT OUTLIVES THE DEPLOY STEP ON PURPOSE. `updateInProgress` stays true after
-   * the window is marked complete, until the game pushes again — because the
-   * restart is the part an operator actually waits through, and the row going
-   * `complete` while FXServer is still booting is precisely when the old code
-   * put a green tick over a dead server.
+   * IT OUTLIVES THE DEPLOY STEP ON PURPOSE. The phase stays `confirming` after
+   * the window is marked complete, until br_ringmaster reports from a process
+   * that is not the one we restarted — because the restart is the part an
+   * operator actually waits through, and the row going `complete` while
+   * FXServer is still booting is precisely when the old code put a green tick
+   * over a dead server.
    */
-  if (updating) {
+  if (phase === 'deploying' || phase === 'confirming') {
     return (
       <span
         role="status"
@@ -95,9 +98,37 @@ export function ServerChips({
     )
   }
 
+  /**
+   * IT WENT WRONG, AND THE CLUSTER SAYS SO RATHER THAN GOING QUIET.
+   *
+   * THIS IS THE HALF THAT HAD TO REPLACE "FEED LOST". With the health chips
+   * removed, a deploy that killed the game server would otherwise leave the
+   * header showing nothing at all — the calmest possible display over the worst
+   * state the console can be in. Both terminal phases land here: a host that
+   * refused the deploy, and a deploy that ran and never came back.
+   *
+   * IT CLEARS ITSELF ON EVIDENCE, NOT ON A TIMER. The moment br_ringmaster
+   * reports from a new process the phase returns to `idle` and this disappears,
+   * so a server that recovers late is not left wearing a failure. A deploy the
+   * host refused stays flagged until somebody schedules the next window, which
+   * is correct: nothing about it has been resolved.
+   */
+  if (phase === 'failed' || phase === 'unconfirmed') {
+    return (
+      <Link
+        href="/maintenance"
+        role="status"
+        aria-live="polite"
+        className="inline-flex items-center gap-1.5 rounded-md bg-danger/10 px-2 py-1 text-xs font-medium uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30 transition-colors hover:bg-danger/20"
+      >
+        <TriangleAlert className="size-3" />
+        {phase === 'failed' ? 'Update failed' : 'Server not back'}
+      </Link>
+    )
+  }
+
   return (
     <>
-      <FeedStatus lastPushAt={lastPushAt} now={now} live={live} />
       <UpdateBadge />
       {badge && (
         /*
@@ -106,11 +137,11 @@ export function ServerChips({
 
           THE WORD IS THE WHOLE LABEL NOW. It read "Maintenance draining", and
           the owner is right that the noun is padding: this chip sits in a header
-          beside a feed chip and an update chip, none of which restate their
-          category, and the sidebar's Maintenance item carries the same state in
-          the same words a few pixels away. "Draining" is the fact; "Maintenance"
-          was the filing cabinet it came out of. `Scheduled` and `Updating` lost
-          the same prefix for the same reason.
+          beside an update chip, which does not restate its category, and the
+          sidebar's Maintenance item carries the same state in the same words a
+          few pixels away. "Draining" is the fact; "Maintenance" was the filing
+          cabinet it came out of. `Scheduled` and `Updating` lost the same prefix
+          for the same reason.
 
           THE WORDS NEVER LEAVE THE DOM; they only stop being painted. `sr-only`
           is `position: absolute` and out of flow, so the Badge's `h-5

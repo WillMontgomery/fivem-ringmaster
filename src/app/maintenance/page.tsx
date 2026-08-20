@@ -91,6 +91,16 @@ export default async function MaintenancePage() {
           initialRefUpdate={refUpdate}
           initialBehindMain={behindMain}
           initialUpdateTarget={updateTarget}
+          /*
+            THE LIVE FEED AS THE SERVER SEES IT, so the completion gate has an
+            answer on first paint. Without it a reload straight after a
+            successful deploy shows "waiting for the server" for the two seconds
+            until the first poll lands — the page claiming to be waiting on a
+            server it is already hearing from. In-memory reads, already taken
+            above for the player count.
+          */
+          initialBootEpoch={view.bootEpoch}
+          initialLastPushAt={view.lastPushAt}
         />
       </div>
     </AppShell>

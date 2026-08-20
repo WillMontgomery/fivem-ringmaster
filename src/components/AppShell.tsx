@@ -46,8 +46,9 @@ import {
 import { DEMO_BADGES } from '@/lib/demo'
 import { activityDeadline, hasSessionCookie } from '@/lib/activity'
 import * as maint from '@/lib/maintenance'
-import { ensureDriver } from '@/lib/maintenanceDriver'
+import { ensureDriver, maintenanceView } from '@/lib/maintenanceDriver'
 import { readPrefs } from '@/lib/prefs'
+import { deployPhase } from '@/lib/serverPhase'
 import { currentAdmin } from '@/lib/session'
 import { isParkedOffMain } from '@/lib/ssh'
 import { liveView } from '@/lib/state'
@@ -274,9 +275,14 @@ export async function AppShell({
    */
   badges?: NavBadges
   /**
-   * Feed status for the header chip. Omit on pages that draw nothing from the
-   * live feed — claiming "Live" above a wireframe would be a lie about data
-   * that page never asked for.
+   * The live feed, for the header cluster.
+   *
+   * IT NO LONGER DRAWS A FEED CHIP — Live, Falling behind and Feed lost are
+   * gone on the owner's instruction — but the two readings are still what tell
+   * a restarted game server from the one that was just killed, so they still
+   * have to reach the shell. `live` is the other half: it turns polling on, and
+   * the design harness sets it false so a fixture page does not fetch real
+   * state over the top of itself.
    */
   feed?: {
     lastPushAt: number | null
@@ -359,8 +365,41 @@ export async function AppShell({
    * real state over the top of its own fixture.
    */
   const chipFeed = feed
-    ? { lastPushAt: feed.lastPushAt, now: feed.now, live: feed.live ?? false }
+    ? {
+        lastPushAt: feed.lastPushAt,
+        bootEpoch: feed.bootEpoch,
+        now: feed.now,
+        live: feed.live ?? false,
+      }
     : { ...liveView(Date.now()), now: Date.now(), live: true }
+
+  /**
+   * WHERE THE LAST DEPLOY HAS GOT TO, resolved on the server so the header is
+   * right on first paint rather than two seconds later.
+   *
+   * BOTH HALVES ARE FREE READS. `maintenanceView` hands out the row the driver
+   * last read on its own fifteen-second tick, and `liveView` is in-memory
+   * state — neither is a database round trip, which is what makes doing this on
+   * every page render reasonable. A console whose driver has never ticked gets
+   * a null window and therefore `idle`, which asserts nothing: the same
+   * "not knowing shows less" direction the phase is built on.
+   *
+   * THE SAME FUNCTION THE BROWSER CALLS TWO SECONDS LATER, so the seed and the
+   * first poll cannot disagree about the same row.
+   */
+  const initialPhase = (() => {
+    const mw = maintenanceView(chipFeed.now).window
+    return deployPhase({
+      state: mw?.state,
+      completedAt: mw?.completedAt,
+      deployError: mw?.deployError,
+      deployBootEpoch: mw?.deployBootEpoch,
+      deployConfirmedAt: mw?.deployConfirmedAt,
+      bootEpoch: chipFeed.bootEpoch,
+      lastPushAt: chipFeed.lastPushAt,
+      now: chipFeed.now,
+    })
+  })()
 
   const jar = await cookies()
   const prefs = readPrefs(jar)
@@ -587,8 +626,10 @@ export async function AppShell({
           The search used to be `absolute inset-x-0 justify-center px-28` -- out of
           flow, centred on the header, reserving a hard-coded 112px on each side.
           That reserve was the bug. The right-hand cluster is in normal flow and
-          runs to ~340px when the feed chip, an update badge and a maintenance
-          window are all present, so `ml-auto` (which only measures in-flow
+          ran to ~340px when the feed chip, an update badge and a maintenance
+          window were all present (the feed chip is gone now, so the worst case
+          is narrower -- the layout below is what makes that irrelevant rather
+          than lucky), so `ml-auto` (which only measures in-flow
           siblings) grew it leftward UNDERNEATH the search, and the positioned
           element painted on top: "Ctrl K" and the LIVE chip rendered over each
           other. No amount of min-w-0 or shrink fixes that, because the two boxes
@@ -598,7 +639,7 @@ export async function AppShell({
           It was reachable on every route, not just the ones that pass `badges`:
           the maintenance chip falls back to a live read below, and on a
           feed-bearing page "Falling behind" plus "Update available" plus the theme
-          toggle already crosses the reserve on their own.
+          toggle already crossed the reserve on their own.
 
           One layout means they cannot overlap. The side tracks are `1fr` with
           their natural min-content floor, so the middle track is centred on the
@@ -644,20 +685,22 @@ export async function AppShell({
             The search keeps its min-w-0: that one SHOULD give way.
           */}
           {/*
-            ONE COMPONENT, RENDERED UNCONDITIONALLY. The three status chips used
-            to be spelled out here, each with its own visibility test — and the
-            feed one was behind `{feed && …}`, which four real pages never
-            satisfied. They describe the SERVER, so they belong on every page
-            that shows the shell, and the decision about which of them to show
-            during a deploy belongs to the cluster rather than to three
-            components that cannot see each other. See `ServerChips`.
+            ONE COMPONENT, RENDERED UNCONDITIONALLY. The status chips used to be
+            spelled out here, each with its own visibility test — and the feed
+            one was behind `{feed && …}`, which four real pages never satisfied.
+            They describe the SERVER, so they belong on every page that shows the
+            shell, and deciding WHICH of them to show — during a deploy, after
+            one that failed — belongs to the cluster rather than to components
+            that cannot see each other. See `ServerChips`; the feed chips it used
+            to hold have since been removed outright, and the decision it makes
+            now is which of Updating, Update failed and the ordinary badges is
+            the one true thing to say.
           */}
           <div className="flex items-center justify-end gap-2">
             <ServerChips
-              lastPushAt={chipFeed.lastPushAt}
-              now={chipFeed.now}
               live={chipFeed.live}
               initialBadge={b.maintenance ?? null}
+              initialPhase={initialPhase}
             />
             <ThemeToggle />
           </div>

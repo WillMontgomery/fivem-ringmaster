@@ -11,6 +11,7 @@ import {
   Loader2,
   RefreshCw,
   Rocket,
+  TriangleAlert,
   Undo2,
   X,
 } from 'lucide-react'
@@ -39,8 +40,10 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { postJson } from '@/lib/api'
-import { ago } from '@/lib/duration'
+import { ago, humanDuration } from '@/lib/duration'
 import { commitUrl, compareUrl, shortSha } from '@/lib/github'
+import { useLiveState } from '@/lib/livePoll'
+import { deployPhase, RESTART_GRACE_MS } from '@/lib/serverPhase'
 import {
   AUTO_AFTER_MS,
   behindMainNow,
@@ -197,6 +200,8 @@ export function MaintenancePanel({
   initialRefUpdate,
   initialBehindMain,
   initialUpdateTarget,
+  initialBootEpoch = null,
+  initialLastPushAt = null,
   frozen = false,
 }: {
   initial: MaintenanceWindow | null
@@ -246,6 +251,19 @@ export function MaintenancePanel({
    * there is no half of this pair worth showing on its own.
    */
   initialUpdateTarget: UpdateTarget | null
+  /**
+   * The live feed, as the SERVER render saw it, so the completion gate has an
+   * answer on first paint instead of two seconds later.
+   *
+   * WITHOUT THESE THE PAGE FLASHES THE WRONG STATE, and in the worst direction:
+   * with no boot epoch to compare against, a window that completed thirty
+   * seconds ago and whose server is already back reads as still waiting — so an
+   * admin who reloads /maintenance right after a successful deploy watches a
+   * spinner appear and then vanish. The polled values take over the moment they
+   * land; these only cover the gap.
+   */
+  initialBootEpoch?: string | null
+  initialLastPushAt?: number | null
   /**
    * Hold the props as given and never poll. FOR THE DESIGN HARNESS ONLY.
    *
@@ -394,7 +412,9 @@ export function MaintenancePanel({
    * page, so an admin anywhere else was never told. It now lives in
    * `lib/livePoll`, fires off the same reading that flips the header's Updating
    * chip back to Live, and is module-scoped so a re-mounting header cannot say
-   * it twice. See `announceIfBackFromUpdate`.
+   * it twice. See `announceDeployOutcome`, which now also has words for the two
+   * ways a deploy ends badly — the completion gate gave it a "did not come
+   * back" state to announce, where before there was only silence.
    */
   useEffect(() => {
     // The harness renders a fixed state and nothing else may move it. Note the
@@ -516,6 +536,51 @@ export function MaintenancePanel({
 
   const live =
     w && (w.state === 'scheduled' || w.state === 'draining' || w.state === 'deploying')
+
+  /**
+   * WHERE THIS DEPLOY HAS ACTUALLY GOT TO — the same reading the header chip
+   * and the completion toast use.
+   *
+   * ONE FUNCTION, NOT TWO NOTIONS. The owner's complaint was that "after the
+   * drain it just jumps to 'up to date'": the window goes `complete` the moment
+   * the deploy VERB returns, `live` goes false, and this panel fell straight
+   * through to the finished state while FXServer was still booting. The fix is
+   * not a second "am I still deploying" flag on this page — that is how two
+   * surfaces come to disagree — it is that the loading state and the completion
+   * gate are the SAME expression, `deployPhase`, evaluated here and in
+   * `lib/livePoll` over the same row.
+   *
+   * THE INPUTS COME FROM WHEREVER THEY ARE FRESHEST, which is not a second
+   * source: the window fields are this panel's own five-second poll (it holds
+   * the whole row, including the three deploy-verdict fields), and the live
+   * feed rides the two-second `/api/state` poll every page already runs. A
+   * frozen harness has no poll and falls back to the server-rendered values,
+   * which is what lets `/preview/maintenance?state=confirming` exist at all.
+   */
+  const polled = useLiveState(!frozen)
+  const phaseNow = polled?.now ?? now
+  const phase = deployPhase({
+    state: w?.state,
+    completedAt: w?.completedAt,
+    deployError: w?.deployError,
+    deployBootEpoch: w?.deployBootEpoch,
+    deployConfirmedAt: w?.deployConfirmedAt,
+    bootEpoch: polled?.view.bootEpoch ?? initialBootEpoch,
+    lastPushAt: polled?.view.lastPushAt ?? initialLastPushAt,
+    now: phaseNow,
+  })
+
+  /**
+   * The moment the excuse runs out, for the countdown below.
+   *
+   * SHOWN, NOT HIDDEN, because a loading state whose end an operator cannot see
+   * is one they have no way to distinguish from a hang — which is exactly the
+   * complaint that the old behaviour (jump to "up to date") was the other half
+   * of. Saying "five minutes, then this becomes a failure" makes waiting a
+   * decision rather than a guess.
+   */
+  const restartDeadline =
+    typeof w?.completedAt === 'number' ? w.completedAt + RESTART_GRACE_MS : null
 
   /**
    * Read the branch list off the game host.
@@ -789,6 +854,60 @@ export function MaintenancePanel({
       </div>
     </Card>
   ) : null
+
+  // ---------------------------------------------------- waiting for life ----
+
+  /**
+   * THE DEPLOY RAN AND THE SERVER HAS NOT SPOKEN YET.
+   *
+   * THIS IS THE GAP THE OWNER SAW: "currently after the drain it just jumps to
+   * 'up to date'". The window is `complete` — so `live` above is false and the
+   * whole live-window card is gone — but `complete` means the deploy VERB
+   * returned, which happens the moment `royale-deploy` has kicked the restart
+   * off. FXServer is still coming up. The page used to render the finished
+   * state over that, tick and all.
+   *
+   * IT REPLACES THE PAGE RATHER THAN SITTING ABOVE IT, unlike the failure card
+   * below, and the difference is whether there is anything useful to do. There
+   * is not: the deploy has been fired, `updateAvailable` has been cleared, and
+   * scheduling a second window at a server that is mid-restart is the one
+   * action that could make this worse. The failure states DO leave the controls
+   * up, because by then acting is the point.
+   */
+  if (phase === 'confirming' && w) {
+    return (
+      <>
+        {parkedCard && <div className="mb-4">{parkedCard}</div>}
+
+        <Card className="surface-edge items-center px-6 py-12 text-center">
+          <Loader2 className="size-6 animate-spin text-info" />
+          <p className="mt-3 text-sm font-medium">Waiting for the server</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+            The update has been deployed and the game server is restarting. This
+            is not finished until{' '}
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+              br_ringmaster
+            </code>{' '}
+            reports in from the restarted server — that is the only thing that
+            proves the new code is actually running.
+          </p>
+          {/*
+            THE BOUND, STATED. A wait with a visible end is a wait; one without
+            is indistinguishable from a hang, and this page has exactly one
+            reader — somebody standing over a production restart deciding
+            whether to go and look at the box.
+          */}
+          {restartDeadline !== null && (
+            <p className="mt-3 text-xs text-muted-foreground/70">
+              {phaseNow >= restartDeadline
+                ? 'Any moment now.'
+                : `Giving it ${humanDuration(restartDeadline - phaseNow)} more, then this is reported as a failure.`}
+            </p>
+          )}
+        </Card>
+      </>
+    )
+  }
 
   // ---------------------------------------------------------------- live ----
 
@@ -1112,6 +1231,24 @@ export function MaintenancePanel({
   })
 
   /**
+   * A DEPLOY THAT ENDED BADLY AND HAS NOT BEEN RESOLVED.
+   *
+   * IT SUPPRESSES THE GREEN TICK, and only that. The empty state below says
+   * "the server is running the latest code" over a `CircleCheck`, which is a
+   * statement about commits and is still literally true after a deploy that
+   * shipped and then never came back — and printing it under a red card saying
+   * the server never came back is the console arguing with itself in the space
+   * of two cards. The failure card answers the same question ("what is the
+   * state of this server") with the more important half of the answer, so it
+   * takes the slot.
+   *
+   * NOTHING ELSE YIELDS. The scheduling card, the branch picker and "revert to
+   * main" all stay exactly where they are — a failure that removes the way out
+   * is worse than the failure.
+   */
+  const deployTrouble = phase === 'failed' || phase === 'unconfirmed'
+
+  /**
    * WHICH CARD THIS PAGE IS: the one that schedules, or the one that says there
    * is nothing to schedule. `noDeploy` decides, and nothing else does.
    *
@@ -1159,6 +1296,81 @@ export function MaintenancePanel({
   return (
     <div className="space-y-4">
       {parkedCard}
+
+      {/*
+        THE TWO WAYS A DEPLOY ENDS BADLY, AND THEY ARE NOT THE SAME PROBLEM.
+
+        ABOVE THE CONTROLS, NOT INSTEAD OF THEM. The waiting state replaces the
+        page because there is nothing to do while a server boots; these do not,
+        because acting is the entire point of reading them — redeploy, revert to
+        main, or switch branch, all of which are below and all of which stay
+        live. A failure card that took the schedule button away would leave an
+        operator with a red box and no exit.
+
+        `failed` IS THE HOST REFUSING. The deploy verb came back with an error,
+        so nothing was restarted and the server is still running exactly what it
+        was running before. That is the safer failure and the message says so —
+        it is the difference between "go and fix the deploy" and "go and look at
+        whether the game server is alive".
+
+        `unconfirmed` IS THE DANGEROUS ONE. The deploy reported success, the
+        restart was fired, and five minutes later nothing has been heard from
+        br_ringmaster. Nobody can tell from here whether FXServer failed to
+        start, crashed on the new code, or came up with its outbox broken — only
+        that the console has no evidence of life, and that is precisely the
+        state the old "up to date" tick used to paint green.
+
+        IT CLEARS ITSELF ON EVIDENCE. The moment a heartbeat arrives from a
+        process that is not the one this window restarted, the phase returns to
+        `idle` and this card goes; the driver writes that verdict to the row so
+        it survives a console restart. Nothing here is dismissed by hand,
+        because a failure an operator can wave away is one they will.
+      */}
+      {deployTrouble && (
+        <Card className="surface-edge gap-0 border-danger/30 px-5 py-4">
+          <div className="flex items-start gap-3">
+            <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-medium text-danger">
+                {phase === 'failed'
+                  ? 'The update failed'
+                  : 'The server did not come back'}
+              </h2>
+              {phase === 'failed' ? (
+                <>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    The game host refused the deploy, so nothing was restarted —
+                    the server is still running the code it was running before.
+                  </p>
+                  {w?.deployError && (
+                    <p className="mt-2 rounded-md border border-danger/30 bg-danger/5 px-3 py-2 font-mono text-xs text-danger">
+                      {w.deployError}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    The deploy ran and the restart was fired, but{' '}
+                    <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                      br_ringmaster
+                    </code>{' '}
+                    has not reported in since — so there is no evidence the game
+                    server came back up on the new code.
+                  </p>
+                  <p className="mt-1.5 text-xs text-muted-foreground/70">
+                    {typeof w?.completedAt === 'number'
+                      ? `The deploy finished ${ago(w.completedAt, phaseNow)}. `
+                      : ''}
+                    Check FXServer on the game box. This clears itself the
+                    moment the server reports in, however late that is.
+                  </p>
+                </>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
 
       {noDeploy === null ? (
         <Card className="surface-edge gap-0 px-5 py-4">
@@ -1486,7 +1698,14 @@ export function MaintenancePanel({
           — is there an update to schedule — and the answer is genuinely "no, you
           are current". Whether being on `dev` at all is fine is the banner's
           question, and the banner is still saying no.
+
+          IT YIELDS TO A FAILED DEPLOY, THOUGH, and that is the one case where
+          the sentence is true and unwelcome: a deploy that shipped and never
+          came back leaves the box level with main, so this card would print a
+          green tick directly under a red one saying the server is gone. See
+          `deployTrouble`.
         */
+        deployTrouble ? null : (
         <Card className="surface-edge items-center px-6 py-12 text-center">
           <CircleCheck className="size-6 text-live" />
           <p className="mt-2 text-sm">{noDeploy.state}</p>
@@ -1494,6 +1713,7 @@ export function MaintenancePanel({
             {noDeploy.fix}
           </p>
         </Card>
+        )
       )}
 
       {canRun && (
@@ -2018,8 +2238,14 @@ function MaintenanceExplainer() {
       body: 'Once the last player leaves, royale-deploy pulls the branch the server is on — normally main — syncs the resources and restarts FXServer.',
     },
     {
-      title: 'Back to normal',
-      body: 'The server accepts players again and the result — success or failure — lands in the audit log.',
+      title: 'The server reports back',
+      /*
+        THE STEP THAT USED TO BE MISSING FROM THE STORY AS WELL AS FROM THE
+        PAGE. "Back to normal" described the deploy command returning, which is
+        not the same event as the game server running the new code — and this
+        list is where an operator learns what they are waiting for.
+      */
+      body: 'The update is not finished until br_ringmaster reports in from the restarted server — that is the proof FXServer actually came back on the new code. If it has not within five minutes, the console says the server did not come back rather than claiming success. Either way the result lands in the audit log.',
     },
   ]
 

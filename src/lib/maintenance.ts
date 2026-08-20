@@ -129,6 +129,45 @@ export interface MaintenanceWindow {
    */
   targetRef?: string | null
   targetSha?: string | null
+
+  /**
+   * What the deploy verb returned, when it returned a refusal.
+   *
+   * WRITTEN SINCE `markComplete` WAS WRITTEN AND READ BY NOTHING until the
+   * completion gate needed it. It is the difference between the two failures a
+   * deploy has — the host refused (code never shipped, server untouched) and
+   * the host accepted but the server never came back — and a console that
+   * cannot tell them apart sends somebody to the wrong box.
+   */
+  deployError?: string | null
+
+  /**
+   * The game's boot epoch as the console last knew it when the deploy fired.
+   *
+   * THE THING THAT MAKES "THE SERVER IS BACK" PROVABLE. `bootEpoch` is unique
+   * per resource start and the game host restarts resources on every deploy, so
+   * a heartbeat carrying a DIFFERENT epoch cannot have come from the process
+   * this window restarted. Recorded at `markDeploying`, which is the last
+   * moment the old process is still the one we are hearing from.
+   *
+   * Null when the console had never received a push — an ingest that is not
+   * configured, or a console restarted mid-window. `heartbeatIsFresh` falls
+   * back to the timestamp comparison there.
+   */
+  deployBootEpoch?: string | null
+
+  /**
+   * When a heartbeat from a NEW process first arrived after the deploy.
+   *
+   * DURABLE ON PURPOSE, rather than re-derived from the live feed every time
+   * somebody loads a page. The live feed is in-memory and dies with the console
+   * — so without this, a console that restarts a week later sees a `complete`
+   * window, no `bootEpoch` to compare against, and would report that a deploy
+   * which demonstrably landed had never confirmed. Once written the verdict is
+   * settled, and nothing un-settles it except the next window replacing this
+   * row wholesale.
+   */
+  deployConfirmedAt?: number | null
 }
 
 /**
@@ -589,6 +628,18 @@ export async function schedule(input: {
      */
     targetRef: input.targetRef ?? null,
     targetSha: input.targetSha ?? null,
+
+    /**
+     * THE PREVIOUS DEPLOY'S VERDICT IS CLEARED HERE, and the full `put` is what
+     * does it. These three describe one deploy — whether it errored, which
+     * process it restarted, and whether a new one ever spoke — and carrying
+     * them into a window that has not deployed anything yet would leave the
+     * page showing last week's failure over this week's countdown. Written as
+     * explicit nulls rather than omitted so the intent is legible on the row.
+     */
+    deployError: null,
+    deployBootEpoch: null,
+    deployConfirmedAt: null,
   }
 
   await ddb.put({ TableName: tables.maintenance, Item: w })
@@ -650,33 +701,99 @@ export async function markDeploying(input?: {
   forcedBy?: string | null
   forcedByName?: string | null
   withPlayers?: number
+  /**
+   * The boot epoch of the process about to be restarted, from `liveView`.
+   *
+   * PASSED IN RATHER THAN READ HERE. `lib/state` is server-only in-memory
+   * state and this module is imported by `MaintenancePanel`, a client
+   * component — the same reason `lib/ssh` is only ever `import type`d at the
+   * top of this file. The two callers that fire a deploy already hold the live
+   * view; handing over one string keeps the boundary intact.
+   *
+   * THIS IS THE LAST MOMENT IT IS TRUE. A tick later the process is gone and
+   * whatever the console is hearing from is the thing we would be trying to
+   * distinguish it from.
+   */
+  bootEpoch?: string | null
 }): Promise<void> {
   const forced = Boolean(input?.forcedBy || input?.forcedByName)
+  const t = Date.now()
+
+  /**
+   * THE PREVIOUS DEPLOY'S VERDICT IS CLEARED IN THE SAME WRITE THAT STARTS THIS
+   * ONE. A window that was scheduled on top of a `complete` row keeps that
+   * row's fields (`schedule` nulls them, but a forced deploy on a window
+   * scheduled before this change would not) — and a stale `deployConfirmedAt`
+   * would declare the new deploy confirmed the instant it finished, which is
+   * exactly the false success the gate exists to prevent.
+   */
+  const sets = [
+    '#s = :deploying',
+    'deployStartedAt = :t',
+    'deployBootEpoch = :be',
+    'deployConfirmedAt = :null',
+    'deployError = :null',
+  ]
+
+  const values: Record<string, unknown> = {
+    ':deploying': 'deploying',
+    ':scheduled': 'scheduled',
+    ':draining': 'draining',
+    ':t': t,
+    ':be': input?.bootEpoch ?? null,
+    ':null': null,
+  }
+
+  if (forced) {
+    sets.push(
+      'forcedAt = :t',
+      'forcedBy = :fb',
+      'forcedByName = :fn',
+      'forcedWithPlayers = :fp',
+    )
+    values[':fb'] = input?.forcedBy ?? null
+    values[':fn'] = input?.forcedByName ?? null
+    values[':fp'] = input?.withPlayers ?? 0
+  }
 
   await ddb.update({
     TableName: tables.maintenance,
     Key: { id: CURRENT },
     ConditionExpression: '#s = :scheduled OR #s = :draining',
-    UpdateExpression: forced
-      ? 'SET #s = :deploying, deployStartedAt = :t, forcedAt = :t, forcedBy = :fb, forcedByName = :fn, forcedWithPlayers = :fp'
-      : 'SET #s = :deploying, deployStartedAt = :t',
+    UpdateExpression: `SET ${sets.join(', ')}`,
     ExpressionAttributeNames: { '#s': 'state' },
-    ExpressionAttributeValues: forced
-      ? {
-          ':deploying': 'deploying',
-          ':scheduled': 'scheduled',
-          ':draining': 'draining',
-          ':t': Date.now(),
-          ':fb': input?.forcedBy ?? null,
-          ':fn': input?.forcedByName ?? null,
-          ':fp': input?.withPlayers ?? 0,
-        }
-      : {
-          ':deploying': 'deploying',
-          ':scheduled': 'scheduled',
-          ':draining': 'draining',
-          ':t': Date.now(),
-        },
+    ExpressionAttributeValues: values,
+  })
+}
+
+/**
+ * Record that the game came back — the first heartbeat from a NEW process.
+ *
+ * WHY THIS IS WRITTEN DOWN RATHER THAN RE-DERIVED. The evidence is in-memory
+ * live state, which dies with the console; the question ("did that deploy
+ * land?") outlives it by weeks. Without a durable answer, a console restarted
+ * later would look at a `complete` window, find no boot epoch to compare
+ * against, and report a deploy that demonstrably worked as never confirmed.
+ *
+ * CONDITIONAL, SO IT IS WRITE-ONCE. Two ticks racing produce one winner and one
+ * harmless failure, and a window that has moved on since is not overwritten.
+ * `deployConfirmedAt = :null` is in the condition beside `attribute_not_exists`
+ * because `schedule` writes the field as an explicit null rather than omitting
+ * it, and a NULL attribute exists.
+ */
+export async function markDeployConfirmed(at: number): Promise<void> {
+  await ddb.update({
+    TableName: tables.maintenance,
+    Key: { id: CURRENT },
+    ConditionExpression:
+      '#s = :complete AND (attribute_not_exists(deployConfirmedAt) OR deployConfirmedAt = :null)',
+    UpdateExpression: 'SET deployConfirmedAt = :t',
+    ExpressionAttributeNames: { '#s': 'state' },
+    ExpressionAttributeValues: {
+      ':complete': 'complete',
+      ':null': null,
+      ':t': at,
+    },
   })
 }
 

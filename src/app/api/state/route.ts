@@ -18,8 +18,8 @@ import { liveView } from '@/lib/state'
  * first, which was never true.
  *
  * A 401 here is what the poller sees when a session is revoked mid-shift, and
- * it fails quiet: the board keeps its last data and the feed chip ages honestly
- * until the next navigation bounces to login.
+ * it fails quiet: the board keeps its last data until the next navigation
+ * bounces to login.
  *
  * THE IDLE CHECK IS NOT OPTIONAL HERE. This is the highest-frequency endpoint
  * in the app at one call every two seconds. Left unchecked it would be the one
@@ -70,6 +70,20 @@ export async function GET(): Promise<Response> {
       badge: m.badge,
       /** 0 = the driver has never read the row. Absence, not "no window". */
       at: m.at,
+
+      /**
+       * THE THREE FIELDS THE COMPLETION GATE NEEDS, riding the same payload as
+       * `view.bootEpoch` and `view.lastPushAt` that they are compared against.
+       *
+       * ONE PAYLOAD, ONE INSTANT, ONE DECISION — the same argument as the block
+       * above. `deployPhase` compares the boot epoch the console is hearing now
+       * against the one recorded when the deploy fired; sampling those two from
+       * different responses would let a fresh epoch meet a stale record of the
+       * old one and declare a server back before it is.
+       */
+      deployError: m.window?.deployError ?? null,
+      deployBootEpoch: m.window?.deployBootEpoch ?? null,
+      deployConfirmedAt: m.window?.deployConfirmedAt ?? null,
     },
   })
 }

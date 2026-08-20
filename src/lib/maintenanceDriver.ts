@@ -1,5 +1,6 @@
 import * as audit from './audit'
 import * as maint from './maintenance'
+import { heartbeatIsFresh } from './serverPhase'
 import { isOnMain, isParkedOffMain, runVerb, sshConfigured, switchRef } from './ssh'
 import { ensurePolling, hostView } from './telemetry'
 import { liveView } from './state'
@@ -164,6 +165,57 @@ export async function tick(): Promise<void> {
     const now = Date.now()
 
     /**
+     * DID THE SERVER COME BACK FROM THE LAST DEPLOY? Recorded once, durably.
+     *
+     * THE VERDICT IS DERIVED EVERYWHERE AND WRITTEN DOWN HERE. Every surface
+     * computes `deployPhase` from the same inputs on its own two-second poll,
+     * which is what makes the header chip, the Maintenance page and the toast
+     * flip together; but all of those read the live feed, which is in-memory
+     * and dies with this process. This is the one place that turns the
+     * observation into a fact on the row, so the answer survives a restart and
+     * a console booting a week later cannot mistake an unrelated outage for a
+     * deploy that never landed.
+     *
+     * IT RUNS BEFORE THE `isLive` GATE BELOW because a `complete` window is not
+     * live — this is precisely the state the rest of the state machine has
+     * finished with and the only one where this question exists.
+     *
+     * NOT OVER AN ERROR. A deploy the host refused never restarted anything, so
+     * the game pushing happily is the expected state rather than evidence of
+     * anything; recording a confirmation there would turn a stated failure into
+     * a success. See `deployPhase`, which tests `deployError` first for the
+     * same reason.
+     */
+    if (
+      w &&
+      w.state === 'complete' &&
+      typeof w.completedAt === 'number' &&
+      typeof w.deployConfirmedAt !== 'number' &&
+      !w.deployError
+    ) {
+      const feed = liveView(now)
+      const back = heartbeatIsFresh({
+        completedAt: w.completedAt,
+        deployBootEpoch: w.deployBootEpoch,
+        deployConfirmedAt: w.deployConfirmedAt,
+        bootEpoch: feed.bootEpoch,
+        lastPushAt: feed.lastPushAt,
+      })
+      if (back) {
+        try {
+          await maint.markDeployConfirmed(feed.lastPushAt ?? now)
+          w = remember(await maint.current())
+        } catch (e) {
+          // Loud rather than swallowed: a confirmation that silently fails to
+          // write leaves the console re-deciding this from volatile state
+          // forever, and the symptom (a deploy that reads as unconfirmed after
+          // a restart) is a long way from the cause.
+          console.error('[maintenance] could not record deploy confirmation', e)
+        }
+      }
+    }
+
+    /**
      * IS THE BOX ON MAIN? DERIVED FROM THE HOST, EVERY TICK, NEVER STORED.
      *
      * This gates the automation below, and where it lives is the entire
@@ -302,7 +354,15 @@ export async function tick(): Promise<void> {
 
     if (w.state !== 'draining') return
 
-    const players = liveView(now).counts.connected
+    /**
+     * The live view is read ONCE here and used twice: the player count that
+     * decides whether to fire, and the boot epoch of the process the deploy is
+     * about to restart. Two reads could straddle a push and pair a count with
+     * an epoch from a different snapshot, which is the one pairing the
+     * completion gate must not get wrong.
+     */
+    const feed = liveView(now)
+    const players = feed.counts.connected
 
     /**
      * WHY EMPTY IS THE TRIGGER RATHER THAN A TIMER. The whole point of draining
@@ -322,7 +382,15 @@ export async function tick(): Promise<void> {
 
     if (!emptied && !timeUp) return
 
-    await maint.markDeploying().catch(() => {})
+    /**
+     * THE BOOT EPOCH GOES ON THE ROW IN THE SAME WRITE THAT STARTS THE DEPLOY,
+     * and this is the last instant it is worth recording: from here on the
+     * process it names is being killed, and anything the console hears
+     * afterwards is what we will be comparing against it. Null when the console
+     * has never had a push — `heartbeatIsFresh` falls back to the timestamp
+     * comparison there rather than refusing to ever confirm.
+     */
+    await maint.markDeploying({ bootEpoch: feed.bootEpoch }).catch(() => {})
     /**
      * BEFORE THE DEPLOY, NOT AFTER IT, AND THAT ORDERING IS THE POINT. The
      * `runDeploy` below is the long await — an SSH round trip that restarts the

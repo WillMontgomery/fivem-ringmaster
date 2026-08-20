@@ -1,114 +1,234 @@
 import type { MaintenanceState } from './maintenance'
 
 /**
- * IS THE GAME SERVER MID-UPDATE — and therefore, is its silence explained?
+ * WHERE A DEPLOY HAS ACTUALLY GOT TO — the one reading every surface uses.
  *
- * WHAT THIS IS FOR. The header carries chips that answer "is the live data
- * healthy": Live, Falling behind, Feed lost. During a deploy every one of them
- * is technically correct and completely useless — the feed IS lost, because the
- * server was deliberately restarted, and three chips arguing about a box that is
- * down on purpose is noise dressed as information. The owner: "let's not show
- * the live/falling behind/etc chips while the server is updating — only show the
- * Updating chip."
+ * WHAT THIS FILE IS FOR. "The deploy finished" and "the game server is back"
+ * are different facts, tens of seconds apart, and the console used to conflate
+ * them: the driver marks the window `complete` when the `deploy` VERB returns,
+ * and that verb returns once `royale-deploy` has kicked the restart off — not
+ * once FXServer has booted the new code and started pushing again. In that gap
+ * the Maintenance page jumped straight from "draining" to a green tick, and a
+ * success toast landed over a server that was still down. The owner: "don't
+ * show that the update is complete until we receive the first heartbeat from
+ * br_ringmaster. That tells us that the server process has executed properly
+ * and successfully."
  *
- * THE DISTINCTION THIS FILE EXISTS TO PROTECT, and it is the same one
- * `refUpdateFrom` draws by returning `null` and never `0`:
+ * SO COMPLETION IS GATED ON THE GAME SPEAKING, and specifically on the game
+ * speaking AS A NEW PROCESS. See `heartbeatIsFresh` for why the timestamp
+ * comparison this used to make is not enough on its own.
  *
- *   SUPPRESSING A CHIP BECAUSE WE KNOW WHY THE FEED IS QUIET is honest. A
- *   `deploying` window is a stated fact, written by the driver that fired the
- *   deploy, and "Updating" is a better answer than "Feed lost" because it is
- *   the same observation with its cause attached.
+ * ONE FUNCTION, THREE READERS, WHICH IS THE POINT. The header chip, the
+ * Maintenance page's loading state and the completion toast are the same fact
+ * seen three times, and the way that fact goes wrong is subtle enough that it
+ * must not be spelled out in three places. `deployPhase` is called by all of
+ * them, and by the driver that records the verdict durably.
  *
- *   SUPPRESSING A CHIP BECAUSE WE HAVE NOT LOOKED WOULD BE THE BUG. A console
- *   that has not yet read the maintenance row knows nothing about a deploy, and
- *   must therefore show the ordinary health chips — which will say "No data" or
- *   "Feed lost", and those are TRUE: we have no data. Every early return below
- *   is on a POSITIVE reading of the window. Absence of a window, a null state,
- *   an unread row — all fall through to `false`, which means "show the ordinary
- *   chips", never "hide everything".
- *
- * So the failure direction is: not knowing shows MORE, never less. The only
- * thing that hides a health chip is a window that says, in so many words, that
- * a deploy is happening.
- *
- * ---
- *
- * THE SECOND HALF: "DEPLOYED" IS NOT "BACK". The driver marks the window
- * `complete` when the `deploy` verb returns, and that verb returns once
- * `royale-deploy` has kicked the restart off — not once FXServer is accepting
- * players and pushing state again. Those are tens of seconds apart, and in that
- * gap the old behaviour was a green success toast and a red "Feed lost" chip,
- * simultaneously, both about the same server. The owner: "don't notify that an
- * update is complete until it's polling again. Once that's true the 'live' chip
- * should come back."
- *
- * SO THE PROOF OF LIFE IS A PUSH, NOT A ROW. `lastPushAt > completedAt` is the
- * game server itself talking after the restart finished — the only evidence
- * that cannot be produced by anything except the thing we are asking about. One
- * fact, one transition; the chip flips and the toast fires off the same
- * comparison, which is what stops the two surfaces disagreeing.
+ * NOT KNOWING SHOWS LESS, NEVER MORE — the same polarity this file has always
+ * had. Every claim below rests on a POSITIVE reading of the maintenance window:
+ * an unread row, a null state, a payload that predates a field, all fall
+ * through to `idle`, which asserts nothing. A console that has not looked must
+ * not announce a deploy, must not claim one succeeded, and must not claim one
+ * failed.
  */
 
 /**
  * How long a restart is allowed to explain the silence.
  *
- * WITHOUT A BOUND THIS STATE IS A TRAP. "Updating until the feed comes back"
- * never ends if the feed never comes back — a deploy that broke the server, or
- * a console whose game box has no ingest configured at all — and the console
- * would sit showing a calm amber "Updating" over a server that is genuinely
- * dead, having suppressed the very chip that would have said so. That is the
- * failure this whole file is supposed to prevent, arrived at from the other
- * side.
+ * WITHOUT A BOUND THIS STATE IS A TRAP. "Waiting for the server" never ends if
+ * the server never comes back — a deploy that broke it, or a console whose game
+ * box has no ingest configured at all — and the Maintenance page would sit on a
+ * spinner forever over a box that is genuinely dead. A loading state with no
+ * exit is not a loading state, it is a hang.
  *
  * FIVE MINUTES IS DELIBERATELY GENEROUS AGAINST THE REAL NUMBER. `royale-deploy`
  * syncs resources and restarts FXServer, which is tens of seconds; the game
  * pushes every two. Anything past five minutes is not a slow restart, it is a
  * problem — and at that point the honest thing is to stop offering an excuse and
- * let `Feed lost` say what is true. Note the console does NOT then claim the
- * deploy succeeded: see the note on the completion toast in lib/livePoll.
+ * say the update did not confirm. It is ONE number rather than two because the
+ * moment the excuse expires and the moment the failure is declared are the same
+ * moment; giving them separate constants would let them drift into a gap where
+ * the console says neither.
  */
 export const RESTART_GRACE_MS = 5 * 60_000
 
-export function updateInProgress(input: {
+/**
+ * Where a deploy is, as far as this console can honestly tell.
+ *
+ *   idle         Nothing to say. No window, or one whose deploy is settled.
+ *   deploying    The deploy verb is running. The server is going down.
+ *   confirming   The verb returned; waiting for br_ringmaster's first heartbeat.
+ *   failed       The deploy verb itself returned an error. The code did not ship.
+ *   unconfirmed  The grace expired with no heartbeat from a new process.
+ *
+ * `failed` AND `unconfirmed` ARE BOTH TERMINAL AND THEY ARE NOT THE SAME
+ * FAILURE. `failed` is the game host refusing or erroring — an SSH channel that
+ * is not configured, a pin the box would not take, a deploy script that exited
+ * non-zero — and the server is still running the OLD code, untouched. That is
+ * the safer of the two. `unconfirmed` is the deploy reporting success and the
+ * server then never coming back, which is the one that needs somebody on the
+ * box: the restart was fired and something after it did not survive.
+ */
+export type DeployPhase =
+  | 'idle'
+  | 'deploying'
+  | 'confirming'
+  | 'failed'
+  | 'unconfirmed'
+
+export interface DeployPhaseInput {
   /** The stored window's state, or null when no window has been read. */
   state: MaintenanceState | null | undefined
   /** When the deploy step finished, epoch ms. Null while it has not. */
   completedAt: number | null | undefined
+  /** What the deploy verb returned, when it returned a refusal. */
+  deployError?: string | null
+  /**
+   * The game's boot epoch as the console last knew it when the deploy fired.
+   *
+   * Absent on a row written before this field existed, and null when the
+   * console had never received a push at all — both fall back to the timestamp
+   * comparison in `heartbeatIsFresh`.
+   */
+  deployBootEpoch?: string | null
+  /** When the driver recorded the first heartbeat from a new process. */
+  deployConfirmedAt?: number | null
+  /** The boot epoch of the process the console is hearing from RIGHT NOW. */
+  bootEpoch?: string | null
   /** When the console last received a push from the game, epoch ms, or null. */
   lastPushAt: number | null | undefined
   now: number
+}
+
+/**
+ * HAS THE GAME SPOKEN SINCE THE RESTART — as a DIFFERENT PROCESS?
+ *
+ * THE TIMESTAMP COMPARISON ALONE IS NOT PROOF, and that is the bug this
+ * function exists to close. `lastPushAt > completedAt` was the whole test, and
+ * it can be satisfied by the OLD server: the deploy verb returns once
+ * `royale-deploy` has kicked the restart off, and FXServer takes a moment to
+ * actually stop, so a push that was already in flight — or one the dying
+ * process managed on its two-second cadence — lands a few hundred milliseconds
+ * after `completedAt` and looks exactly like proof of life. It is proof of the
+ * thing we just killed still being alive.
+ *
+ * `bootEpoch` IS THE FIELD THAT TELLS THEM APART, and the game already sends
+ * it. `docs/ingest-envelope.md` in the game repo: it is unique per RESOURCE
+ * START, and the game host restarts resources on every deploy — which is why
+ * `lib/state` already dedupes events on `(bootEpoch, seq)` rather than on `seq`
+ * alone. A heartbeat whose epoch differs from the one we were hearing before
+ * the deploy cannot have come from the process we restarted. Nothing new is
+ * asked of the game: this reads a field that has been on the wire since the
+ * pipeline was built, and the game is not told to behave differently for the
+ * console's benefit.
+ *
+ * THE FALLBACK IS THE OLD TEST, AND IT IS THE WEAKER ONE ON PURPOSE. When the
+ * console had no push at all before the deploy — an ingest that has never been
+ * configured, a console restarted mid-window, a row written before this field
+ * existed — there is no epoch to compare against, and the only evidence
+ * available is a push landing after the deploy finished. Weaker evidence is
+ * still better than none, and the alternative is a console that can never
+ * confirm anything on a box it has not been listening to.
+ */
+export function heartbeatIsFresh(input: {
+  completedAt: number | null | undefined
+  deployBootEpoch?: string | null
+  deployConfirmedAt?: number | null
+  bootEpoch?: string | null
+  lastPushAt: number | null | undefined
 }): boolean {
   /**
-   * THE DEPLOY IS RUNNING. A stated fact, and the only unconditional yes.
+   * ALREADY RECORDED. The driver writes this the first time it observes the new
+   * process, and once written it is the answer forever — which is what stops a
+   * console that boots days later, on a game box that happens to be down for
+   * an unrelated reason, from blaming a deploy that demonstrably landed.
    */
-  if (input.state === 'deploying') return true
+  if (typeof input.deployConfirmedAt === 'number') return true
 
-  /**
-   * THE DEPLOY FINISHED — but "finished" is the verb returning, not the server
-   * answering. Anything other than a completed window falls through: scheduled
-   * and draining are states where the server is UP and its health chips are
-   * exactly what an operator wants (draining with players still on is the case
-   * where "Live" genuinely matters), and null is the unread row that must never
-   * hide anything.
-   */
-  if (input.state !== 'complete') return false
   if (typeof input.completedAt !== 'number') return false
 
-  /**
-   * IT IS BACK. A push that landed AFTER the deploy finished can only have come
-   * from the restarted server. Note `>` and not `>=`: they are both console-side
-   * `Date.now()` readings, so a tie is a push that raced the completion write
-   * within the same millisecond and proves nothing about the new process.
-   */
-  if (typeof input.lastPushAt === 'number' && input.lastPushAt > input.completedAt) {
-    return false
+  if (typeof input.deployBootEpoch === 'string' && input.deployBootEpoch !== '') {
+    // A push from the SAME process proves nothing, whenever it arrived.
+    return (
+      typeof input.bootEpoch === 'string' &&
+      input.bootEpoch !== '' &&
+      input.bootEpoch !== input.deployBootEpoch
+    )
   }
 
   /**
-   * Still silent. That is only an update in progress for as long as a restart
-   * plausibly accounts for it — and this is also what stops a `complete` window
-   * sitting on the row for three days from claiming the server is mid-update
-   * forever, which it otherwise would on any console with no live feed at all.
+   * No epoch to compare. Note `>` and not `>=`: both are console-side
+   * `Date.now()` readings, so a tie is a push that raced the completion write
+   * within the same millisecond and says nothing about which process sent it.
+   */
+  return (
+    typeof input.lastPushAt === 'number' &&
+    typeof input.completedAt === 'number' &&
+    input.lastPushAt > input.completedAt
+  )
+}
+
+export function deployPhase(input: DeployPhaseInput): DeployPhase {
+  /** THE DEPLOY IS RUNNING. A stated fact, and the only unconditional one. */
+  if (input.state === 'deploying') return 'deploying'
+
+  /**
+   * ANYTHING ELSE THAT IS NOT A FINISHED DEPLOY SAYS NOTHING. `scheduled` and
+   * `draining` are states where the server is UP and no deploy has been fired;
+   * `cancelled` is one that never will be; null is the unread row, which must
+   * never produce a claim in either direction.
+   */
+  if (input.state !== 'complete') return 'idle'
+  if (typeof input.completedAt !== 'number') return 'idle'
+
+  /**
+   * THE HOST REFUSED, AND THAT OUTRANKS EVERYTHING BELOW. A stated error from
+   * the command channel is the most specific thing anybody knows about this
+   * deploy, and it means the code did not ship — so no amount of heartbeat
+   * traffic from a server that never restarted may turn it into a success.
+   *
+   * It is also why the driver does not record a confirmation over an error: the
+   * game pushing happily is the expected state after a refused deploy.
+   */
+  if (typeof input.deployError === 'string' && input.deployError !== '') {
+    return 'failed'
+  }
+
+  /** IT IS BACK, and a new process said so. */
+  if (heartbeatIsFresh(input)) return 'idle'
+
+  /**
+   * Still silent. That is a restart in progress for exactly as long as a
+   * restart plausibly accounts for it, and a stated failure afterwards — never
+   * a spinner that outlives the thing it is waiting for.
    */
   return input.now - input.completedAt < RESTART_GRACE_MS
+    ? 'confirming'
+    : 'unconfirmed'
+}
+
+/**
+ * IS THE SERVER MID-UPDATE — and therefore, is its silence explained?
+ *
+ * The header's "Updating" chip, in one expression. Kept as its own function
+ * rather than inlined at the call site because `scripts/check-deploy-phase.mjs`
+ * asserts against it directly and because two of the five phases mean "in
+ * flight" while three do not — a distinction worth naming once.
+ *
+ * NOTE WHAT IS NOT IN IT: `unconfirmed`. A deploy past its grace is not still
+ * updating, and treating it as such is how a console ends up showing a calm
+ * amber spinner over a server that is genuinely dead.
+ */
+export function updateInProgress(input: {
+  state: MaintenanceState | null | undefined
+  completedAt: number | null | undefined
+  deployError?: string | null
+  deployBootEpoch?: string | null
+  deployConfirmedAt?: number | null
+  bootEpoch?: string | null
+  lastPushAt: number | null | undefined
+  now: number
+}): boolean {
+  const phase = deployPhase(input)
+  return phase === 'deploying' || phase === 'confirming'
 }

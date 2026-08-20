@@ -51,12 +51,22 @@ export async function POST(): Promise<Response> {
       )
     }
 
-    const players = liveView(Date.now()).counts.connected
+    const feed = liveView(Date.now())
+    const players = feed.counts.connected
 
+    /**
+     * `bootEpoch` FOR THE SAME REASON THE DRIVER SENDS IT. This route is the
+     * one path that fires a deploy without the driver, so the completion gate
+     * would have nothing to compare against if it did not record which process
+     * is being restarted — and a forced deploy, which ends matches on purpose,
+     * is the last one that should be allowed to report success early. See
+     * `heartbeatIsFresh`.
+     */
     await maint.markDeploying({
       forcedBy: actor.license,
       forcedByName: actor.name,
       withPlayers: players,
+      bootEpoch: feed.bootEpoch,
     })
 
     const { ts } = await audit.begin({

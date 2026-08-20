@@ -7,9 +7,13 @@
  * native `title` attributes and one lonely hover card.
  *
  *   Use `HoverCard` when what you are showing has real internal structure: a
- *   header row, a body, a footer. `FeedStatus` is the reference — status dot and
- *   label, then the age, then the refresh interval. `Provenance` is the second,
- *   and it spent a long time crammed into a tooltip that could not hold it.
+ *   header row, a body, a footer. `Provenance` is the reference — where a
+ *   reading came from, when, and how it was taken — and it spent a long time
+ *   crammed into a tooltip that could not hold it. The original reference was
+ *   `FeedStatus`, whose card carried a status dot and label, then the age, then
+ *   the refresh interval; that component is gone (the owner asked for the feed
+ *   chips to be hidden) and the shape it demonstrated lives on in the other
+ *   three sites.
  *
  *   Use `Tooltip` for about six words on a focusable control. A CARD IS A
  *   LAYOUT, NOT AN EMPHASIS LEVEL: a single important sentence does not get

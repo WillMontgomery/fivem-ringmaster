@@ -31,7 +31,8 @@ import { cn } from '@/lib/utils'
  *
  * A CARD IS A LAYOUT, NOT AN EMPHASIS LEVEL, so it has one: a header row that
  * repeats the icon and label at readable size, then the detail as a paragraph —
- * the same shape `FeedStatus` uses, which is the other card in the app.
+ * the same shape `FeedStatus` used before it was deleted, and the one the
+ * profile's cards still follow.
  */
 
 const KIND: Record<

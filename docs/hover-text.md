@@ -69,10 +69,15 @@ A header row, a body, a footer. **A card is a layout, not an emphasis level.** A
 single sentence does not get promoted to a 256px card for being important. It
 gets moved there for having parts.
 
-**There are four sites, in three files** — `FeedStatus.tsx`, `Provenance.tsx`,
-and two in `ProfileView.tsx`. A grep for `<HoverCard` returns exactly those.
+**There are three sites, in two files** — `Provenance.tsx` and two in
+`ProfileView.tsx`. A grep for `<HoverCard` returns exactly those.
 
-`FeedStatus` and `Provenance` were the first two. `ProfileView`'s `IdLabel` is
+There were four. `FeedStatus` held the first, and the component was deleted when
+the owner asked for the live/falling-behind/feed-lost chips to be hidden; the
+state it read (`lastPushAt`) survived it and is now what proves a deployed
+server has come back. See `lib/serverPhase`.
+
+`Provenance` was the second. `ProfileView`'s `IdLabel` is
 the third and the first one that is a *label* rather than a chip: the "Display
 name" and "In-game name" rows of the identifiers panel each carry a heading,
 what the row is, and the trap it warns about — three pieces, which is what

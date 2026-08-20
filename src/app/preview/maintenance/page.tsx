@@ -30,6 +30,17 @@ import { cn } from '@/lib/utils'
  *   main-current   on main, nothing to deploy
  *   unpolled       NOBODY HAS ASKED THE HOST YET — the box must still be there
  *   unknown        the host has not said which ref it is on
+ *   confirming     DEPLOYED, WAITING FOR br_ringmaster — the loading state
+ *   unconfirmed    the same deploy, past the grace, never came back
+ *   deploy-failed  the host refused the deploy; nothing restarted
+ *
+ * THE LAST THREE ARE THE COMPLETION GATE, and they are here for the same reason
+ * the parked four are: they need a real game box in a real failure state to
+ * see, which means in practice they are never looked at. `confirming` is the
+ * state the owner reported missing — "after the drain it just jumps to 'up to
+ * date'" — and the two after it are the only exits from it, so a change that
+ * breaks one of the three and is only checked against the other two ships a
+ * spinner with no way out.
  *
  * THE FOUR PARKED READINGS ARE THE POINT OF THE NEW ONES. "Behind its branch",
  * "level with it", "we have not been told" and "we were told by a host that
@@ -348,6 +359,94 @@ const views: Record<string, View> = {
     updateTarget: null,
     window: null,
     players: 12,
+  },
+
+  /**
+   * THE DEPLOY IS DONE AND THE SERVER HAS NOT SPOKEN YET — the state the owner
+   * could not see, because the page used to skip straight past it.
+   *
+   * WHAT MAKES IT THIS STATE RATHER THAN "UP TO DATE": the window is `complete`
+   * with a `deployBootEpoch` recorded and no `deployConfirmedAt`. The harness
+   * feeds `bootEpoch: 'preview'` from the shell, which is a DIFFERENT string —
+   * so the panel is deliberately given no live feed at all (`frozen` turns the
+   * poll off and the initial props are left null), which is exactly what a
+   * console hears from a server that is still booting: nothing.
+   *
+   * WHAT TO CHECK: a spinner, the sentence naming `br_ringmaster`, and a
+   * countdown that names the moment this becomes a failure. There must be NO
+   * green tick and no scheduling card anywhere on the page.
+   */
+  confirming: {
+    deployedRef: 'main',
+    refUpdate: null,
+    behindMain: 0,
+    updateTarget: null,
+    window: {
+      ...BASE,
+      completedAt: NOW - 45_000,
+      deployStartedAt: NOW - 70_000,
+      deployBootEpoch: 'boot-before-the-restart',
+      deployConfirmedAt: null,
+      deployError: null,
+    },
+    players: 0,
+  },
+
+  /**
+   * THE SAME DEPLOY, FIVE MINUTES LATER, STILL SILENT — the terminal state.
+   *
+   * THE HALF THAT MAKES THE LOADING STATE HONEST. A spinner with no exit is a
+   * hang, so the wait is bounded by `RESTART_GRACE_MS` and lands here: a stated
+   * failure, above controls that are all still live, because by this point
+   * acting is the entire point of reading it.
+   *
+   * WHAT TO CHECK: the danger card is present AND the scheduling/branch
+   * controls below it are still usable. A failure that takes away the way out
+   * is worse than the failure.
+   */
+  unconfirmed: {
+    deployedRef: 'main',
+    refUpdate: null,
+    behindMain: 0,
+    updateTarget: null,
+    window: {
+      ...BASE,
+      completedAt: NOW - 11 * 60_000,
+      deployStartedAt: NOW - 12 * 60_000,
+      deployBootEpoch: 'boot-before-the-restart',
+      deployConfirmedAt: null,
+      deployError: null,
+    },
+    players: 0,
+  },
+
+  /**
+   * THE OTHER FAILURE, AND IT IS NOT THE SAME ONE. The host refused the deploy,
+   * so nothing restarted and the server is still running what it was running.
+   * That distinction decides where somebody goes to fix it, which is why the
+   * two states have different words and different fixtures.
+   *
+   * `updateAvailable` IS STILL SET, deliberately: `markComplete` clears the
+   * update signal only on success, because a failed deploy leaves the update
+   * genuinely waiting. So this fixture must show the failure card AND the
+   * scheduling card under it.
+   */
+  'deploy-failed': {
+    deployedRef: 'main',
+    refUpdate: null,
+    behindMain: 3,
+    updateTarget: targetOn('main'),
+    window: {
+      ...BASE,
+      updateAvailable: 3,
+      updateFirstSeenAt: NOW - 20 * 60 * 60_000,
+      completedAt: NOW - 4 * 60_000,
+      deployStartedAt: NOW - 5 * 60_000,
+      deployBootEpoch: 'boot-before-the-restart',
+      deployConfirmedAt: null,
+      deployError: 'the game host refused to switch to feature/loot-v2',
+    },
+    players: 0,
   },
 
   /**
