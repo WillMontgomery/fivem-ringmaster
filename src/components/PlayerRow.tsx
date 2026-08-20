@@ -130,7 +130,11 @@ function License({ value }: { value: string }) {
               setCopied(true)
               setTimeout(() => setCopied(false), 1400)
             }}
-            className="group/lic -ml-1 flex max-w-[14rem] items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-xs text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-muted-foreground"
+            // `relative z-10` lifts this above the name link's row-wide
+            // overlay (see `PlayerRowView`). Without it the overlay is painted
+            // last and eats the click, and the single most common action in
+            // this console — copy a license — silently becomes "navigate".
+            className="group/lic relative z-10 -ml-1 flex max-w-[14rem] items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-xs text-muted-foreground/60 transition-colors hover:bg-muted/60 hover:text-muted-foreground"
           />
         }
       >
@@ -171,7 +175,16 @@ export function PlayerRowView({
 
   return (
     <TableRow className="group/row relative border-border/60 transition-colors duration-150 hover:bg-muted/30">
-      <TableCell className="relative py-2">
+      {/*
+        NOT `relative`. It used to be, for the squad spine below — but an
+        absolutely-positioned box resolves against its *nearest* positioned
+        ancestor, so a `relative` cell would catch the name link's row-wide
+        overlay and shrink it back to this one column, which is the bug this
+        was all meant to fix. The spine resolves against the row instead and
+        lands in the same place: a cell's box is the full row height, and this
+        is the first cell, so its left edge is the row's left edge.
+      */}
+      <TableCell className="py-2">
         {/* The squad spine, continued down each member and brightened on
             hover — so pointing at one player shows you their squad. */}
         {accent && (
@@ -182,14 +195,30 @@ export function PlayerRowView({
           />
         )}
         {/*
-          The whole name is the link to the profile, rather than a separate
+          The whole ROW is the link to the profile, rather than a separate
           "view" button. The row is the record; clicking the person is the
           obvious gesture, and an extra column of chevrons is a column of
           nothing.
 
+          It is one real `<a>` stretched over the row by `after:inset-0`, not a
+          row `onClick`. That distinction is the whole design. An `onClick`
+          router push looks identical until an admin ctrl-clicks three players
+          to compare them mid-match and gets three nothings: no ctrl-click, no
+          middle-click, no "open in new tab", no status-bar URL, no copy-link.
+          A stretched anchor keeps every one of those, because it is still just
+          a link with an href. Wrapping the row in the anchor was the other
+          option and is not available: the license copy control below is a
+          `<button>`, and a button inside an anchor is invalid HTML.
+
+          The overlay resolves against the row (`relative` on `TableRow`), and
+          anything that must stay clickable through it needs `relative z-10` —
+          the license button has it.
+
           A player with no license yet — mid-handshake, or the rare account
-          that reports none — is not clickable and shows no license line: the
-          profile is keyed on license, so there is nothing to link to. It still
+          that reports none — gets NO OVERLAY and no license line: the profile
+          is keyed on license, so `/players/` + nothing is a 404 and covering
+          the whole row in one would turn a broken link into an unmissable
+          one. The name renders as plain text and the row is inert. It still
           renders as a row, because "who is connecting right now" is exactly
           what an admin watching a join wants to see.
         */}
@@ -198,6 +227,7 @@ export function PlayerRowView({
             href={`/players/${encodeURIComponent(p.license)}`}
             className={cn(
               'text-sm underline-offset-4 transition-colors hover:text-primary hover:underline',
+              'after:absolute after:inset-0 after:content-[""]',
               dim ? 'text-muted-foreground' : 'text-foreground',
             )}
           >
