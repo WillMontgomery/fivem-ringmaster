@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 
 import { AppShell } from '@/components/AppShell'
 import { ModerationLog, type KickRow } from '@/components/ModerationLog'
+import { PageLoading } from '@/components/PageLoading'
 import * as audit from '@/lib/audit'
 import * as bans from '@/lib/bans'
 import { can } from '@/lib/grants'
@@ -28,10 +30,24 @@ export default async function ModerationPage() {
   const admin = await currentAdmin()
   if (!admin) redirect('/login')
 
+  return (
+    <AppShell
+      active="/moderation"
+      user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
+    >
+      <Suspense fallback={<PageLoading />}>
+        <Body license={admin.license} />
+      </Suspense>
+    </AppShell>
+  )
+}
+
+/** The three reads, below the boundary. See `PageLoading` for why it is split. */
+async function Body({ license }: { license: string | null }) {
   const [rows, allBans, canBan] = await Promise.all([
     audit.recent(200),
     bans.all(),
-    can(admin.license, 'ban'),
+    can(license, 'ban'),
   ])
 
   const now = Date.now()
@@ -54,28 +70,23 @@ export default async function ModerationPage() {
   const active = allBans.filter((b) => bans.isActive(b, now))
 
   return (
-    <AppShell
-      active="/moderation"
-      user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
-    >
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-5">
-          <h1 className="text-2xl font-semibold tracking-tight">Kick &amp; ban</h1>
-          <p className="text-sm text-muted-foreground">
-            What moderation has done recently. To act on someone, open their
-            profile — the live board and search both link straight to it.
-          </p>
-        </div>
-
-        {!canBan && (
-          <p className="mb-4 rounded-md border border-info/30 bg-info/5 px-4 py-3 text-sm text-info">
-            You can see this record but not act on it — lifting a ban needs the{' '}
-            <code className="font-mono">ban</code> scope.
-          </p>
-        )}
-
-        <ModerationLog kicks={kicks} bans={active} canBan={canBan} />
+    <div className="mx-auto max-w-5xl">
+      <div className="mb-5">
+        <h1 className="text-2xl font-semibold tracking-tight">Kick &amp; ban</h1>
+        <p className="text-sm text-muted-foreground">
+          What moderation has done recently. To act on someone, open their
+          profile — the live board and search both link straight to it.
+        </p>
       </div>
-    </AppShell>
+
+      {!canBan && (
+        <p className="mb-4 rounded-md border border-info/30 bg-info/5 px-4 py-3 text-sm text-info">
+          You can see this record but not act on it — lifting a ban needs the{' '}
+          <code className="font-mono">ban</code> scope.
+        </p>
+      )}
+
+      <ModerationLog kicks={kicks} bans={active} canBan={canBan} />
+    </div>
   )
 }

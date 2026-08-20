@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 
 import { AnticheatBoard } from '@/components/AnticheatBoard'
 import { AppShell } from '@/components/AppShell'
+import { PageLoading } from '@/components/PageLoading'
 import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
 
@@ -38,18 +40,25 @@ export default async function AnticheatPage() {
         live: true,
       }}
     >
-      <div className="mx-auto max-w-4xl">
-        <div className="mb-5">
-          <h1 className="text-2xl font-semibold tracking-tight">Anticheat</h1>
-          <p className="text-sm text-muted-foreground">
-            Every hit is checked against what the server believes. What it
-            catches, what happens next, why there is less to catch than you
-            might expect — and, importantly, what it cannot see at all.
-          </p>
-        </div>
+      {/*
+        Same as the live board: `liveView` is an in-memory read, so this
+        resolves in the same tick and the bar never gets committed. The boundary
+        is here so every page has one. See `PageLoading`.
+      */}
+      <Suspense fallback={<PageLoading />}>
+        <div className="mx-auto max-w-4xl">
+          <div className="mb-5">
+            <h1 className="text-2xl font-semibold tracking-tight">Anticheat</h1>
+            <p className="text-sm text-muted-foreground">
+              Every hit is checked against what the server believes. What it
+              catches, what happens next, why there is less to catch than you
+              might expect — and, importantly, what it cannot see at all.
+            </p>
+          </div>
 
-        <AnticheatBoard config={view.anticheat ?? null} />
-      </div>
+          <AnticheatBoard config={view.anticheat ?? null} />
+        </div>
+      </Suspense>
     </AppShell>
   )
 }

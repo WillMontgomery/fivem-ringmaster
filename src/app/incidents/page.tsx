@@ -1,8 +1,10 @@
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 
 import { AppShell } from '@/components/AppShell'
 import { IncidentQueue } from '@/components/IncidentQueue'
-import { CATEGORY_LABEL, VERDICT_LABEL, all, queue } from '@/lib/incidents'
+import { PageLoading } from '@/components/PageLoading'
+import { CATEGORY_LABEL, VERDICT_LABEL, all, queue, type Incident } from '@/lib/incidents'
 import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
 
@@ -22,7 +24,14 @@ export default async function IncidentsPage() {
   const now = Date.now()
   const view = liveView(now)
 
-  const [pending, history] = await Promise.all([queue(), all()])
+  /**
+   * THE PENDING READ STAYS ABOVE THE BOUNDARY, and only this one, because its
+   * count is the sidebar's incidents badge — shell state, not body state.
+   * Pushing it down would mean either a shell that waits for the body anyway or
+   * dropping the override and making `AppShell` repeat the same scan. The
+   * history read is the slower half and the one worth showing a bar for.
+   */
+  const pending = await queue()
 
   return (
     <AppShell
@@ -36,13 +45,24 @@ export default async function IncidentsPage() {
         live: true,
       }}
     >
-      <IncidentQueue
-        pending={pending}
-        history={history}
-        now={now}
-        categoryLabel={CATEGORY_LABEL}
-        verdictLabel={VERDICT_LABEL}
-      />
+      <Suspense fallback={<PageLoading />}>
+        <Body pending={pending} now={now} />
+      </Suspense>
     </AppShell>
+  )
+}
+
+/** The history read, below the boundary. See `PageLoading` for the split. */
+async function Body({ pending, now }: { pending: Incident[]; now: number }) {
+  const history = await all()
+
+  return (
+    <IncidentQueue
+      pending={pending}
+      history={history}
+      now={now}
+      categoryLabel={CATEGORY_LABEL}
+      verdictLabel={VERDICT_LABEL}
+    />
   )
 }

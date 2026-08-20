@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 
 import { AppShell } from '@/components/AppShell'
 import { MaintenancePanel } from '@/components/MaintenancePanel'
+import { PageLoading } from '@/components/PageLoading'
 import { can } from '@/lib/grants'
 import * as maint from '@/lib/maintenance'
 import { ensureDriver } from '@/lib/maintenanceDriver'
@@ -25,10 +27,15 @@ export default async function MaintenancePage() {
   ensureDriver()
 
   const now = Date.now()
-  const [w, canRun] = await Promise.all([
-    maint.current(),
-    can(admin.license, 'process'),
-  ])
+
+  /**
+   * THE WINDOW IS READ HERE AND THE SCOPE CHECK IS NOT, because the window
+   * decides the sidebar's maintenance badge — shell state — and the scope check
+   * only decides whether the panel's buttons are live. So the badge is right
+   * from the first paint and the grant lookup happens under the boundary. See
+   * `PageLoading`.
+   */
+  const w = await maint.current()
   const view = liveView(now)
 
   /**
@@ -74,35 +81,76 @@ export default async function MaintenancePage() {
         live: true,
       }}
     >
-      <div className="mx-auto max-w-4xl">
-        <div className="mb-5">
-          <h1 className="text-2xl font-semibold tracking-tight">Maintenance</h1>
-          <p className="text-sm text-muted-foreground">
-            Take the server down gently: stop new players joining, let the
-            running matches finish, then deploy the latest code and restart.
-          </p>
-        </div>
-
-        <MaintenancePanel
-          initial={w}
-          initialPlayers={view.counts.connected}
-          canRun={canRun}
-          initialDeployedRef={deployedRef}
-          initialRefUpdate={refUpdate}
-          initialBehindMain={behindMain}
-          initialUpdateTarget={updateTarget}
-          /*
-            THE LIVE FEED AS THE SERVER SEES IT, so the completion gate has an
-            answer on first paint. Without it a reload straight after a
-            successful deploy shows "waiting for the server" for the two seconds
-            until the first poll lands — the page claiming to be waiting on a
-            server it is already hearing from. In-memory reads, already taken
-            above for the player count.
-          */
-          initialBootEpoch={view.bootEpoch}
-          initialLastPushAt={view.lastPushAt}
+      <Suspense fallback={<PageLoading />}>
+        <Body
+          w={w}
+          license={admin.license}
+          players={view.counts.connected}
+          deployedRef={deployedRef}
+          refUpdate={refUpdate}
+          behindMain={behindMain}
+          updateTarget={updateTarget}
+          bootEpoch={view.bootEpoch}
+          lastPushAt={view.lastPushAt}
         />
-      </div>
+      </Suspense>
     </AppShell>
+  )
+}
+
+/** The grant lookup, below the boundary. See `PageLoading` for the split. */
+async function Body({
+  w,
+  license,
+  players,
+  deployedRef,
+  refUpdate,
+  behindMain,
+  updateTarget,
+  bootEpoch,
+  lastPushAt,
+}: {
+  w: Awaited<ReturnType<typeof maint.current>>
+  license: string | null
+  players: number
+  deployedRef: string | null
+  refUpdate: ReturnType<typeof hostView>['refUpdate']
+  behindMain: number | null
+  updateTarget: ReturnType<typeof hostView>['updateTarget']
+  bootEpoch: string | null
+  lastPushAt: number | null
+}) {
+  const canRun = await can(license, 'process')
+
+  return (
+    <div className="mx-auto max-w-4xl">
+      <div className="mb-5">
+        <h1 className="text-2xl font-semibold tracking-tight">Maintenance</h1>
+        <p className="text-sm text-muted-foreground">
+          Take the server down gently: stop new players joining, let the running
+          matches finish, then deploy the latest code and restart.
+        </p>
+      </div>
+
+      <MaintenancePanel
+        initial={w}
+        initialPlayers={players}
+        canRun={canRun}
+        initialDeployedRef={deployedRef}
+        initialRefUpdate={refUpdate}
+        initialBehindMain={behindMain}
+        initialUpdateTarget={updateTarget}
+        /*
+          THE LIVE FEED AS THE SERVER SEES IT, so the completion gate has an
+          answer on first paint. Without it a reload straight after a
+          successful deploy shows "waiting for the server" for the two seconds
+          until the first poll lands — the page claiming to be waiting on a
+          server it is already hearing from. In-memory reads, already taken
+          above for the player count.
+        */
+        initialBootEpoch={bootEpoch}
+        initialLastPushAt={lastPushAt}
+      />
+    </div>
   )
 }

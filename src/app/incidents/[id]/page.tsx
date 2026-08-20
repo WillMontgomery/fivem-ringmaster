@@ -1,7 +1,9 @@
 import { notFound, redirect } from 'next/navigation'
+import { Suspense } from 'react'
 
 import { AppShell } from '@/components/AppShell'
 import { IncidentDetail } from '@/components/IncidentDetail'
+import { PageLoading } from '@/components/PageLoading'
 import { activeBanFor } from '@/lib/bans'
 import { can } from '@/lib/grants'
 import {
@@ -10,6 +12,7 @@ import {
   VERDICT_LABEL,
   get,
   queue,
+  type Incident,
 } from '@/lib/incidents'
 import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
@@ -35,34 +38,25 @@ export default async function IncidentPage({
   const now = Date.now()
   const view = liveView(now)
 
-  const [incident, canResolve, pending] = await Promise.all([
-    get(id),
-    // Resolving an incident is a moderation decision, so it takes the same
-    // scope as acting on a player. Reading one does not.
-    can(admin.license, 'ban'),
-    queue(),
-  ])
+  /**
+   * TWO READS STAY ABOVE THE BOUNDARY, for two different reasons.
+   *
+   * `queue()` because its length is the sidebar's incidents badge, and the
+   * shell cannot be drawn without it.
+   *
+   * `get()` because of `notFound()` below. Thrown from under a Suspense
+   * boundary it would fire after the shell had already been streamed, and a
+   * response whose headers have gone cannot be given a 404 status — a dead
+   * incident link would answer 200 with a not-found page drawn into it. These
+   * URLs get pasted into Discord and outlive the incidents they name, so that
+   * status is worth more than moving one read under the bar.
+   *
+   * The scope check and the ban lookup have no such constraint and do sit
+   * below it — see `PageLoading`.
+   */
+  const [pending, incident] = await Promise.all([queue(), get(id)])
 
   if (!incident) notFound()
-
-  /**
-   * WHICH VERDICTS ARE EVEN POSSIBLE, decided here rather than in the browser.
-   *
-   * Both facts are already on this box: the live roster answers "are they still
-   * in the server", and `activeBanFor` — which goes through `bans.isActive`, the
-   * one place that decides what banned means — answers "are they already
-   * banned". Sending the raw ban row to the client and letting it work out
-   * whether the ban is in force would be a second implementation of that rule,
-   * and the profile page has already been bitten once by a chip that counted
-   * lifted and served bans as active.
-   *
-   * READ AFTER `get`, not in the Promise.all above, because it needs the
-   * subject's license out of the incident.
-   */
-  const subjectOnline = view.players.some(
-    (p) => p.license === incident.subjectLicense,
-  )
-  const subjectBanned = (await activeBanFor(incident.subjectLicense)) !== null
 
   return (
     <AppShell
@@ -76,15 +70,60 @@ export default async function IncidentPage({
         live: true,
       }}
     >
-      <IncidentDetail
-        incident={incident}
-        canResolve={canResolve}
-        subjectOnline={subjectOnline}
-        subjectBanned={subjectBanned}
-        categoryLabel={CATEGORY_LABEL}
-        kindLabel={KIND_LABEL}
-        verdictLabel={VERDICT_LABEL}
-      />
+      <Suspense fallback={<PageLoading />}>
+        <Body incident={incident} license={admin.license} players={view.players} />
+      </Suspense>
     </AppShell>
+  )
+}
+
+async function Body({
+  incident,
+  license,
+  players,
+}: {
+  incident: Incident
+  license: string | null
+  /** The live roster, narrowed to the one field the online check reads. */
+  players: { license: string | null }[]
+}) {
+  /**
+   * WHICH VERDICTS ARE EVEN POSSIBLE, decided here rather than in the browser.
+   *
+   * Both facts are already on this box: the live roster answers "are they still
+   * in the server", and `activeBanFor` — which goes through `bans.isActive`, the
+   * one place that decides what banned means — answers "are they already
+   * banned". Sending the raw ban row to the client and letting it work out
+   * whether the ban is in force would be a second implementation of that rule,
+   * and the profile page has already been bitten once by a chip that counted
+   * lifted and served bans as active.
+   *
+   * `activeBanFor` needs the subject's license, which used to mean waiting for
+   * `get` before it could start. The incident arrives here already resolved, so
+   * it now runs alongside the scope check instead — the same two reads, one
+   * round trip. (The scope check: resolving an incident is a moderation
+   * decision and takes the same scope as acting on a player. Reading one does
+   * not.)
+   */
+  const [canResolve, activeBan] = await Promise.all([
+    can(license, 'ban'),
+    activeBanFor(incident.subjectLicense),
+  ])
+
+  const subjectOnline = players.some(
+    (p) => p.license === incident.subjectLicense,
+  )
+  const subjectBanned = activeBan !== null
+
+  return (
+    <IncidentDetail
+      incident={incident}
+      canResolve={canResolve}
+      subjectOnline={subjectOnline}
+      subjectBanned={subjectBanned}
+      categoryLabel={CATEGORY_LABEL}
+      kindLabel={KIND_LABEL}
+      verdictLabel={VERDICT_LABEL}
+    />
   )
 }

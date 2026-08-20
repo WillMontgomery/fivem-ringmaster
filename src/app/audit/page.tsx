@@ -1,8 +1,10 @@
 import { CircleSlash } from 'lucide-react'
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 
 import { AppShell } from '@/components/AppShell'
 import { AuditList } from '@/components/AuditList'
+import { PageLoading } from '@/components/PageLoading'
 import * as audit from '@/lib/audit'
 import { currentAdmin } from '@/lib/session'
 
@@ -23,30 +25,39 @@ export default async function AuditPage() {
   const admin = await currentAdmin()
   if (!admin) redirect('/login')
 
-  const rows = await audit.recent(100)
-
   return (
     <AppShell
       active="/audit"
       user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
     >
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-5">
-          <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
-          <p className="text-sm text-muted-foreground">
-            Every action any admin took. Anything marked{' '}
-            <span className="text-danger">failed</span> did not happen.
-          </p>
-        </div>
+      <Suspense fallback={<PageLoading />}>
+        <Body />
+      </Suspense>
+    </AppShell>
+  )
+}
 
-        <AuditList rows={rows} />
+/** The table read, below the boundary. See `PageLoading` for why it is split. */
+async function Body() {
+  const rows = await audit.recent(100)
 
-        <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground/60">
-          <CircleSlash className="size-3" />
-          The game server cannot read this table. Its role has no access to it
-          at all.
+  return (
+    <div className="mx-auto max-w-5xl">
+      <div className="mb-5">
+        <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
+        <p className="text-sm text-muted-foreground">
+          Every action any admin took. Anything marked{' '}
+          <span className="text-danger">failed</span> did not happen.
         </p>
       </div>
-    </AppShell>
+
+      <AuditList rows={rows} />
+
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground/60">
+        <CircleSlash className="size-3" />
+        The game server cannot read this table. Its role has no access to it at
+        all.
+      </p>
+    </div>
   )
 }

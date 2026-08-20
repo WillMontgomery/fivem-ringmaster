@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 
 import { AppShell } from '@/components/AppShell'
 import { ConfigBoard } from '@/components/ConfigBoard'
+import { PageLoading } from '@/components/PageLoading'
 import { currentAdmin } from '@/lib/session'
 import { isParkedOffMain, readConfig, sshConfigured, type HostConfig } from '@/lib/ssh'
 import { ensurePolling, hostView } from '@/lib/telemetry'
@@ -38,6 +40,24 @@ export default async function Page() {
   const admin = await currentAdmin()
   if (!admin) redirect('/login')
 
+  return (
+    <AppShell active="/config" user={{ name: admin.name, avatarUrl: admin.avatarUrl }}>
+      <Suspense fallback={<PageLoading />}>
+        <Body />
+      </Suspense>
+    </AppShell>
+  )
+}
+
+/**
+ * The SSH read, below the boundary. See `PageLoading` for why it is split.
+ *
+ * THE PAGE THIS MATTERS MOST TO. Everything else here waits on DynamoDB in the
+ * same region; this one waits on an SSH round trip to the game box, which is
+ * the slowest thing the console does and the one a reader is most likely to
+ * think has hung.
+ */
+async function Body() {
   // Idempotent, and no-ops when the SSH channel is unconfigured. The shell
   // starts it too; this is here so the page is right when rendered first.
   ensurePolling()
@@ -81,9 +101,5 @@ export default async function Page() {
     }
   }
 
-  return (
-    <AppShell active="/config" user={{ name: admin.name, avatarUrl: admin.avatarUrl }}>
-      <ConfigBoard deployedRef={deployedRef} report={report} error={error} />
-    </AppShell>
-  )
+  return <ConfigBoard deployedRef={deployedRef} report={report} error={error} />
 }

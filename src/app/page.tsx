@@ -1,7 +1,9 @@
 import { redirect } from 'next/navigation'
+import { Suspense } from 'react'
 
 import { AppShell } from '@/components/AppShell'
 import { LiveBoard } from '@/components/LiveBoard'
+import { PageLoading } from '@/components/PageLoading'
 import { currentAdmin } from '@/lib/session'
 import { liveView } from '@/lib/state'
 
@@ -33,16 +35,28 @@ export default async function LivePlayersPage() {
       user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
       feed={{ lastPushAt: view.lastPushAt, bootEpoch: view.bootEpoch, now, live: true }}
     >
-      <div>
-        <div className="mb-5">
-          <h1 className="text-2xl font-semibold tracking-tight">Live players</h1>
-          <p className="text-sm text-muted-foreground">
-            Everyone on the server right now, by match and squad.
-          </p>
-        </div>
+      {/*
+        THE BAR WILL NOT APPEAR ON THIS PAGE, and should not. `liveView` reads
+        the snapshot the game server has already pushed into this process — no
+        await, nothing to wait for — so the body resolves in the same tick and
+        the fallback is never committed. The boundary is here for uniformity and
+        so it starts working on its own the day this page needs a real read. See
+        `PageLoading`.
+      */}
+      <Suspense fallback={<PageLoading />}>
+        <div>
+          <div className="mb-5">
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Live players
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Everyone on the server right now, by match and squad.
+            </p>
+          </div>
 
-        <LiveBoard view={view} now={now} live />
-      </div>
+          <LiveBoard view={view} now={now} live />
+        </div>
+      </Suspense>
     </AppShell>
   )
 }

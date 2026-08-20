@@ -522,4 +522,28 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+
+  /*
+   * THE ONE ANIMATION THAT CANNOT SIMPLY STOP, because stopping it deletes it.
+   *
+   * The rule above collapses every animation to a single 0.01ms pass, which
+   * for an ordinary entrance means "it is just there already" — correct. The
+   * indeterminate progress band is different: its keyframe ENDS off the right
+   * of the track, so one instant pass leaves it parked outside the overflow
+   * clip. The loading indicator would be invisible for exactly the readers who
+   * asked for less motion, which is a worse outcome than the motion.
+   *
+   * So it is pinned instead of frozen. `!important` on a declaration beats a
+   * running animation, so this holds the band still without needing to unset
+   * the shorthand the blanket rule has already forced.
+   *
+   * PINNED FLOATING IN THE MIDDLE, not filled from the left. A band detached
+   * from both ends cannot be misread as a fill level; a static bar anchored at
+   * the left edge would look like a percentage, which is the exact claim this
+   * component exists to avoid making.
+   */
+  [data-slot="progress-indicator"][data-indeterminate] {
+    transform: translateX(100%) !important;
+    opacity: 0.85;
+  }
 }
