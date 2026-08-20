@@ -55,7 +55,6 @@ import { ago, humanDuration } from '@/lib/duration'
 import { filedByAPlayer, incidentChips, verdictTone } from '@/lib/incidentChip'
 import { labelFor } from '@/lib/labels'
 import type {
-  AdminRole,
   DiscordNameChange,
   Profile,
   ProfileActionTaken,
@@ -967,8 +966,10 @@ function IncidentList({
  * additional table". An admin with nothing in it gets the house empty state, the
  * same one four other panels on this page use, and not a sentence of its own.
  *
- * It deliberately does NOT render on `admin === 'unknown'` with nothing in it.
- * We do not know they are an admin, and there is nothing to show.
+ * WHICH MEANS AN ADMIN'S PANEL DISAPPEARS WHILE DISCORD IS DOWN, if they have
+ * never acted. `admin` is false for "Discord did not answer" as well as for "not
+ * an admin" — see AdminChip — so an empty panel is not reachable without a live
+ * answer. A panel with rows in it is unaffected: those come from the audit log.
  *
  * ═══ THE VERDICT CHIP, AND WHEN IT WOULD BE A REPEAT ═══
  *
@@ -1662,8 +1663,7 @@ function BannedChip({
 }
 
 /**
- * The chip that says this person is an admin — and the one that says we asked
- * and did not find out.
+ * The chip that says this person is an admin. There is no second chip.
  *
  * ═══ WHAT "ADMIN" MEANS HERE, AND IT IS NOT THE GRANTS TABLE ═══
  *
@@ -1675,79 +1675,83 @@ function BannedChip({
  * console with no chip, and this repository has shipped exactly that shape of
  * defect before.
  *
- * ═══ TWO CHIPS, BECAUSE SILENCE IS THE FAILURE MODE ═══
+ * ═══ ONE CHIP, AND ITS ABSENCE MEANS FOUR THINGS ═══
  *
- * A red chip that quietly disappears because Discord was slow is worse than no
- * chip: absence is indistinguishable from "we asked and the answer was no", and
- * one of those is a claim about a person. So `unknown` — a timeout, a 429, a
- * 5xx, a guild the bot cannot see — wears a quiet chip with a question mark on
- * it instead of vanishing.
+ * There was a second chip. A quiet `ADMIN?` covered the case where Discord did
+ * not answer — a timeout, a 429, a 5xx, a guild the bot cannot see — so that a
+ * red ADMIN could never vanish merely because Discord was slow. The owner has
+ * ruled it out: "Change ADMIN? to just show nothing."
  *
- * NEITHER CHIP CARRIES A WORD OF EXPLANATION, on the owner's standing
- * instruction that nothing may write copy into a page on its own initiative.
- * `ADMIN` is their wording. `ADMIN?` is a one-word state label rather than a
- * sentence, and it has no tooltip, no hover card and no `sr-only` gloss — it is
- * flagged for the owner rather than explained at them.
+ * So `admin` is a plain boolean now — see lib/profile.ts, where the four-state
+ * type used to be — and FALSE COVERS FOUR SITUATIONS THIS PAGE CANNOT TELL
+ * APART: Discord said no, Discord did not answer, there is no bot token, and the
+ * player has no Discord account at all.
  *
- * `unchecked` RENDERS NOTHING AT ALL, and that is the distinction lib/discordRole
- * already draws for the audit log: no bot token is a CONFIGURATION STATE, true of
- * every profile forever until somebody pastes one, not an event. A grey chip on
- * every player in the console for the rest of time is furniture. `no` renders
- * nothing either — Discord answered, and most people are not admins.
+ * WHAT AN OPERATOR SEES WHILE DISCORD IS DOWN, written here because this is
+ * where somebody will come looking: a genuine admin's profile is identical to a
+ * non-admin's. No chip, nothing marking the gap, and no audit row either —
+ * opening a profile is a READ, and reads are not events. The WRITE gate still
+ * distinguishes all three answers and still records them; only this chip does
+ * not. Nor does the page wait longer to be sure: the role check still races the
+ * avatar fetch under one budget and never retries.
+ *
+ * IT CARRIES NO WORD OF EXPLANATION, on the owner's standing instruction that
+ * nothing may write copy into a page on its own initiative. `ADMIN` is their
+ * wording, and there is no tooltip, no hover card and no `sr-only` gloss.
  *
  * THE RED IS THE SAME RED AS THE BAN CHIP — the `danger` token, at the same
  * tenth-opacity fill and thirtieth-opacity ring — rather than a new colour mixed
  * for this chip. One accent, already measured, in both themes: 4.61:1 on its own
  * fill in the light theme and 5.26:1 in the dark.
  */
-function AdminChip({ role }: { role: AdminRole }) {
-  if (role === 'yes') {
-    return (
-      <Badge className="gap-1 border-0 bg-danger/10 text-xs font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
-        <Shield className="size-3" />
-        Admin
-      </Badge>
-    )
-  }
-
-  if (role !== 'unknown') return null
+function AdminChip({ admin }: { admin: boolean }) {
+  if (!admin) return null
 
   return (
-    <Badge
-      variant="outline"
-      className="border-0 bg-muted/40 text-xs font-semibold uppercase tracking-wider text-muted-foreground ring-1 ring-inset ring-border"
-    >
-      Admin?
+    <Badge className="gap-1 border-0 bg-danger/10 text-xs font-semibold uppercase tracking-wider text-danger ring-1 ring-inset ring-danger/30">
+      <Shield className="size-3" />
+      Admin
     </Badge>
   )
 }
 
 /**
- * One entry in the "Other names" list.
+ * WHAT A NAME'S TIMESTAMP IS, WHICH IS NOT THE SAME QUESTION FOR EVERY NAME.
  *
- * NOT `FormerNameItem`, AND THE DIFFERENCE IS THE `null`. That type says "a name
- * that was replaced" and its `at` is never absent. This list holds one entry that
- * has NOT been replaced — the Discord display name they are using right now,
+ * NOT `FormerNameItem`, AND THE DIFFERENCE IS THIS UNION. That type says "a name
+ * that was replaced" and its `at` is never absent. This list also holds a name
+ * that has NOT been replaced — the Discord display name they are using right now,
  * which is an "other name" for somebody whose page is headed by their in-game
- * name — and a shape that cannot express "still current" would have forced a
- * date onto it.
+ * name — and that one has a BEGINNING rather than an end.
+ *
+ * TWO SENTENCE SHAPES IN ONE LIST, DELIBERATELY, and both are the owner's words:
+ *
+ *   `until`       "known as X until Y"      — a past name, and Y is its end.
+ *   `first-seen`  "First seen as X on Y"    — the current display name, and Y is
+ *                                             its start.
+ *
+ * `null` MEANS NO CARD. Not every name has an honest timestamp of either kind,
+ * and a name with none renders as plain text rather than borrowing the other
+ * sentence or getting an invented one.
  */
+type OtherNameWhen =
+  | { kind: 'until'; at: number }
+  | { kind: 'first-seen'; at: number }
+  | null
+
+/** One entry in the "Other names" list. */
 type OtherName = {
   /** The name. Never empty. */
   name: string
   /**
-   * When it stopped being current — or NULL when it has not stopped.
+   * The instant behind this name, and which end of it that instant is.
    *
-   * NEITHER VALUE IS THE MOMENT THE PLAYER RENAMED, and nothing in this system
-   * knows that moment. Both are honest upper bounds; `OtherNameCard`'s comment
-   * works through which is which, and the page states none of it — the reader
-   * gets "known as X until Y", which is the owner's wording and all of it.
-   *
-   * NULL MEANS NO CARD. There is no Y, and inventing a sentence to stand in for
-   * one is exactly what the owner has ruled out.
+   * NONE OF THESE IS THE MOMENT THE PLAYER RENAMED, and nothing in this system
+   * knows that moment. They are honest bounds; `OtherNameCard`'s comment works
+   * through which is which, and the page states none of it.
    */
-  until: number | null
-  /** Which stream it came from. Decides what the card's second line says. */
+  when: OtherNameWhen
+  /** Which stream it came from. */
   from: 'game' | 'discord'
 }
 
@@ -1755,35 +1759,42 @@ type OtherName = {
  * One name, with its own hover card. The owner asked for exactly this: "Each
  * name should have its own hover card which reads 'known as X until Y'".
  *
- * THE CARD IS THOSE WORDS AND NOTHING ELSE. It has no heading repeating the name,
- * no note about which instant Y is, and no explanation of where the name came
- * from — the owner's standing rule is that nothing writes copy into a page on its
- * own initiative, and every one of those sentences would have been mine.
+ * TWO SENTENCES, BOTH THE OWNER'S, ONE COMPONENT. A past name gets their first
+ * wording. The current display name has no end, and rather than let it go
+ * uncarded they supplied a second: "How about we word it as 'First seen a X on
+ * Y' (date)" — read as "First seen as X on Y". Their capitalisation is kept as
+ * written; normalising the two to match would be editing their copy.
  *
- * WHICH MEANS THE FOOTNOTE Y DESERVES IS IN THIS COMMENT INSTEAD. A genuine
- * "until", meaning the instant the player renamed, DOES NOT EXIST in either
- * stream and cannot be derived from one:
+ * THE CARD IS THOSE WORDS AND NOTHING ELSE. No heading repeating the name, no
+ * note about which instant Y is, no explanation of where the name came from —
+ * the owner's standing rule is that nothing writes copy into a page on its own
+ * initiative, and every one of those sentences would have been mine.
  *
- *   in-game   `names[].lastSeen` — the last time the GAME reported this license
- *             under that name. Real, and an upper bound: the rename happened
- *             somewhere between it and the next sighting.
- *   Discord   `DiscordNameChange.at` — when RINGMASTER first noticed the answer
- *             had moved, which is why lib/profile.ts calls the field `at` rather
- *             than `changedAt`. Discord only ever returns the present, so on a
- *             player nobody opens this can be days late.
+ * WHICH MEANS THE FOOTNOTE Y DESERVES IS IN THIS COMMENT INSTEAD. None of these
+ * instants is the moment the player renamed; nothing in this system knows that
+ * moment. All three are honest bounds:
  *
- * Both are honest upper bounds rather than guesses, which is what makes "until Y"
- * sayable at all. Nothing here invents a rename date, and nothing here explains
- * the distinction at the reader — it is reported to the owner instead.
+ *   until, in-game   `names[].lastSeen` — the last time the GAME reported this
+ *                    license under that name. The rename happened somewhere
+ *                    between it and the next sighting.
+ *   until, Discord   `DiscordNameChange.at` — when RINGMASTER first noticed the
+ *                    answer had moved, which is why lib/profile.ts calls the
+ *                    field `at` rather than `changedAt`. Discord only ever
+ *                    returns the present, so on a player nobody opens this can
+ *                    be days late.
+ *   first seen       the `at` of the change that ARRIVED at the current display
+ *                    name — the same field, the same lateness, read from the
+ *                    other side. "First seen" is literally true of it in a way
+ *                    "since" would not have been, which is the owner's wording
+ *                    doing better than a bare date would.
  *
- * A NAME WITH NO `until` NEVER REACHES THIS COMPONENT. See the row that builds
- * the list: the current Discord display name has not stopped being current, so
- * there is no Y for it and no wording from the owner for what to say instead. It
- * renders as plain text with no card rather than with an invented sentence.
+ * A NAME WITH NO INSTANT NEVER REACHES THIS COMPONENT. See `otherNames`: a
+ * display name we have never watched them change INTO has no first sighting to
+ * report, and it renders as plain text rather than with a borrowed sentence.
  *
  * THE DOTTED UNDERLINE IS THE AFFORDANCE, not decoration — the same rule the ban
- * chip and `IdLabel` follow. In a comma-separated list of plain words there would
- * otherwise be nothing at all saying any of them could be pointed at.
+ * chip follows. In a comma-separated list of plain words there would otherwise be
+ * nothing at all saying any of them could be pointed at.
  *
  * AND THE SENTENCE IS IN THE DOM TWICE, in one component, so neither copy can be
  * deleted without seeing the other — docs/hover-text.md rule 1. Base UI's popup
@@ -1792,7 +1803,19 @@ type OtherName = {
  * copy uses the UTC instant because it is the unambiguous one, and because
  * `LocalTime` renders an element rather than a string this could reuse.
  */
-function OtherNameCard({ item }: { item: OtherName & { until: number } }) {
+function OtherNameCard({
+  item,
+}: {
+  item: OtherName & { when: NonNullable<OtherNameWhen> }
+}) {
+  const { name, when } = item
+
+  // Built once and rendered twice — the popup takes the element, the sr-only
+  // copy takes the string. Splitting them is what keeps the two halves of rule 1
+  // from drifting into different sentences.
+  const words = when.kind === 'until' ? ['known as', 'until'] : ['First seen as', 'on']
+  const [lead = '', joiner = ''] = words
+
   return (
     <HoverCard>
       {/* `render` is not optional: `HoverCardTrigger` renders an `<a>` by
@@ -1803,16 +1826,48 @@ function OtherNameCard({ item }: { item: OtherName & { until: number } }) {
           <span className="cursor-help whitespace-nowrap underline decoration-dotted decoration-muted-foreground/50 underline-offset-4" />
         }
       >
-        {item.name}
+        {name}
         <span className="sr-only">
-          . known as {item.name} until {utcIso(item.until)}
+          . {lead} {name} {joiner} {utcIso(when.at)}
         </span>
       </HoverCardTrigger>
       <HoverCardContent side="top" align="start">
-        known as {item.name} until <LocalTime ms={item.until} />
+        {lead} {name} {joiner} <LocalTime ms={when.at} />
       </HoverCardContent>
     </HoverCard>
   )
+}
+
+/**
+ * WHEN RINGMASTER FIRST SAW THE DISPLAY NAME THEY ARE USING NOW, or null.
+ *
+ * READ OFF THE ARRIVAL RATHER THAN THE DEPARTURE. `formerNames` is a list of
+ * REPLACEMENTS, and each one records both ends: `from` is the name that ended
+ * and `to` is the name that started, both at the same instant `at`. Every other
+ * entry in this list reads `from`; this one reads `to`. The most recent
+ * `globalName` change whose `to` IS the current name is the moment we first saw
+ * it — the same field, the same class of timestamp, the same honest lateness.
+ *
+ * IT MATCHES ON `to`, NOT "the newest change". Taking the newest blindly would
+ * date the current name from an event that arrived at a DIFFERENT name — which
+ * happens the moment Discord answers with something we have not recorded yet, and
+ * would put a confident timestamp under the wrong word.
+ *
+ * NULL IS COMMON AND IS NOT A FAILURE. A player we have never watched rename has
+ * no arrival to point at, and `lib/players` deliberately does not write a change
+ * "from nothing" — the first sighting of an account is not a rename. There is
+ * nothing else on the record that dates the name specifically: `discord.firstSeen`
+ * is when the ACCOUNT was first recorded and `changedAt` moves when the @handle
+ * changes too, so neither is this. No card, rather than a plausible wrong one.
+ */
+function firstSeenAs(
+  displayName: string,
+  formerDiscord: DiscordNameChange[],
+): number | null {
+  // `former` is newest-first (lib/players unshifts), so the first match is the
+  // most recent arrival at this name — right for somebody who has used a name,
+  // left it, and come back to it.
+  return formerDiscord.find((c) => c.to === displayName)?.at ?? null
 }
 
 /**
@@ -1826,7 +1881,7 @@ function OtherNameCard({ item }: { item: OtherName & { until: number } }) {
  * been the same string appears in both streams, and two identical words in a
  * comma-separated list read as a rendering fault rather than as two sightings.
  * The first occurrence wins, which — given the order below — is the most recent
- * one, so the card on a surviving duplicate carries the later "until".
+ * one, so the card on a surviving duplicate carries the later instant.
  */
 function otherNames(
   currentGameName: string,
@@ -1840,23 +1895,35 @@ function otherNames(
     // `names` is newest first and index 0 is the `<h1>`; the tail is history.
     ...gameNames.slice(1).map((n) => ({
       name: n.name,
-      until: n.lastSeen,
+      when: { kind: 'until' as const, at: n.lastSeen },
       from: 'game' as const,
     })),
     ...formerDiscord.map((c) => ({
       name: c.from,
-      until: c.at,
+      when: { kind: 'until' as const, at: c.at },
       from: 'discord' as const,
     })),
-  ].sort((a, b) => (b.until ?? 0) - (a.until ?? 0))
+  ].sort((a, b) => b.when.at - a.when.at)
 
-  const all: OtherName[] =
+  // The one entry dated from its START. Null when we have never watched them
+  // arrive at this name — see `firstSeenAs`, and note `formerDiscord` is already
+  // filtered to display-name changes by the caller, so an @handle that happened
+  // to pass through the same string cannot date this one.
+  const arrived = displayName ? firstSeenAs(displayName, formerDiscord) : null
+
+  const current: OtherName[] =
     displayName && displayName !== currentGameName
-      ? [{ name: displayName, until: null, from: 'discord' }, ...past]
-      : past
+      ? [
+          {
+            name: displayName,
+            when: arrived === null ? null : { kind: 'first-seen', at: arrived },
+            from: 'discord',
+          },
+        ]
+      : []
 
   const seen = new Set<string>([currentGameName])
-  return all.filter((n) => {
+  return [...current, ...past].filter((n) => {
     if (n.name === '' || seen.has(n.name)) return false
     seen.add(n.name)
     return true
@@ -1981,19 +2048,18 @@ function IdentifiersPanel({
           <span className={ID_LABEL}>Other names</span>
           <div className="min-w-0 flex-1 text-xs text-foreground/90">
             {others.map((n, i) => (
-              <Fragment key={`${n.from}:${n.name}:${n.until ?? 'now'}`}>
+              <Fragment key={`${n.from}:${n.name}:${n.when?.at ?? 'undated'}`}>
                 {i > 0 && <span className="text-muted-foreground">, </span>}
                 {/*
-                  NO `until`, NO CARD. The current Discord display name has not
-                  stopped being current, so "known as X until Y" has no Y — and
-                  there is no owner wording for what a card should say instead.
-                  The NAME is data and is shown; the sentence would have been
-                  invention, so there is none. See OtherNameCard.
+                  NO INSTANT, NO CARD. Both of the owner's sentences name a date,
+                  and a name we can date neither end of has none to name. The NAME
+                  is data and is shown; the sentence would have been invention, so
+                  there is none. See `firstSeenAs` for when this happens.
                 */}
-                {n.until === null ? (
+                {n.when === null ? (
                   <span className="whitespace-nowrap">{n.name}</span>
                 ) : (
-                  <OtherNameCard item={{ ...n, until: n.until }} />
+                  <OtherNameCard item={{ ...n, when: n.when }} />
                 )}
               </Fragment>
             ))}
@@ -2418,13 +2484,13 @@ export function ProfileView({
   /*
    * ADMIN STATUS, WHICH ONLY EXISTS WHEN THERE IS A DISCORD ACCOUNT TO ASK ABOUT.
    *
-   * `absent` — no Discord id on the registry row — is `no` rather than `unknown`,
-   * and that is a real answer rather than a shrug: the owner's test for admin is
-   * holding a role in the Discord server, and somebody with no Discord account
-   * cannot hold one. Nothing was asked because there was nothing to ask.
+   * `absent` — no Discord id on the registry row — is FALSE, and that one is a
+   * real answer rather than a shrug: the owner's test for admin is holding a role
+   * in the Discord server, and somebody with no Discord account cannot hold one.
+   * Nothing was asked because there was nothing to ask. The other falses are less
+   * confident and indistinguishable from it; see AdminChip.
    */
-  const adminRole: AdminRole =
-    chromeState.status === 'ready' ? chromeState.chrome.admin : 'no'
+  const admin = chromeState.status === 'ready' && chromeState.chrome.admin
 
   // Decided once and used twice — the band is drawn by IdentityBanner and the
   // avatar's lift depends on there being one. See identityBand.
@@ -2488,8 +2554,8 @@ export function ProfileView({
               {/* "a chip should appear next to their online/offline chip that
                   says 'ADMIN' in red" — the owner, and this is that chip, in
                   that position. See AdminChip for what "admin" is tested
-                  against and for the second chip it can render instead. */}
-              <AdminChip role={adminRole} />
+                  against and for what its absence does and does not mean. */}
+              <AdminChip admin={admin} />
               {/*
                 THE "1 BAN" CHIP IS GONE, and it was worse than a redundant
                 count. The owner: "remove where it says 'x bans' at the top of
@@ -2935,7 +3001,7 @@ export function ProfileView({
         See ActionsTakenPanel for the one-row-per-act rule and for why the panel
         is absent on almost every profile.
       */}
-      {(p.actionsTaken.length > 0 || adminRole === 'yes') && (
+      {(p.actionsTaken.length > 0 || admin) && (
         <ActionsTakenPanel
           rows={p.actionsTaken}
           now={now}

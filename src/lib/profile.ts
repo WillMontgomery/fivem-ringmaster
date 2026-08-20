@@ -24,29 +24,35 @@ import type { AccentSurface } from './contrast'
 
 export type Provenance = 'live' | 'identity' | 'stats' | 'moderation'
 
-/**
- * Whether this account holds the Discord admin role, AND HOW SURE WE ARE.
+/*
+ * `AdminRole` USED TO BE HERE — a four-state union (`yes` / `no` / `unknown` /
+ * `unchecked`) carrying HOW SURE the console was that somebody holds the Discord
+ * admin role. It is gone, and `DiscordChrome.admin` is a boolean.
  *
- * FOUR STATES, NOT A BOOLEAN, and the two middle ones are the whole reason. The
- * admin test in this project is the Discord role — `lib/discordRole.ts`, the same
- * check that gates every write — and that check is a live HTTP call to somebody
- * else's API. A boolean would collapse "Discord said no" into "Discord did not
- * answer", which is the one collapse `RoleCheck` was written to prevent, and the
- * profile page would then hide a red ADMIN chip because a request timed out.
+ * WHY IT EXISTED. `unknown` — a timeout, a 429, a 5xx, a guild the bot cannot
+ * see — wore a quiet `ADMIN?` chip, so a red ADMIN could never vanish merely
+ * because Discord was slow. `unchecked` (no bot token) rendered nothing, being a
+ * configuration state rather than an event.
  *
- *   `yes`        Discord answered, and the role is held. The red chip.
- *   `no`         Discord answered, and it is not. No chip, and that is correct.
- *   `unknown`    We asked and did not learn: a timeout, a 429, a 5xx, a guild we
- *                cannot see. The page SAYS SO rather than rendering the `no`
- *                treatment on evidence it does not have.
- *   `unchecked`  There is no bot token, so this console cannot answer the
- *                question about ANYBODY. A configuration state rather than an
- *                event — the same distinction `NO_TOKEN_REASON` already draws in
- *                lib/discordRole.ts, and the reason that case writes no audit
- *                row. It renders nothing at all: an "unknown" chip on every
- *                profile forever is furniture, not a finding.
+ * WHY IT IS GONE. The owner: "Change ADMIN? to just show nothing". With that,
+ * three of the four states render identically and no reader anywhere can tell
+ * them apart — a four-valued type with a one-bit consumer is the dead-code shape
+ * this repo keeps shipping (`posSampleHz` with no readers, `left` with no
+ * writer). So it collapsed to the one bit that is actually read.
+ *
+ * WHAT DID NOT COLLAPSE. `RoleCheck` in lib/discordRole.ts still carries all
+ * three states and its `why`, because the WRITE gate genuinely distinguishes
+ * them: `revoked` denies and ends the session, `unresolved` fails open, and the
+ * two write different audit rows (`discord.revoked`, `discord.unresolved`). That
+ * distinction is real, tested by `check:discordrole`, and untouched. Only the
+ * page's view of it was ever four-valued.
+ *
+ * WHAT AN OPERATOR NOW SEES WHEN DISCORD IS DOWN, stated plainly because it is a
+ * real consequence and nothing else records it: a genuine admin's profile looks
+ * exactly like a non-admin's. No chip, no marker, and — unlike the write path —
+ * no audit row, because opening a profile is a read and reads are not events.
+ * The page does not wait longer to be sure; see `adminHoldsRole` in lib/discord.
  */
-export type AdminRole = 'yes' | 'no' | 'unknown' | 'unchecked'
 
 /**
  * One Discord name we watched get replaced.
@@ -142,7 +148,13 @@ export interface DiscordChrome {
   formerNames: DiscordNameChange[]
 
   /**
-   * Whether this account holds the Discord admin role. See {@link AdminRole}.
+   * TRUE ONLY WHEN DISCORD ANSWERED AND THE ADMIN ROLE IS HELD.
+   *
+   * FALSE IS FOUR DIFFERENT THINGS and this field cannot tell them apart, by
+   * decision rather than by accident: Discord said no, Discord did not answer,
+   * there is no bot token, or the account has no Discord id at all. See the note
+   * where `AdminRole` used to be, above, for what that costs and why the owner
+   * asked for it.
    *
    * IT RIDES ON THE CHROME BECAUSE IT IS THE SAME FACT FROM THE SAME PLACE, and
    * because of what that buys: the whole profile already waits behind one
@@ -154,9 +166,10 @@ export interface DiscordChrome {
    * IT COSTS NO EXTRA WALL TIME. `discordChromeFor` runs the role check in
    * PARALLEL with `GET /users/{id}` under the same budget, so the page's worst
    * case is the max of the two rather than their sum — unchanged from before this
-   * field existed.
+   * field existed, and unchanged by the collapse above. Rendering nothing did NOT
+   * become "wait longer to be sure".
    */
-  admin: AdminRole
+  admin: boolean
 }
 
 export interface ProfileIdentifier {

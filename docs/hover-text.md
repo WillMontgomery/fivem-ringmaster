@@ -94,18 +94,33 @@ been three throughout and the membership has not:
   its own affordance: `cursor-help` alone only pays out once the pointer is
   already there, so the word "Banned" carries a dotted underline.
 - **The names in "Other names"**, one card per name, are the newest and the one
-  that bends this rule rather than satisfying it. Each reads exactly `known as X
-  until Y` — one line, no heading, no second paragraph. **That is a tooltip's
-  shape in a card's component**, and it is deliberate: the owner asked for a
-  hover card by name ("Each name should have its own hover card which reads
-  'known as X until Y'"), and rule 8 forbids inventing the extra parts that would
-  have earned one. Its `sr-only` copy carries the same sentence with the UTC
-  instant, because `LocalTime` renders an element rather than a string.
+  that bends this rule rather than satisfying it. Each is one line, no heading, no
+  second paragraph. **That is a tooltip's shape in a card's component**, and it is
+  deliberate: the owner asked for a hover card by name ("Each name should have its
+  own hover card which reads 'known as X until Y'"), and rule 8 forbids inventing
+  the extra parts that would have earned one. Every `sr-only` copy carries the
+  same sentence with the UTC instant, because `LocalTime` renders an element
+  rather than a string.
 
-  **A name with no `Y` gets no card at all.** The current Discord display name
-  has not stopped being current; there is no honest "until" for it and no owner
-  wording for what to say instead, so the name renders as plain text with no
-  hover affordance. Do not fill that gap with a sentence — ask.
+  **Two sentences, both the owner's, in one list** — because past names have an
+  end and the current one has a start:
+
+  | name | card |
+  |---|---|
+  | any superseded name, game or Discord | `known as X until Y` |
+  | the current Discord display name | `First seen as X on Y` |
+
+  The second is verbatim from the owner ("How about we word it as 'First seen a X
+  on Y' (date)"), including its capital F. **Do not normalise the two to match** —
+  that is editing their copy, not formatting it. `Y` is the same class of
+  timestamp in both: the moment Ringmaster *noticed*, never the moment the player
+  renamed. That distinction lives in `OtherNameCard`'s comment and must not reach
+  the page.
+
+  **A name we can date neither end of still gets no card at all** — plain text, no
+  hover affordance. That is a player whose current display name we have never
+  watched them change *into*, so there is no first sighting to point at. Do not
+  fill that gap with a sentence, and do not borrow the other one — ask.
 
 **Do not add a fourth chip-shaped card without a visible affordance.** A chip
 that hides its own explanation until somebody happens to point at it is the

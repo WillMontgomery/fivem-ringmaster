@@ -1,6 +1,5 @@
 import type { Actor, AuditHandle, AuditOutcome, AuditRow } from './audit'
 import { env } from './env'
-import type { AdminRole } from './profile'
 import { REVOKED_MESSAGE } from './revocation'
 
 /**
@@ -230,7 +229,7 @@ export async function checkAdminRole(
 }
 
 /**
- * The same verdict, as the thing a PAGE can draw. See {@link AdminRole}.
+ * The one bit a PAGE is allowed to draw from this verdict.
  *
  * ═══ WHY THE READ PATH GOES THROUGH THIS FILE AND NOT A SECOND CHECK ═══
  *
@@ -239,30 +238,34 @@ export async function checkAdminRole(
  * must not be a second notion of "is an admin" living on a profile page — a
  * console where the chip and the gate can disagree about the same person is
  * worse than one with no chip. So the profile page calls `checkAdminRole` and
- * maps its answer here.
+ * reduces its answer here, next to the type it is reducing.
  *
- * THE MAPPING IS NOT AN IDENTITY, AND THE INTERESTING LINE IS THE LAST ONE.
- * `unresolved` is a single state to the GATE, which fails open on all of it and
- * says so in the log. To a READER it is two different things:
+ * ═══ ONLY `held` IS TRUE, AND THAT IS A LOSSY REDUCTION ON PURPOSE ═══
  *
- *   no bot token   this console cannot answer the question about anybody, ever,
- *                  until somebody pastes a token. A state, not an event — the
- *                  same distinction that keeps this case out of the audit log
- *                  (see `unresolved` below). Rendering "we could not check" on
- *                  every profile forever would be furniture.
- *   anything else  a timeout, a 429, a 5xx, a guild we cannot see. An EVENT, and
- *                  one that must not be shown as a negative: silently dropping
- *                  the chip would tell a moderator this person is not an admin
- *                  on evidence that says nothing about them.
+ * This returned a four-state `AdminRole` until the owner ruled on it: "Change
+ * ADMIN? to just show nothing." `revoked`, an unresolved check and an
+ * unconfigured token now all render identically, so the page keeps one bit and
+ * the rest is dropped HERE rather than carried across the server/client boundary
+ * to be discarded there.
  *
- * PURE, AND DELIBERATELY SEPARATE FROM THE FETCH, so the whole table of answers
- * is reachable without a network — the same arrangement `readMemberResponse`
- * has.
+ * WHAT IS NOT DROPPED IS EVERYTHING ABOVE THIS LINE. `RoleCheck` keeps all three
+ * states and its `why`, because `enforceDiscordAdmin` genuinely acts on the
+ * difference — `revoked` denies the write and ends the session, `unresolved`
+ * fails open, and the two leave different audit rows. `discordRole.check.ts`
+ * walks every branch of that. This function is the only place the distinction is
+ * deliberately thrown away, and it is thrown away for one chip.
+ *
+ * THE COST, WRITTEN DOWN WHERE THE NEXT PERSON WILL FIND IT: while Discord is
+ * unreachable, a genuine admin's profile is indistinguishable from a
+ * non-admin's. Nothing on the page says so and no row records it, because
+ * opening a profile is a READ and reads are not events — the same reason
+ * `fetchDiscordUser` logs nothing on a timeout.
+ *
+ * PURE, AND DELIBERATELY SEPARATE FROM THE FETCH, so the answer is reachable
+ * without a network — the same arrangement `readMemberResponse` has.
  */
-export function adminRoleFrom(check: RoleCheck): AdminRole {
-  if (check.state === 'held') return 'yes'
-  if (check.state === 'revoked') return 'no'
-  return check.why === NO_TOKEN_REASON ? 'unchecked' : 'unknown'
+export function adminHoldsRole(check: RoleCheck): boolean {
+  return check.state === 'held'
 }
 
 /**

@@ -12,7 +12,6 @@ import { accentSurface } from '@/lib/contrast'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 import { CATEGORY_LABEL, VERDICT_LABEL } from '@/lib/incidents'
 import type {
-  AdminRole,
   DiscordChrome,
   DiscordNameChange,
   Profile,
@@ -59,11 +58,10 @@ import { thresholdFor } from '@/lib/xp'
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
  *                accent colours that break a naive implementation, and an
  *                account with no display name
- *   ?admin=      all four answers the Discord role check can give, which is the
- *                ONLY way to see three of them: `yes` is the red ADMIN chip,
- *                `unknown` is the quiet ADMIN? one, and `unchecked` (no bot
- *                token) and `no` must both render NOTHING — an absence you can
- *                only review by flipping to it
+ *   ?admin=      does this account hold the Discord admin role. `yes` is the red
+ *                ADMIN chip; `no` must render NOTHING, which is an absence you
+ *                can only review by flipping to it. Reaching either for real
+ *                needs a bot token, a guild and the right person
  *   ?taken=      the "Actions taken" panel, built by running real audit-shaped
  *                rows through the real `actionsTakenFrom`. `some` contains two
  *                separate double-count traps; see RAW_TAKEN
@@ -718,24 +716,29 @@ const TAKEN_CASES = {
 type TakenKey = keyof typeof TAKEN_CASES
 
 /**
- * EVERY ANSWER THE DISCORD ROLE CHECK CAN GIVE, and three of them are invisible
- * anywhere else.
+ * Does this account hold the Discord admin role? Both answers, one click.
  *
- * `yes` and `no` need a real bot token, a real guild and a person who does or
- * does not hold the role. `unknown` needs Discord to be broken on demand.
- * `unchecked` needs the token removed from the environment. All four are one
- * click here.
+ * IT HAD FOUR VALUES AND NOW HAS TWO, because the page does. `unknown` (Discord
+ * did not answer) and `unchecked` (no bot token) rendered a quiet ADMIN? chip and
+ * nothing respectively; the owner has since ruled that neither renders anything —
+ * "Change ADMIN? to just show nothing" — so `admin` collapsed to a boolean and
+ * this axis collapsed with it rather than keeping two keys that produce an
+ * identical page. A harness that offers a distinction the app cannot make is a
+ * harness that teaches the wrong thing.
  *
- * TWO OF THEM RENDER NOTHING, WHICH IS THE POINT OF HAVING THEM. `no` and
- * `unchecked` must produce no chip at all, and an absence is exactly the kind of
- * thing that ships broken because nobody looked at it on purpose.
+ * `no` IS STILL WORTH A CLICK. It renders no chip at all, and an absence is
+ * exactly the kind of thing that ships broken because nobody looked at it on
+ * purpose — the same reason `?mod=served` exists.
+ *
+ * AND THIS AXIS IS INDEPENDENT OF `?discord=` ON PURPOSE. The role lookup is a
+ * SECOND call to a different endpoint and fails separately: `?discord=timeout`
+ * with `admin=yes` is the avatar call timing out while the member lookup answers,
+ * and the red chip must survive it.
  */
 const ADMIN_CASES = {
-  yes: 'yes',
-  no: 'no',
-  unknown: 'unknown',
-  unchecked: 'unchecked',
-} satisfies Record<string, AdminRole>
+  yes: true,
+  no: false,
+} satisfies Record<string, boolean>
 
 type AdminKey = keyof typeof ADMIN_CASES
 
@@ -831,6 +834,17 @@ const PREVIEW_BANNER = svgDataUri(
  * change is the common one. A profile with both is the only way to see that the
  * `@` prefix is applied to one and not the other.
  */
+/*
+ * `to` IS AS LOAD-BEARING AS `from` NOW, which it was not when this list was
+ * written. The "Other names" row dates the CURRENT display name from the change
+ * that ARRIVED at it — the first entry's `to: 'preview~'`, matching `globalName`
+ * on the chrome — so the card can read "First seen as preview~ on …". Change one
+ * without the other and that name silently loses its card.
+ *
+ * The `username` row is in here for the same reason it always was: to prove the
+ * `@` prefix applies to one field and not the other, and now also that a handle
+ * change cannot date a display name (the row filters on `field` first).
+ */
 const FORMER_NAMES: DiscordNameChange[] = [
   { field: 'globalName', from: 'Slippery Jim', to: 'preview~', at: BASE - 12 * HOUR },
   { field: 'username', from: 'jimbo_prv', to: 'preview_player', at: BASE - 40 * HOUR },
@@ -886,11 +900,11 @@ function chrome(
    * on this object, so the chip cannot arrive separately from the face.
    *
    * A REQUIRED PARAMETER RATHER THAN AN OVERRIDE WITH A DEFAULT. A harness that
-   * quietly defaulted this would make three of the four answers unreachable by
+   * quietly defaulted this would make one of the two answers unreachable by
    * accident, which is the exact way `bans: []` made the ban chip unreviewable
    * here for months.
    */
-  admin: AdminRole,
+  admin: boolean,
   overrides: Partial<DiscordChrome> = {},
 ): DiscordChrome {
   return {
@@ -944,7 +958,7 @@ const DISCORD_CASES = {
    */
   slow: {
     label: 'slow then full',
-    make: (admin: AdminRole) =>
+    make: (admin: boolean) =>
       new Promise<DiscordChrome>((resolve) =>
         setTimeout(() => resolve(chrome(admin)), 4_000),
       ),
@@ -957,7 +971,7 @@ const DISCORD_CASES = {
    */
   timeout: {
     label: 'timed out',
-    make: async (admin: AdminRole) =>
+    make: async (admin: boolean) =>
       chrome(admin, {
         answered: false,
         avatarUrl: PREVIEW_DEFAULT_AVATAR,
@@ -970,7 +984,7 @@ const DISCORD_CASES = {
   /* The whole thing: real avatar, banner, accent, both names, four renames. */
   full: {
     label: 'full profile',
-    make: async (admin: AdminRole) => chrome(admin),
+    make: async (admin: boolean) => chrome(admin),
   },
 
   /*
@@ -986,12 +1000,12 @@ const DISCORD_CASES = {
    */
   white: {
     label: 'accent #ffffff',
-    make: async (admin: AdminRole) =>
+    make: async (admin: boolean) =>
       chrome(admin, { accent: accentSurface('#ffffff') }),
   },
   black: {
     label: 'accent #000000',
-    make: async (admin: AdminRole) =>
+    make: async (admin: boolean) =>
       chrome(admin, { accent: accentSurface('#000000') }),
   },
 
@@ -1004,10 +1018,18 @@ const DISCORD_CASES = {
    * so there is nothing for the avatar to straddle and it must NOT be lifted —
    * a lifted circle here hangs off the top of the card. `full` and `plain` are
    * the pair to look at together.
+   *
+   * AND IT IS THE UNDATED-NAME CASE, which is the third thing it now shows. With
+   * no rename history at all, Ringmaster has never watched this player arrive at
+   * their current display name — so there is no first sighting to put in "First
+   * seen as X on Y", and that name must render as PLAIN TEXT with no card and no
+   * dotted underline while the in-game names beside it keep theirs. Compare with
+   * `full`, where the same name carries a card. An invented date here is exactly
+   * what the owner ruled out.
    */
   plain: {
     label: 'no accent',
-    make: async (admin: AdminRole) =>
+    make: async (admin: boolean) =>
       chrome(admin, { accent: null, bannerUrl: null, formerNames: [] }),
   },
 
@@ -1024,12 +1046,12 @@ const DISCORD_CASES = {
    */
   noname: {
     label: 'no display name',
-    make: async (admin: AdminRole) =>
+    make: async (admin: boolean) =>
       chrome(admin, { globalName: null, formerNames: [] }),
   },
 } satisfies Record<
   string,
-  { label: string; make: (admin: AdminRole) => Promise<DiscordChrome> | null }
+  { label: string; make: (admin: boolean) => Promise<DiscordChrome> | null }
 >
 
 type DiscordKey = keyof typeof DISCORD_CASES
@@ -1302,11 +1324,11 @@ async function Preview({
           current={discord}
           params={params}
         />
-        {/* The Discord role check's four answers, and the two of them that must
-            render nothing at all. Independent of `discord` on purpose: the role
-            lookup is a SECOND call to a different endpoint, and it can answer
-            while the user fetch times out. `?discord=timeout&admin=yes` is that
-            pair, and the chip must survive it. */}
+        {/* The Discord role check, and the `no` that must render nothing at all.
+            Independent of `discord` on purpose: the role lookup is a SECOND call
+            to a different endpoint, and it can answer while the user fetch times
+            out. `?discord=timeout&admin=yes` is that pair, and the chip must
+            survive it. See ADMIN_CASES for why there are two keys and not four. */}
         <Axis
           name="admin"
           keys={Object.keys(ADMIN_CASES)}

@@ -1,8 +1,8 @@
-import { adminRoleFrom, checkAdminRole } from './discordRole'
+import { adminHoldsRole, checkAdminRole } from './discordRole'
 import { accentSurface, hexFromInt } from './contrast'
 import { env } from './env'
 import * as players from './players'
-import type { AdminRole, DiscordChrome } from './profile'
+import type { DiscordChrome } from './profile'
 
 /**
  * Discord, as a source of what a player looks like.
@@ -223,14 +223,23 @@ export async function fetchDiscordUser(
  *
  * NEVER THROWS. `checkAdminRole` does not, but `env()` inside it does when a
  * variable is missing, and this promise is resolved through a Suspense boundary
- * where a rejection costs the page rather than the chip. An unreadable
- * environment is `unknown`, which is the honest answer anyway.
+ * where a rejection costs the PAGE rather than the chip.
+ *
+ * FALSE IS THE ANSWER TO EVERYTHING THAT IS NOT A DEFINITE YES — a timeout, a
+ * 429, an unreadable environment, a bot with no token. That is lossy and the
+ * owner asked for it ("Change ADMIN? to just show nothing"); `adminHoldsRole` is
+ * where the loss is described. What it is NOT is a longer wait: the budget below
+ * is the page's, the call still races the user fetch rather than following it,
+ * and nothing here retries to be surer.
  */
-async function adminRoleFor(discordId: string, timeoutMs: number): Promise<AdminRole> {
+async function adminHoldsRoleFor(
+  discordId: string,
+  timeoutMs: number,
+): Promise<boolean> {
   try {
-    return adminRoleFrom(await checkAdminRole(discordId, timeoutMs))
+    return adminHoldsRole(await checkAdminRole(discordId, timeoutMs))
   } catch {
-    return 'unknown'
+    return false
   }
 }
 
@@ -274,11 +283,11 @@ export async function discordChromeFor(input: {
   /*
    * TWO CALLS, ONE WAIT. `Promise.all` rather than two awaits: these are
    * independent questions to the same host, and sequencing them would make a slow
-   * Discord cost the page ten seconds instead of five. See `adminRoleFor`.
+   * Discord cost the page ten seconds instead of five. See `adminHoldsRoleFor`.
    */
   const [user, admin] = await Promise.all([
     fetchDiscordUser(discordId, timeoutMs),
-    adminRoleFor(discordId, timeoutMs),
+    adminHoldsRoleFor(discordId, timeoutMs),
   ])
 
   // The floor: a real id, no answer. Still a face, still a page.
@@ -294,7 +303,7 @@ export async function discordChromeFor(input: {
     // The stored history still shows when Discord is down: it is Ringmaster's
     // own record, and it is the half of this panel with moderation value.
     formerNames: stored?.former ?? [],
-    // NOT FORCED TO `unknown` HERE. The two calls fail independently — a 429 on
+    // NOT FORCED TO `false` HERE. The two calls fail independently — a 429 on
     // `GET /users/{id}` says nothing about whether the member lookup answered —
     // and flattening a real "yes" into "we could not check" because the AVATAR
     // request timed out would hide a chip we actually have the evidence for.
