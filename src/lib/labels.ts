@@ -12,7 +12,7 @@
  * ONE STRING. Every label map in this console is consulted as
  * `MAP[value] ?? value` — the `??` is the hole. It exists for a good reason
  * (a value this build has never heard of must still be visible rather than
- * blank, the same argument `bucketOf` makes about unknown player states), but
+ * blank, the same argument `stateKey` makes about unknown player states), but
  * what it falls back TO was the raw id. There are six such sites; a seventh
  * arrives with the next enum somebody adds to the game.
  *

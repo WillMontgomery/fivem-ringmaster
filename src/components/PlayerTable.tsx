@@ -19,7 +19,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import type { PlayerRow as Player } from '@/lib/ingest'
-import { bucketOf, stateKey, type StateBucket } from '@/lib/playerState'
+import { stateKey } from '@/lib/playerState'
 import { cn } from '@/lib/utils'
 
 /**
@@ -64,32 +64,56 @@ const COLUMNS: Column[] = [
 /**
  * State filter chips.
  *
- * NONE OF THESE EVER MATCHED A ROW (#17). They compared against `'ALIVE'`,
- * `'DBNO'`, `'DEAD'` and `'LOBBY'`; `BR.PlayerState` is lowercase and the
- * snapshot carries it verbatim, so every chip except All filtered to nothing —
- * and because the empty result fell through to "No players match", selecting
- * one looked like a table that had simply not changed.
+ * THREE, AT THE OWNER'S REQUEST: "the tabs all/alive/in the air/downed/dead/
+ * lobby are not all necessary. Let's cut it down to all/in-match/lobby. 'in
+ * match' should include dead/in the air/down/alive."
  *
- * Two things had to be true for a fix to hold. The comparison has to be against
- * the value the game actually sends (see `lib/playerState.ts`, which folds
- * case so the uppercase FIXTURE keeps working too), and every state has to land
- * under exactly one chip — the old set offered four buckets for ten states, so
- * a player in the bus, in freefall, under a chute, in warmup, spectating or
- * mid-disconnect matched nothing at all. `bucketOf` is where that mapping
- * lives, with the reasoning.
+ * SPLIT ON `matchId`, NOT ON THE STATE STRING, and that is the one decision in
+ * here worth defending. Both were available: `bucketOf(p.state)` folded the ten
+ * wire states into five buckets, and `LiveBoard` already split the lobby off
+ * with `p.matchId === null`. Keeping both would have left two answers to "is
+ * this player in a match" on a single page, so the loser was DELETED rather
+ * than left lying around — `bucketOf`, `inBucket` and `StateBucket` are gone
+ * from `lib/playerState`, where a note now stands in their place.
+ *
+ * `matchId` WINS BECAUSE IT IS THE GAME'S OWN ANSWER AND IT IS ALREADY ON
+ * SCREEN. `ServerStrip` sits directly above these chips reading `on server`,
+ * `in lobby`, `in match` — "the two halves it splits into", as its own comment
+ * puts it — and the envelope's `counts.inMatch` is the count of players
+ * carrying a `matchId`, dead ones included: the contract fixture holds a `DEAD`
+ * player at `matchId: 41` and `counts.inMatch: 3` across four players. A chip
+ * derived from the state string could have printed a different "in match" than
+ * the figure two rows above it.
+ *
+ * IT IS ALSO WHERE THE OWNER ASKED FOR IT. `isInMatch` — this console's other
+ * predicate, mirroring `BR.Server.isInMatch` — returns FALSE for `dead`,
+ * `spectating` and `left`, so it is the wrong tool for a chip that must hold
+ * the dead. It stays where it belongs, counting who is still standing on a
+ * match card.
+ *
+ * WHERE THE TWO COULD HAVE DISAGREED, so the next reader does not reintroduce
+ * the other one: a player whose state has gone to `lobby` before the roster
+ * clears their `matchId`, or the reverse; and any state this build has never
+ * heard of, which `bucketOf` defaulted to `alive` on purpose. That default is
+ * "wrong but visible" across five chips and merely wrong across two — it would
+ * have filed an unknown-state lobby player under In match with nothing on
+ * screen to show for it. `matchId` has no fallback to be wrong about.
  *
  * ALL MEANS ALL: every row in the snapshot, no exceptions, so its count always
- * equals the population of the table it sits above.
+ * equals the population of the table it sits above — and In match plus Lobby
+ * always equals it too, because they are one predicate and its negation.
  */
 const FILTERS: Array<{
-  key: 'all' | StateBucket
+  key: 'all' | 'in-match' | 'lobby'
   label: string
   /**
-   * The chip's explanation — "In the air" has to say which states it holds.
+   * The chip's explanation — "In match" has to say which states it holds.
    *
    * Rendered by `FilterChip` in two places at once: a tooltip for the mouse and
    * an `sr-only` element for everyone else. Edit it here; the chip is the only
-   * consumer.
+   * consumer. NOT a DOM `title` attribute — `docs/hover-text.md` rule 6 bans
+   * those outright, and this is a plain object field that never reaches an
+   * element as an attribute.
    */
   title: string
   match: (p: Player) => boolean
@@ -101,34 +125,21 @@ const FILTERS: Array<{
     match: () => true,
   },
   {
-    key: 'alive',
-    label: 'Alive',
-    title: 'On their feet in a match — alive, or waiting in warmup',
-    match: (p) => bucketOf(p.state) === 'alive',
-  },
-  {
-    key: 'air',
-    label: 'In the air',
-    title: 'Still dropping — on the bus, in freefall, or under a chute',
-    match: (p) => bucketOf(p.state) === 'air',
-  },
-  {
-    key: 'downed',
-    label: 'Downed',
-    title: 'Downed but not out — the game calls this state dbno',
-    match: (p) => bucketOf(p.state) === 'downed',
-  },
-  {
-    key: 'dead',
-    label: 'Dead',
-    title: 'Out of the match — dead, spectating, or disconnected mid-match',
-    match: (p) => bucketOf(p.state) === 'dead',
+    key: 'in-match',
+    label: 'In match',
+    // THE OWNER'S OWN ENUMERATION, IN THEIR ORDER AND THEIR WORDS: "'in match'
+    // should include dead/in the air/down/alive". `FilterChip` requires a
+    // description — it is the `aria-describedby` target, so rule 1's DOM floor
+    // has to be met — and rule 8 says the words may not be invented, so the
+    // words are theirs. "down", not "downed", for the same reason.
+    title: 'Dead, in the air, down, or alive',
+    match: (p) => p.matchId !== null,
   },
   {
     key: 'lobby',
     label: 'Lobby',
     title: 'Connected but not in a match',
-    match: (p) => bucketOf(p.state) === 'lobby',
+    match: (p) => p.matchId === null,
   },
 ]
 
@@ -137,8 +148,8 @@ const FILTERS: Array<{
  *
  * THE TWO HALVES ARE ONE COMPONENT ON PURPOSE. This is the only site in the
  * console where a tooltip is strictly better than putting the words on screen:
- * six chips sit in a row and their explanations are one to two lines each, so
- * inlining them would be a paragraph where a toolbar belongs. These are also
+ * three chips sit in a row and their explanations are a line each, so inlining
+ * them would be a sentence where a toolbar belongs. These are also
  * real `<button>`s, so the popup opens on `:focus-visible` — verified with an
  * actual Tab press — which the native `title` never did.
  *
@@ -223,14 +234,11 @@ export function PlayerTable({
   server,
   now,
   squadColour,
-  /** Rendered above the table. Lets a caller title the section without a wrapper. */
-  caption,
 }: {
   players: Player[]
   server: { wallMs: number; gameMs: number }
   now: number
   squadColour?: (squadId: number | null) => string | undefined
-  caption?: React.ReactNode
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<(typeof FILTERS)[number]['key']>('all')
@@ -288,10 +296,36 @@ export function PlayerTable({
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-        {caption}
+      {/*
+        CHIPS FIRST, SEARCH SECOND, AND THAT IS THE WHOLE LAYOUT: "the tabs
+        should be aligned left, with the in-line search directly to the right of
+        the tabs instead of left like it is now."
 
-        <div className="relative ml-auto w-full sm:w-64">
+        DOM ORDER, NOT MARGINS. The search used to come first and wear an
+        `ml-auto` that shoved it to the far right, which left the chips stranded
+        beyond it — the arrangement the owner is describing. Reordering the two
+        children is what actually puts the chips on the left edge, so the
+        `ml-auto` is gone rather than mirrored onto the other element; a second
+        auto margin fighting the first is how this drifts back.
+
+        The search keeps `w-full sm:w-64`, so below the `sm` breakpoint it wraps
+        onto its own line under the chips instead of crushing them.
+      */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+        <div className="flex gap-0.5 rounded-lg border border-border bg-background/40 p-0.5">
+          {FILTERS.map((f) => (
+            <FilterChip
+              key={f.key}
+              label={f.label}
+              count={players.filter(f.match).length}
+              description={f.title}
+              active={filter === f.key}
+              onSelect={() => setFilter(f.key)}
+            />
+          ))}
+        </div>
+
+        <div className="relative w-full sm:w-64">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={query}
@@ -310,19 +344,6 @@ export function PlayerTable({
               <X className="size-3.5" />
             </button>
           )}
-        </div>
-
-        <div className="flex gap-0.5 rounded-lg border border-border bg-background/40 p-0.5">
-          {FILTERS.map((f) => (
-            <FilterChip
-              key={f.key}
-              label={f.label}
-              count={players.filter(f.match).length}
-              description={f.title}
-              active={filter === f.key}
-              onSelect={() => setFilter(f.key)}
-            />
-          ))}
         </div>
       </div>
 

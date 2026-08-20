@@ -1,5 +1,3 @@
-import type { PlayerRow } from './ingest'
-
 /**
  * Player state, as the wire actually spells it.
  *
@@ -76,51 +74,20 @@ export function isInMatch(raw: string | null | undefined): boolean {
 }
 
 /**
- * Which filter chip a player belongs under.
+ * THE FIVE-BUCKET CLASSIFIER IS GONE, and this note is here so it is not
+ * rebuilt by reflex.
  *
- * FIVE BUCKETS THAT COVER TEN STATES, WITH NO GAP. The table offers fewer
- * chips than the game has states, and the previous set left `bus`, `freefall`,
- * `glide`, `warmup`, `left` and `spectating` matching nothing at all — so even
- * with the case fixed, six of ten states would have been invisible under every
- * chip except All. A filter that silently shows nothing is the bug being fixed,
- * not a smaller version of it.
+ * `StateBucket`, `bucketOf` and `inBucket` existed for one caller: the live
+ * table's six state chips. The owner cut those to three — "all/in-match/lobby"
+ * — and the surviving split is `p.matchId`, which is the game's own answer and
+ * the one `counts.inMatch` and `ServerStrip` already agree with. That left the
+ * classifier with no readers at all, and `inBucket` had never had one.
  *
- * The mapping:
- *   alive      alive, warmup      upright, in a match, not downed
- *   air        bus, freefall, glide   dropping — none of the other four fit
- *   downed     dbno                the label the game calls DBNO
- *   dead       dead, left, spectating  out of the match
- *   lobby      lobby               connected, not in a match
+ * Two things it knew that are still true elsewhere: the wire is lowercase
+ * (`stateKey` above still folds it), and an unrecognised state must stay
+ * visible rather than vanish (`PlayerRow`'s `StateChip` still does that, via
+ * `humanLabel`). Nothing was lost with the deletion except the mapping itself.
  *
- * ANYTHING UNRECOGNISED FALLS TO `alive`, deliberately. A state added to the
- * game next year must land somewhere a human will see it; making the default
- * "no bucket" is how a player disappears from every chip at once, which is
- * exactly the failure this function exists to prevent. Landing under Alive is
- * wrong-but-visible, and the row still carries its real state in the chip.
+ * If a future chip really does need to group states again, the reasoning lives
+ * in git — and `PlayerTable`'s `FILTERS` comment records why `matchId` beat it.
  */
-export type StateBucket = 'alive' | 'air' | 'downed' | 'dead' | 'lobby'
-
-export function bucketOf(raw: string | null | undefined): StateBucket {
-  switch (stateKey(raw)) {
-    case 'dbno':
-      return 'downed'
-    case 'dead':
-    case 'left':
-    case 'spectating':
-      return 'dead'
-    case 'lobby':
-      return 'lobby'
-    case 'bus':
-    case 'freefall':
-    case 'glide':
-      return 'air'
-    default:
-      // alive, warmup, and anything this build has not heard of.
-      return 'alive'
-  }
-}
-
-/** Convenience for the table, which filters `PlayerRow`s rather than strings. */
-export function inBucket(p: Pick<PlayerRow, 'state'>, bucket: StateBucket): boolean {
-  return bucketOf(p.state) === bucket
-}

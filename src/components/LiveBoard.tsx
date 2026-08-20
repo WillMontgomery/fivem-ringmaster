@@ -162,14 +162,6 @@ export function LiveBoard({
                 server={server}
                 now={now}
                 squadColour={squadColour}
-                caption={
-                  <span className="text-sm">
-                    Everyone connected
-                    <span className="ml-2 text-xs text-muted-foreground">
-                      across all matches
-                    </span>
-                  </span>
-                }
               />
             </Card>
           </TabsContent>
