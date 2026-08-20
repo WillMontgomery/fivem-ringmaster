@@ -24,6 +24,8 @@
  *   npx tsx scripts/check-contrast.mjs --full    # all of them, ~30s
  */
 
+import { readFileSync } from 'node:fs'
+
 import { accentSurface, contrastRatio, parseHex, relativeLuminance } from '../src/lib/contrast.ts'
 
 /** WCAG AA for normal text. The floor the module promises. */
@@ -135,6 +137,124 @@ if (Math.abs(bw - 21) > 0.001) {
   failed++
 }
 
+/*
+ * THE CHART SERIES, IN BOTH THEMES.
+ *
+ * A SECOND POPULATION OF COLOURS, AND UNTIL NOW AN UNMEASURED ONE. Everything
+ * above is about a colour a STRANGER picked; this is about five colours we
+ * picked ourselves and wrote into globals.css, which is exactly why nobody had
+ * ever checked them — an accent from the Discord API obviously needs guarding,
+ * and a hex somebody chose deliberately obviously does not. The light theme
+ * shipped three chart tokens under the floor on precisely that reasoning.
+ *
+ * IT READS THE STYLESHEET RATHER THAN A COPY OF THE VALUES. A table of colours
+ * duplicated into this script would be correct on the day it was written and
+ * silently wrong the first time somebody retuned the palette without opening
+ * scripts/ — the failure mode this whole file exists to prevent. globals.css is
+ * the source of truth, so globals.css is what gets parsed.
+ *
+ * AGAINST BOTH SURFACES A CHART IS DRAWN ON, and the lower of the two ratios is
+ * the one that counts. A series sits on `--card` inside a Card and on
+ * `--background` in anything that is not one, and those differ in the light
+ * theme (pure white vs a faintly grey page), so passing on one proves nothing
+ * about the other.
+ */
+
+/** oklch(L C H) -> sRGB 0-1, per CSS Color 4. Returns null if out of gamut. */
+function oklchToSrgb(L, C, hDeg) {
+  const h = (hDeg * Math.PI) / 180
+  const a = C * Math.cos(h)
+  const b = C * Math.sin(h)
+
+  const l_ = L + 0.3963377774 * a + 0.2158037573 * b
+  const m_ = L - 0.1055613458 * a - 0.0638541728 * b
+  const s_ = L - 0.0894841775 * a - 1.291485548 * b
+  const l = l_ ** 3
+  const m = m_ ** 3
+  const s = s_ ** 3
+
+  const lin = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ]
+
+  /*
+   * OUT OF GAMUT IS A FAILURE, NOT SOMETHING TO CLAMP AND CARRY ON. A token the
+   * browser has to gamut-map is a token whose rendered colour is not the one
+   * measured here, so the ratio printed below would be a number about a colour
+   * nobody ever sees. Better to reject it and make somebody pick a real one.
+   */
+  if (lin.some((u) => u < -0.0005 || u > 1.0005)) return null
+
+  return lin.map((u) => {
+    const v = u <= 0.0031308 ? 12.92 * u : 1.055 * Math.pow(Math.max(u, 0), 1 / 2.4) - 0.055
+    return Math.min(1, Math.max(0, v))
+  })
+}
+
+/** Pull one `{ … }` rule body out of the stylesheet by its selector. */
+function ruleBody(css, selector) {
+  const start = css.indexOf(`${selector} {`)
+  if (start === -1) return null
+  const end = css.indexOf('\n}', start)
+  return end === -1 ? null : css.slice(start, end)
+}
+
+/** `--name: oklch(L C H)` out of a rule body, as sRGB. */
+function token(body, name) {
+  const m = new RegExp(`--${name}:\\s*oklch\\(([\\d.]+)\\s+([\\d.]+)\\s+([\\d.]+)\\)`).exec(body)
+  if (!m) return null
+  return oklchToSrgb(Number(m[1]), Number(m[2]), Number(m[3]))
+}
+
+const CSS = readFileSync(new URL('../src/app/globals.css', import.meta.url), 'utf8')
+const SERIES = ['chart-1', 'chart-2', 'chart-3', 'chart-4', 'chart-5']
+
+console.log('')
+console.log('chart series — globals.css, against both surfaces of each theme')
+
+for (const [theme, selector] of [
+  ['light', ':root'],
+  ['dark', '.dark'],
+]) {
+  const body = ruleBody(CSS, selector)
+  if (!body) {
+    console.error(`  could not find the ${selector} rule in globals.css`)
+    failed++
+    continue
+  }
+
+  const card = token(body, 'card')
+  const background = token(body, 'background')
+  if (!card || !background) {
+    console.error(`  ${theme}: --card or --background is missing or not oklch()`)
+    failed++
+    continue
+  }
+  const onCard = relativeLuminance(card)
+  const onBg = relativeLuminance(background)
+
+  for (const name of SERIES) {
+    const rgb = token(body, name)
+    if (!rgb) {
+      console.error(`  \x1b[31mFAIL\x1b[0m  ${theme} --${name} is missing, not oklch(), or outside sRGB`)
+      failed++
+      continue
+    }
+    const lum = relativeLuminance(rgb)
+    const rCard = contrastRatio(lum, onCard)
+    const rBg = contrastRatio(lum, onBg)
+    const worst = Math.min(rCard, rBg)
+    const ok = worst >= FLOOR
+    if (!ok) failed++
+    console.log(
+      `  ${ok ? '  ok' : '\x1b[31mFAIL\x1b[0m'}  ${theme.padEnd(5)} --${name}  ` +
+        `card ${rCard.toFixed(2)}:1  background ${rBg.toFixed(2)}:1`,
+    )
+  }
+}
+
 if (failed > 0) {
   console.error('')
   console.error(`\x1b[31m${failed} contrast problem(s).\x1b[0m`)
@@ -142,4 +262,4 @@ if (failed > 0) {
 }
 
 console.log('')
-console.log(`\x1b[32mok\x1b[0m   every accent colour clears ${FLOOR}:1`)
+console.log(`\x1b[32mok\x1b[0m   every accent colour and chart series clears ${FLOOR}:1`)

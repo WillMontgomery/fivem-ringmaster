@@ -1,17 +1,21 @@
 'use client'
 
 import {
+  ArrowDownToLine,
   ArrowUpCircle,
+  ArrowUpFromLine,
   Check,
+  Cpu,
   GitCommitHorizontal,
   HardDrive,
+  MemoryStick,
   Power,
   Wifi,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 
-import { Sparkline } from '@/components/Sparkline'
+import { HostCharts } from '@/components/HostCharts'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { commitUrl } from '@/lib/github'
@@ -118,10 +122,9 @@ export function HostBoard({ initial }: { initial: View }) {
   const update = behindMainNow(s) ?? refBehindNow(s?.deployedRef, view.refUpdate)
   const updateRef = s?.deployedRef && s.deployedRef !== 'main' ? s.deployedRef : 'main'
 
-  // How much wall-clock the window spans, for the graph axes.
-  const spanSec =
-    samples.length > 1 ? (last!.at - samples[0]!.at) / 1000 : 0
-  const axisLeft = spanSec > 0 ? `${duration(spanSec)} ago` : undefined
+  // The window's span used to be computed here for the sparkline captions.
+  // `HostCharts` derives it from the samples it is handed, so it is no longer
+  // this component's business.
 
   return (
     <div className="space-y-4">
@@ -212,66 +215,44 @@ export function HostBoard({ initial }: { initial: View }) {
         </StatCard>
       </div>
 
-      {/* Graphs. */}
-      <div className="grid gap-3 lg:grid-cols-2">
-        <Card className="surface-edge px-4 py-4">
-          <Sparkline
-            label="CPU"
-            values={samples.map((x) => x.cpuPct)}
-            max={100}
-            color="var(--primary)"
-            current={last?.cpuPct ?? 0}
-            format={(v) => `${Math.round(v)}%`}
-            height={84}
-            axisLeft={axisLeft}
-          />
-          <p className="mt-1 text-xs text-muted-foreground/60">
-            {last ? `${last.cores} cores` : ''}
-          </p>
-        </Card>
+      {/*
+        The four sparklines that were here are now three interactive area charts
+        in `HostCharts` — processor, memory, and network in/out — to the owner's
+        count. Hover or arrow-key to read a value; one range selector governs all
+        three.
 
-        <Card className="surface-edge px-4 py-4">
-          <Sparkline
-            label="Memory"
-            values={samples.map((x) => x.memPct)}
-            max={100}
-            color="var(--info)"
-            current={last?.memPct ?? 0}
-            format={(v) => `${Math.round(v)}%`}
-            height={84}
-            axisLeft={axisLeft}
-          />
-          <p className="mt-1 text-xs text-muted-foreground/60">
+        THE CURRENT READINGS MOVED, THEY DID NOT DISAPPEAR. Each sparkline used
+        to print its own latest value and unit in its corner ("8 cores",
+        "10.2 / 16.0 GB"); the charts do not, so those readings become the stat
+        row below rather than being dropped. Same numbers, same words, one row up.
+      */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard icon={Cpu} label="Processor" tone="var(--chart-1)">
+          <span className="font-mono">{last ? `${Math.round(last.cpuPct)}%` : '—'}</span>
+          <span className="ml-2 align-middle text-xs text-muted-foreground/60">
+            {last ? `${last.cores} cores` : ''}
+          </span>
+        </StatCard>
+
+        <StatCard icon={MemoryStick} label="Memory" tone="var(--chart-2)">
+          <span className="font-mono">{last ? `${Math.round(last.memPct)}%` : '—'}</span>
+          <span className="ml-2 align-middle text-xs text-muted-foreground/60">
             {last && last.memTotalKb > 0
               ? `${((last.memTotalKb - last.memAvailKb) / 1024 / 1024).toFixed(1)} / ${(last.memTotalKb / 1024 / 1024).toFixed(1)} GB`
               : ''}
-          </p>
-        </Card>
+          </span>
+        </StatCard>
 
-        <Card className="surface-edge px-4 py-4">
-          <Sparkline
-            label="Network in"
-            values={samples.map((x) => x.rxRate)}
-            color="var(--live)"
-            current={last?.rxRate ?? 0}
-            format={human}
-            height={84}
-            axisLeft={axisLeft}
-          />
-        </Card>
+        <StatCard icon={ArrowDownToLine} label="Inbound" tone="var(--chart-3)">
+          <span className="font-mono">{last ? human(last.rxRate) : '—'}</span>
+        </StatCard>
 
-        <Card className="surface-edge px-4 py-4">
-          <Sparkline
-            label="Network out"
-            values={samples.map((x) => x.txRate)}
-            color="var(--warn)"
-            current={last?.txRate ?? 0}
-            format={human}
-            height={84}
-            axisLeft={axisLeft}
-          />
-        </Card>
+        <StatCard icon={ArrowUpFromLine} label="Outbound" tone="var(--chart-4)">
+          <span className="font-mono">{last ? human(last.txRate) : '—'}</span>
+        </StatCard>
       </div>
+
+      <HostCharts samples={samples} />
 
       <div className="flex items-center justify-between text-xs text-muted-foreground/60">
         <span>

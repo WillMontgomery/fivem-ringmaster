@@ -68,10 +68,41 @@
   --input: oklch(0.22 0.01 285 / 16%);
   --ring: oklch(0.52 0.20 295 / 45%);
 
+  /*
+   * Chart series. RETUNED FOR THE LIGHT THEME, WHERE THREE OF THEM FAILED.
+   *
+   * These tokens shipped with the palette and, until the host page's graphs
+   * were rebuilt on them, had NO READER AT ALL — five colours defined twice and
+   * exported through `@theme inline` for nobody. Nothing had ever measured
+   * them, which is how the light theme came to carry three series colours that
+   * a chart could not legally be drawn in:
+   *
+   *     --chart-2  4.10:1     --chart-3  4.36:1     --chart-4  3.83:1
+   *
+   * against `--background`, which is the tighter of the two light surfaces a
+   * chart sits on (the card is pure white, the page behind it very slightly
+   * grey). WCAG AA for normal text is 4.5:1 — the same floor `--rm-accent-fg`
+   * is held to by scripts/check-contrast.mjs, and there is no reason a series
+   * label may be less legible than a stranger's Discord accent.
+   *
+   * THE HUES DO NOT MOVE; THE LIGHTNESS DOES, which is the rule stated at the
+   * top of this file. Each of the three lost enough lightness to clear 5:1 —
+   * a floor with headroom rather than one sitting on the line, so a later
+   * nudge to `--background` does not silently drop a series under it.
+   *
+   * ONE OF THEM ALSO GAVE UP CHROMA, AND THAT IS A VISIBLE LOSS. `--chart-2`
+   * at its old saturation is outside the sRGB gamut once it is dark enough to
+   * pass, so the browser would clip it to a colour with contrast nobody
+   * computed — a number that is right in the stylesheet and wrong on screen.
+   * It is a duller teal now, in gamut, and measured where it is drawn.
+   *
+   * The dark theme was already clear at every one of the five (4.75:1 at the
+   * worst, `--chart-1`) and is untouched.
+   */
   --chart-1: oklch(0.52 0.20 295);
-  --chart-2: oklch(0.55 0.14 205);
-  --chart-3: oklch(0.55 0.14 150);
-  --chart-4: oklch(0.60 0.14 80);
+  --chart-2: oklch(0.52 0.085 205);
+  --chart-3: oklch(0.515 0.14 150);
+  --chart-4: oklch(0.535 0.11 80);
   --chart-5: oklch(0.55 0.20 22);
 
   --sidebar: oklch(0.972 0.005 285);
@@ -156,8 +187,22 @@
   --input: oklch(1 0 0 / 13%);
   --ring: oklch(0.62 0.19 295 / 60%);
 
+  /*
+   * The dark series. LIGHTNESS AND HUE UNCHANGED; ONE CHROMA CORRECTED.
+   *
+   * `--chart-2` was `oklch(0.70 0.15 200)`, which is not a colour: at that
+   * lightness and hue sRGB tops out around 0.119 chroma, so the browser
+   * gamut-maps it to something else before painting. It reads as a perfectly
+   * nice teal, which is why it survived — the bug is invisible unless you go
+   * looking, and its cost is that every contrast number computed for the
+   * DECLARED value describes a colour that never reaches a screen.
+   *
+   * 0.115 is inside the gamut with room to spare, at the same L and hue. The
+   * check in scripts/check-contrast.mjs now rejects out-of-gamut tokens outright
+   * rather than clamping them, so this cannot come back quietly.
+   */
   --chart-1: oklch(0.62 0.19 295);
-  --chart-2: oklch(0.70 0.15 200);
+  --chart-2: oklch(0.70 0.115 200);
   --chart-3: oklch(0.75 0.16 150);
   --chart-4: oklch(0.80 0.15 85);
   --chart-5: oklch(0.65 0.20 20);
