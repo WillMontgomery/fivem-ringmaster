@@ -682,9 +682,9 @@ const NOT_AN_ACTION = new Set(['incident.resolve'])
  * as a thing that happened — "Banned", "Kicked" — because those rows sit on the
  * profile of the person it happened TO. These rows sit on the profile of the
  * person who did it, next to the name of somebody else, so they are verbs with an
- * object: "Banned Vance", "Closed an incident about Vance". Reusing the first map
- * would produce "Banned — Vance" on a panel titled "Actions taken", which reads
- * as though the page's owner were the one banned.
+ * object: "Banned Vance", "Closed an incident against Vance". Reusing the first
+ * map would produce "Banned — Vance" on a panel titled "Actions taken", which
+ * reads as though the page's owner were the one banned.
  *
  * `incident.resolve` IS IN THIS ONE AND EXCLUDED FROM THE OTHER, which is the
  * whole difference between the two panels. Closing a report is not something done
@@ -696,7 +696,13 @@ const ACTION_TAKEN_LABEL: Record<string, string> = {
   'ban.issue': 'Banned',
   'ban.lift': 'Lifted the ban on',
   'player.kick': 'Kicked',
-  'incident.resolve': 'Closed an incident about',
+  // "AGAINST", NOT "ABOUT" (owner, playtest: "Where the incident says 'about' it
+  // should really say 'against'"). Same word, same reason as the incident page's
+  // own field label: a case names somebody as its subject, which "about" softens
+  // into a topic. This row is the admin's side of that — "Closed an incident
+  // against Vance" — and the relation it names is the incident's, not this
+  // row's, so it takes the incident's word.
+  'incident.resolve': 'Closed an incident against',
 }
 
 /**
@@ -932,7 +938,7 @@ function IncidentList({
     return (
       <Empty>
         {direction === 'against'
-          ? 'Nobody has ever filed an incident about this player.'
+          ? 'Nobody has ever filed an incident against this player.'
           : 'This player has never reported anybody.'}
       </Empty>
     )

@@ -208,17 +208,31 @@ export function BanDialog({
       if (also) {
         const cases = (n: number) => `${n} other case${n === 1 ? '' : 's'}`
 
+        /**
+         * "AGAINST", NOT "ABOUT" (owner, playtest: "Where the incident says
+         * 'about' it should really say 'against'"). Three sentences, one word,
+         * and they are the last rendered strings in the console that named the
+         * relation the old way — the incident page's field label went first,
+         * the profile's two followed. A case names somebody as its subject,
+         * which "about" softens into a topic.
+         *
+         * IT IS ALSO THE OWNER'S OWN WORD FOR EXACTLY THIS SET OF ROWS. The
+         * sentence these toasts report on is theirs: "for any permanent bans
+         * that take place - all other incidents against the freshly banned
+         * player should be resolved". `lib/incidents` quotes it; this is what
+         * it looks like when it happens.
+         */
         if (also.lookupFailed) {
           toast.warning(
-            `Other open cases about ${name} could not be read, so none were closed.`,
+            `Other open cases against ${name} could not be read, so none were closed.`,
           )
         } else if (also.failed > 0 || also.leftOpen > 0) {
           toast.warning(
-            `Closed ${cases(also.closed)} about ${name}, out of ${also.found}.`,
+            `Closed ${cases(also.closed)} against ${name}, out of ${also.found}.`,
             { description: 'The rest are still in the incident queue.' },
           )
         } else if (also.closed > 0) {
-          toast.success(`Closed ${cases(also.closed)} about ${name}.`)
+          toast.success(`Closed ${cases(also.closed)} against ${name}.`)
         }
       }
 
