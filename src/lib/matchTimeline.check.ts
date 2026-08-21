@@ -65,6 +65,32 @@
  *   the component inlines the red class           1 case,  section 8
  *   a second component reads the issued flag      1 case,  section 8
  *
+ * AND THE SAME AGAIN FOR THE WARMUP WORK, OBSERVED THE SAME WAY:
+ *
+ *   `matchProgress` stops reading the creation   3 cases, section 4
+ *   warmup outranks a recorded end               1 case,  section 4
+ *   the formed label becomes the start label     3 cases, section 4b
+ *   the formed label is deleted, fallback wins   2 cases, section 4b
+ *   `isBracket` forgets `match_created`          1 case,  section 4c
+ *   `rank` stops putting formed before started   1 case,  section 3
+ *   the component restates the bracket set       2 cases, section 8
+ *   the component falls back on the creation     2 cases, section 8
+ *   the component hardcodes the word             2 cases, section 8
+ *   the kill branch stops keying on the kind     1 case,  section 8
+ *   the harness stops shifting the creation      1 case,  section 8
+ *
+ * TWO OF THOSE FIELDS ARE PINNED BY THE COMPILER RATHER THAN BY A CASE, and
+ * they were broken on purpose too, because a type nobody instantiates proves
+ * nothing. Deleting `matchCreatedAt` from `Incident` fails `npm run typecheck`
+ * with 2 errors, both naming the field; deleting it from `MatchFields` fails
+ * with 12, one of them inside `matchProgress` itself.
+ *
+ * FOUR OF THE COMPONENT MUTATIONS ARE THE WHOLE REASON THAT LIST IS LONG. Each
+ * leaves every pure function untouched and correct — the word still resolves,
+ * the bracket set still has three members, the offset maths is unchanged — and
+ * each changes what an admin reads. That is the gap the origin grep below was
+ * added to close, and it is why every call-site decision now has one.
+ *
  * ONE MUTATION SURVIVED PART OF ITS SECTION AND IT IS WORTH KNOWING WHICH.
  * With `at` no longer compared, "match_start is first" still passed — the tie
  * ranking put it there for the wrong reason. Three other cases caught it. A
@@ -83,10 +109,13 @@ import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { IncidentEvent } from './incidents'
+import { humanLabel, labelFor } from './labels'
 import {
+  MATCH_EVENT_LABEL,
   MATCH_PROGRESS_LABEL,
   WEAPON_UNAUTHORIZED_CLASS,
   indefiniteArticle,
+  isBracket,
   killDiscrepancy,
   killLine,
   matchOffset,
@@ -340,6 +369,67 @@ check(
   mergeTimeline(events, null).length === 2,
 )
 
+/*
+ * ═══ A WARMUP CASE'S LIST BEGINS WITH `match_created` ═══
+ *
+ * The shape a weapon-strip case opened on the warmup pad actually has: an
+ * anchor, the strips that opened it, and NO `match_start` — the match had not
+ * started, which is the whole reason this kind exists. Stored shuffled, like
+ * every other list DynamoDB hands back.
+ */
+const CREATED = NOW - 3 * MIN
+
+const warmupStored: MatchTimelineEntry[] = [
+  { at: CREATED + 100_000, kind: 'weapon_strip', weapon: 'WEAPON_RAILGUN' },
+  { at: CREATED, kind: 'match_created' },
+  { at: CREATED + 62_000, kind: 'weapon_strip', weapon: '-1357824103' },
+]
+
+const warmupMerged = mergeTimeline(
+  [{ at: CREATED + 101_000, kind: 'opened', byLicense: null, byName: 'System' }],
+  warmupStored,
+)
+const warmupHead = warmupMerged[0]
+
+check(
+  'mergeTimeline: a warmup list is anchored on match_created, stored second',
+  warmupHead?.source === 'match' && warmupHead.entry.kind === 'match_created',
+  warmupHead,
+)
+check(
+  'mergeTimeline: and the strips keep their order under it',
+  warmupMerged
+    .map((r) => (r.source === 'match' ? r.entry.kind : `console:${r.event.kind}`))
+    .join(' -> ') === 'match_created -> weapon_strip -> weapon_strip -> console:opened',
+  warmupMerged.map((r) => (r.source === 'match' ? r.entry.kind : r.event.kind)),
+)
+check(
+  'mergeTimeline: a strip is never dropped for not being a kill',
+  warmupMerged.filter((r) => r.source === 'match' && r.entry.kind === 'weapon_strip')
+    .length === 2,
+)
+
+/*
+ * A MATCH IS FORMED BEFORE IT BEGINS, including at the same millisecond. The
+ * game writes one anchor or the other and never both, so this is a shape it
+ * does not produce — which is exactly why the sort must not depend on that
+ * promise holding.
+ */
+const bothAnchors = mergeTimeline(
+  [],
+  [
+    kill({ at: NOW }),
+    { at: NOW, kind: 'match_start' },
+    { at: NOW, kind: 'match_created' },
+  ],
+)
+check(
+  'mergeTimeline: on a tie, formed comes before started',
+  bothAnchors.map((r) => (r.source === 'match' ? r.entry.kind : '?')).join(' -> ') ===
+    'match_created -> match_start -> kill',
+  bothAnchors.map((r) => (r.source === 'match' ? r.entry.kind : '?')),
+)
+
 // ---------------------------------------------------------------------------
 // 4. STILL IN PROGRESS IS THREE STATES, NOT TWO.
 // ---------------------------------------------------------------------------
@@ -367,6 +457,36 @@ const progressCases: Array<[string, MatchFields, number, string]> = [
   // A match with no end AND no deadline cannot be placed, and the console does
   // not guess which of the two middle states it was.
   ['a match with no end and no deadline', { matchStartedAt: START, matchEndedAt: null }, NOW + HOURS(3), 'unknown'],
+
+  // ── WARMUP: THE STATE THAT USED TO BE A FALSEHOOD ─────────────────────────
+  //
+  // A match is formed into warmup and stamps a start only on entering play, so
+  // a case filed on the pad has a creation time and NOTHING ELSE. It answered
+  // `none` — documented as "filed outside a match" — about a row that names a
+  // matchId and holds the earliest cheat signal this console ever sees.
+  ['formed and not started — a case filed on the warmup pad', { matchCreatedAt: START - 2 * MIN }, NOW, 'warmup'],
+  ['and the same shape with the other three spelled null', { matchCreatedAt: START - 2 * MIN, matchStartedAt: null, matchEndedAt: null, matchEndsBy: null }, NOW, 'warmup'],
+  // The clock decides nothing here: there is no deadline to be inside or past.
+  ['warmup does not turn into anything as the clock runs on', { matchCreatedAt: START - 2 * MIN }, NOW + HOURS(9), 'warmup'],
+  ['an unreadable creation time is no creation time', { matchCreatedAt: Number.NaN }, NOW, 'none'],
+  ['a null creation time is the same as none at all', { matchCreatedAt: null }, NOW, 'none'],
+
+  // ── AND THE CREATION TIME RECLASSIFIES NOTHING ELSE ───────────────────────
+  //
+  // It rides the same PutItem on EVERY case with a match, so it is present on
+  // ordinary rows too. Each of these is one of the cases above with a creation
+  // time added, and each must answer exactly what it answered without one.
+  ['formed and running is still running', { matchCreatedAt: START - 2 * MIN, matchStartedAt: START, matchEndedAt: null, matchEndsBy: ENDS_BY }, START + 5 * MIN, 'running'],
+  ['formed and past its deadline is still unreported', { matchCreatedAt: START - 2 * MIN, matchStartedAt: START, matchEndedAt: null, matchEndsBy: ENDS_BY }, NOW + HOURS(3), 'unreported'],
+  ['formed, with no end and no deadline, is still unknown', { matchCreatedAt: START - 2 * MIN, matchStartedAt: START, matchEndedAt: null }, NOW + HOURS(3), 'unknown'],
+
+  // THE SAME ROW AFTER THE MATCH RAN. The game's match-end write backfills the
+  // start and the deadline, so a warmup case leaves the state on its own — no
+  // migration, and nothing in `matchProgress` special-casing it.
+  ['the warmup case, backfilled at match end', { matchCreatedAt: START - 2 * MIN, matchStartedAt: START, matchEndedAt: START + 11 * MIN, matchEndsBy: ENDS_BY }, NOW + HOURS(3), 'ended'],
+  // Belt and braces: an end with no start still beats warmup, because an end is
+  // the strongest thing on the row.
+  ['an end that landed outranks the creation time', { matchCreatedAt: START - 2 * MIN, matchEndedAt: START + 11 * MIN }, NOW + HOURS(3), 'ended'],
 ]
 
 for (const [label, fields, now, expected] of progressCases) {
@@ -384,6 +504,102 @@ check(
   'MATCH_PROGRESS_LABEL: `unknown` claims nothing',
   MATCH_PROGRESS_LABEL.unknown === undefined,
 )
+/*
+ * `warmup` HAS NO CHIP AND THAT IS THE DECISION, NOT AN OVERSIGHT. Both entries
+ * above are the owner's own words. There are none for a warmup case, and
+ * `docs/hover-text.md` rule 8 says to report a state with no honest wording and
+ * wait rather than to write something reasonable-sounding. Asserted so that
+ * adding one is a deliberate act with the owner's sentence in hand, rather than
+ * a reflex somebody has on a Tuesday.
+ */
+check(
+  'MATCH_PROGRESS_LABEL: `warmup` says nothing until the owner gives it words',
+  MATCH_PROGRESS_LABEL.warmup === undefined,
+  MATCH_PROGRESS_LABEL.warmup,
+)
+
+// ---------------------------------------------------------------------------
+// 4b. THE WORD FOR A MATCH THAT WAS FORMED AND HAD NOT STARTED.
+// ---------------------------------------------------------------------------
+
+console.log('4b. `match_created` is not `match_start`, and must not read as one')
+
+check(
+  'MATCH_EVENT_LABEL: match_created reads "Match formed"',
+  MATCH_EVENT_LABEL.match_created === 'Match formed',
+  MATCH_EVENT_LABEL.match_created,
+)
+check(
+  'MATCH_EVENT_LABEL: and the start still reads "Match started"',
+  MATCH_EVENT_LABEL.match_start === 'Match started',
+  MATCH_EVENT_LABEL.match_start,
+)
+/*
+ * THE TWO MAY NOT SHARE A STEM, which is the actual requirement rather than
+ * "the strings differ". The game split this into its own kind so the console
+ * would stop saying the match started about a match that had not; two labels
+ * both beginning "Match st…" would hand that back on a page an admin skims.
+ */
+check(
+  'MATCH_EVENT_LABEL: formed and started do not read alike',
+  !MATCH_EVENT_LABEL.match_created?.toLowerCase().includes('start'),
+  MATCH_EVENT_LABEL.match_created,
+)
+/*
+ * AND THE MAP ENTRY IS LOAD-BEARING. `labelFor` humanises an unmapped id, so if
+ * the chosen word were the mechanical one, deleting the entry would change
+ * nothing and this whole section would be asserting the fallback. It is not:
+ * the fallback says `Match created`.
+ */
+check(
+  'MATCH_EVENT_LABEL: the entry is not what the fallback would have produced',
+  humanLabel('match_created') === 'Match created' &&
+    MATCH_EVENT_LABEL.match_created !== humanLabel('match_created'),
+  humanLabel('match_created'),
+)
+check(
+  'labelFor: the component\'s lookup returns the word, not the id',
+  labelFor(MATCH_EVENT_LABEL, 'match_created') === 'Match formed',
+  labelFor(MATCH_EVENT_LABEL, 'match_created'),
+)
+/*
+ * `weapon_strip` IS DELIBERATELY UNMAPPED. The mechanical fallback already
+ * renders it legibly, and a map entry spelling the identical string would be a
+ * second home for one word. Pinned in both directions so the absence reads as a
+ * decision and so the rendered word cannot change without a case failing.
+ */
+check(
+  'MATCH_EVENT_LABEL: weapon_strip is left to the mechanical fallback',
+  MATCH_EVENT_LABEL.weapon_strip === undefined,
+  MATCH_EVENT_LABEL.weapon_strip,
+)
+check(
+  'labelFor: and that fallback renders a strip as "Weapon strip"',
+  labelFor(MATCH_EVENT_LABEL, 'weapon_strip') === 'Weapon strip',
+  labelFor(MATCH_EVENT_LABEL, 'weapon_strip'),
+)
+
+// ---------------------------------------------------------------------------
+// 4c. WHICH ENTRIES ARE THE ENDS OF THE MATCH RATHER THAN THINGS INSIDE IT.
+// ---------------------------------------------------------------------------
+
+console.log('4c. the bracket set, which decides the marker tone')
+
+const bracketCases: Array<[string, boolean]> = [
+  ['match_created', true],
+  ['match_start', true],
+  ['match_end', true],
+  ['kill', false],
+  ['weapon_strip', false],
+  // An open set: a kind from a newer gamemode is an event, not an edge.
+  ['artifact', false],
+  ['', false],
+]
+
+for (const [kind, expected] of bracketCases) {
+  const got = isBracket({ at: NOW, kind })
+  check(`isBracket(${JSON.stringify(kind)}) === ${expected}`, got === expected, got)
+}
 
 // ---------------------------------------------------------------------------
 // 5. DROPPED KILLS, AS A COUNT.
@@ -598,6 +814,22 @@ const originCases: Array<[string, number, OffsetSpan, string | null]> = [
   [
     'no match at all: a report filed in the lobby gets no offsets',
     FILED,
+    { origin: FILED, startedAt: null, bound: null },
+    null,
+  ],
+  /*
+   * A WARMUP CASE GETS NONE EITHER, AND THAT IS CHOSEN RATHER THAN INHERITED.
+   * It has a real match — a `matchId`, a creation time, the strips that opened
+   * it — and still no `matchStartedAt`, so the span it hands over has a null
+   * start and every row goes unplaced. Falling `startedAt` back on the creation
+   * time was considered and refused: the same row has no `matchEndsBy`, so the
+   * ruler would open and never close, and the resolve event three days later
+   * would print the four-digit minute count `bound` exists to suppress. The
+   * component's half of this is asserted in section 8.
+   */
+  [
+    'a warmup case has a match and still no ruler to place it on',
+    FILED - 30_000,
     { origin: FILED, startedAt: null, bound: null },
     null,
   ],
@@ -860,6 +1092,98 @@ check(
   /origin:\s*incident\.openedAt/.test(component?.text ?? ''),
 )
 
+/*
+ * ═══ THE SAME BLUNT INSTRUMENT, AIMED AT THE THINGS #35 ADDED ═══
+ *
+ * Every case above hands a pure function arguments the test built, so not one
+ * of them can see what the COMPONENT passes or which branch it takes. That gap
+ * has already cost this repo once — swapping the offset origin passed the whole
+ * suite — so each decision below that lives at a call site gets a grep, and the
+ * greps are written to fail on the specific mutation, not on any edit.
+ */
+
+/*
+ * THE FAR END OF THE RULER IS THE MATCH START AND NOT THE CREATION TIME, which
+ * is the decision 7b argues and the one nothing else can see. `startedAt:
+ * incident.matchStartedAt ?? incident.matchCreatedAt` is the obvious, plausible
+ * "improvement": it would give a warmup case offsets, and it would give the
+ * resolve event on a match that never ended a four-digit minute count. The
+ * second grep is the one that matters — the component must not read the field
+ * at all.
+ */
+check(
+  'the component measures the window from the match start',
+  /startedAt:\s*incident\.matchStartedAt\s*,/.test(component?.text ?? ''),
+)
+check(
+  'and it does not quietly fall back on the creation time',
+  !/matchCreatedAt/.test(component?.text ?? ''),
+)
+
+/*
+ * THE BRACKET SET IS ASKED FOR, NOT RESTATED. It had two members spelled inline
+ * in this component and now has three; a set that grows in JSX is a set nothing
+ * checks, and `match_created` drawn in the muted tone would read as one more
+ * thing that happened rather than as the edge of the match.
+ */
+check(
+  'the timeline component gets its brackets from `isBracket`, not from a comparison',
+  component?.text.includes('isBracket(') === true,
+)
+check(
+  'and no match-kind literal is left in the markup to drift from it',
+  !/['"]match_(created|start|end)['"]/.test(component?.text ?? ''),
+  (component?.text.match(/['"]match_(created|start|end)['"]/g) ?? []).join(' '),
+)
+
+/*
+ * THE NEW KIND GOES THROUGH THE MAP LIKE EVERY OTHER KIND. `MATCH_EVENT_LABEL`
+ * is where "Match formed" is argued and pinned; a component that hardcoded the
+ * word would render the same page today and would not be the thing section 4b
+ * is testing.
+ */
+check(
+  'the component looks its match labels up rather than writing them',
+  /labelFor\(MATCH_EVENT_LABEL,/.test(component?.text ?? ''),
+)
+check(
+  'and it spells none of them itself',
+  !/Match (formed|started|ended)/.test(component?.text ?? ''),
+  (component?.text.match(/Match (formed|started|ended)/g) ?? []).join(' '),
+)
+
+/*
+ * A STRIP IS NOT A KILL, AND THE KILL SENTENCE MUST NOT REACH IT. A
+ * `weapon_strip` entry carries a `weapon` and no `weaponIssued` — the kind IS
+ * the claim — so running one through the kill branch would put it under the
+ * comparison in section 1 and render the single most incriminating entry on the
+ * row in ordinary ink, as though the weapon had been checked and cleared. The
+ * kill branch is keyed on the kind, exactly.
+ */
+check(
+  'the kill sentence is drawn for kills and for nothing else',
+  /kind === 'kill'/.test(component?.text ?? ''),
+)
+
+/*
+ * THE HARNESS MOVES THE CREATION TIME WITH EVERYTHING ELSE.
+ *
+ * `/preview/incident?artifacts=aged` pushes a whole case 200 days back to put it
+ * past the artifact bucket's expiry, and `shifted` exists so that every stamp on
+ * it travels together — the file's own words: a case whose opening event
+ * happened after the note on it is "a shape no real row can have, and the
+ * harness's whole job is to avoid showing one". A creation time left behind
+ * makes the pair `aged` + `warmup` an incident filed last spring whose match was
+ * formed this afternoon, which no server can produce and which nothing else
+ * here would notice.
+ */
+const preview = sources.find((s) => s.path === 'src/app/preview/incident/page.tsx')
+check('the incident harness is where this thinks it is', preview !== undefined)
+check(
+  'the harness shifts the creation time with the rest of the case',
+  /matchCreatedAt:\s*move\(/.test(preview?.text ?? ''),
+)
+
 // ---------------------------------------------------------------------------
 // Landmarks. Printed on every run so a change shows up as different words
 // rather than as nothing — the same reason check-contrast.mjs prints its
@@ -903,8 +1227,31 @@ console.log(
     .join(' -> ')}`,
 )
 console.log(
-  `  progress states   ${(['none', 'ended', 'running', 'unreported', 'unknown'] as const)
+  `  progress states   ${(['none', 'warmup', 'ended', 'running', 'unreported', 'unknown'] as const)
     .map((s) => `${s}=${MATCH_PROGRESS_LABEL[s] ?? '(no chip)'}`)
+    .join('  ')}`,
+)
+/*
+ * THE FIVE KINDS AS THE PAGE WORDS THEM, printed side by side, because the one
+ * failure this section is here to make loud is two of them reading alike.
+ */
+console.log(
+  `  match kinds       ${['match_created', 'match_start', 'match_end', 'kill', 'weapon_strip']
+    .map((k) => `${k}=${labelFor(MATCH_EVENT_LABEL, k)}`)
+    .join('  ')}`,
+)
+/*
+ * A WARMUP CASE, LEFT TO RIGHT. No offsets on any of it, which is the point:
+ * there is no start and no deadline, so there is no ruler. If a fallback to the
+ * creation time ever lands, every dash here becomes a number and says so.
+ */
+console.log(
+  `  warmup timeline   ${warmupMerged
+    .map((r) => {
+      const label = r.source === 'match' ? r.entry.kind : r.event.kind
+      const off = matchOffset(r.at, { origin: CREATED + 101_000, startedAt: null, bound: null })
+      return `${label}=${off ?? '—'}`
+    })
     .join('  ')}`,
 )
 /*
