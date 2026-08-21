@@ -618,6 +618,35 @@ const HISTORY_CASES = {
       won: true,
     },
   ],
+  /*
+    A SOLO, WHERE DOWNS AND REVIVES CANNOT HAPPEN AT ALL.
+
+    BR.Mode.SOLO carries dbno = false in the gamemode, and combat.lua says it
+    in a sentence: "knock a squad player down and all kill a solo". So this is
+    not a player who happened to knock nobody -- it is a match where knocking
+    was not available. IncidentMatchRecord draws neither figure here.
+
+    WITHOUT THIS CASE THE GATE HAD NOTHING EXERCISING IT. The only other solo
+    row in this file is the five-month-old decoy above, which exists to be
+    REJECTED by the join, so it never reaches the component at all.
+  */
+  solo: [
+    {
+      matchId: MATCH_ID,
+      endedAt: MATCH_START + 9 * MIN,
+      mode: 'solo',
+      placement: 4,
+      total: 60,
+      kills: 5,
+      downs: 0,
+      revives: 0,
+      damage: 1180,
+      survivedMs: 9 * MIN - 20_000,
+      xpEarned: 900,
+      voltsEarned: 260,
+      won: false,
+    },
+  ],
   absent: [],
 } satisfies Record<string, ProfileMatch[]>
 

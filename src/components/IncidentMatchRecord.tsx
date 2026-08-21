@@ -111,8 +111,27 @@ export function IncidentMatchRecord({ record }: { record: ProfileMatch | null })
               label="damage"
               value={formatCount(record.damage)}
             />
-            <Figure icon={Skull} label="downs" value={record.downs} />
-            <Figure icon={Trophy} label="revives" value={record.revives} />
+            {/*
+              NOT IN A SOLO, AND NOT BECAUSE THEY HAPPEN TO BE ZERO.
+
+              The gamemode declares it: BR.Mode.SOLO carries `dbno = false`
+              alongside `squadSize = 1`, and combat.lua puts it in a sentence --
+              "knock a squad player down and all kill a solo". Nobody can be
+              knocked in a solo, so nobody can be revived either. Both figures
+              are structurally impossible rather than merely empty, and a zero
+              beside four real numbers reads as a fact about the player.
+
+              ONLY ON AN EXPLICIT 'solo'. `mode` is coerced to '' when the row
+              carries something unreadable (lib/gameProfile.ts), and an unknown
+              mode is not a claim that there were no squadmates -- hiding a real
+              five-down record would be the worse mistake of the two.
+            */}
+            {record.mode !== 'solo' && (
+              <>
+                <Figure icon={Skull} label="downs" value={record.downs} />
+                <Figure icon={Trophy} label="revives" value={record.revives} />
+              </>
+            )}
             {/*
               TIME ALIVE, NOT MATCH LENGTH. Every player in one match shares its
               duration; how long this one survived is the half that is about
