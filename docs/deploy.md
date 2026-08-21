@@ -87,13 +87,46 @@ Fill in every value marked `REPLACE_ME`. `AUTH_URL` must be the **public** origi
 (`https://your-domain`), because Auth.js builds the OAuth redirect URI from it
 and Discord rejects a mismatch.
 
-Four are genuinely optional and the app starts without them —
-`DISCORD_BOT_TOKEN` (without it every player shows a Discord default avatar
-rather than their own) and `GAME_HOST` / `GAME_SSH_KEY` / `GAME_SSH_USER`
-(without them the Host page says "not configured" rather than erroring).
-`src/lib/env.ts` is the authority on which are which: it validates the whole
-environment at first use and names **every** missing variable at once rather
-than one per restart.
+> **`AUTH_URL` also decides whether the in-game console can stay signed in, and
+> that failure looks like nothing at all.** Every cookie this app writes takes
+> its `Secure` flag from that URL's protocol, and `SameSite` is derived from
+> `Secure` rather than chosen beside it (`src/lib/cookieFlags.ts`). The
+> pause-menu console is a third-party context and needs `SameSite=None`, which
+> **every modern browser drops silently without `Secure`** — no warning, no
+> error, just a console that redeems a handoff token and arrives signed out
+> anyway. An `http://` origin here is therefore not merely insecure; it is a
+> pause-menu Admin tab that can never hold a session.
+
+Three are genuinely optional and the app starts without them —
+`DISCORD_BOT_TOKEN` and `GAME_HOST` / `GAME_SSH_KEY` (without the latter two the
+Host page says "not configured" rather than erroring; `GAME_SSH_USER` defaults
+to `ubuntu`). `src/lib/env.ts` is the authority on which are which: it validates
+the whole environment at first use and names **every** missing variable at once
+rather than one per restart.
+
+> **`DISCORD_BOT_TOKEN` now does two jobs, and this document used to name only
+> the first.** It used to say the token's absence meant "every player shows a
+> Discord default avatar rather than their own", full stop. That is still true
+> and is no longer the whole cost:
+>
+> 1. **Real profile pictures.** A Discord user id cannot be turned into an
+>    avatar URL on its own; only the API knows the current avatar hash.
+> 2. **The admin-role re-check before every write.** Before every ban, lift,
+>    kick, incident closure, maintenance action, branch switch and deploy, the
+>    console asks Discord whether that account still holds
+>    `DISCORD_ADMIN_ROLE_ID`. Without the token this check is **disabled**, with
+>    a warning logged on every write — so somebody stripped of the admin role in
+>    Discord keeps a working console until a human edits their grants row.
+>
+> **Job 2 changed what the bot needs.** Read this twice if you set the token up
+> before the check existed: job 1 works from outside your server, job 2 requires
+> **the bot to be a member of the guild** in `DISCORD_GUILD_ID`. Invite it with
+> no permissions at all — it needs none, and no privileged intents.
+
+**`DISCORD_ADMIN_ROLE_ID` is required, not optional.** Guild membership stopped
+meaning anything once the guild became the player community, so the role is the
+coarse filter that runs before any grant is consulted. The app refuses to start
+without it.
 
 ```bash
 chmod 600 .env.local
@@ -284,14 +317,26 @@ on 22 from the us-west-2 CIDR.
 
 | Port | Open to | Why |
 |---|---|---|
-| 443 | Cloudflare only | The admin's browser, via the WAF |
-| 3000 | the us-east-2 VPC CIDR only | `br_ringmaster`'s push to `/api/ingest` |
+| 443 | Cloudflare only | The admin's browser, and the pause-menu frame, via the WAF |
+| 3000 | the us-east-2 VPC CIDR only | `br_ringmaster`'s push to `/api/ingest`, and the game server's `/api/handoff/mint` |
 | 22 | your own IP | You |
 
-**Port 3000 must not be open to the internet.** The ingest endpoint
-authenticates with a shared secret over the peered link and is deliberately
-excluded from the session middleware; the security group is what actually keeps
-it private.
+**Port 3000 carries two endpoints now, not one.** The realtime push was always
+there; the game *server* also POSTs `/api/handoff/mint` to ask for a sign-in
+token when an admin opens the pause menu. Both present the same
+`INGEST_SECRET` in the same `x-ringmaster-secret` header, both are excluded from
+the session middleware, and **neither is ever called by a game client** — a
+client that could mint a token could mint somebody else's.
+
+**Port 3000 must not be open to the internet.** Those endpoints authenticate
+with a shared secret over the peered link; the security group is what actually
+keeps them private.
+
+> **The pause-menu console reaches this box over 443, not 3000.** It is a
+> browser — CEF — loading the public origin through Cloudflare like any other.
+> Only the game *server's* two server-to-server calls use the peered link. Do
+> not open 3000 wider in an attempt to make the Admin tab work; that is not
+> where it is failing.
 
 Restricting 443 to Cloudflare's ranges is worth doing so nobody bypasses the WAF
 by hitting the IP:
@@ -310,12 +355,23 @@ curl -s https://www.cloudflare.com/ips-v4
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/api/ingest
 ```
 
-**`405` — and that is the pass.** `src/app/api/ingest/route.ts` exports `POST`
-and nothing else, so Next answers a `GET` with Method Not Allowed. Getting a
-status code at all is the thing being tested: it proves the app is listening on
-3000 and routing. **This document used to say `200` here**, which sent people
-looking for a fault that was not there. A connection refused is the real
-failure; anything else means the app is up.
+**`200`, and the body is `{"ok":true,"service":"ringmaster-ingest"}`.**
+`src/app/api/ingest/route.ts` exports a deliberate `GET` health handler for
+exactly this check — it needs no secret and says nothing about the server it
+observes, because the only question being asked is "is this listening".
+
+> **This has now been wrong in both directions and is worth reading rather than
+> pasting.** The document first said `200`, was corrected to **`405` — and that
+> is the pass**, on the reasoning that the route "exports `POST` and nothing
+> else". That reasoning was true when written. A `GET` handler was added
+> afterwards and the answer went back to `200`, which means anybody following
+> the corrected version now goes hunting for a fault that is not there — the
+> exact failure the correction was written to prevent.
+>
+> **What is actually being tested is that a status code comes back at all**,
+> which proves the app is listening on 3000 and routing. A connection refused is
+> the real failure. If you get a `405` here, you are on a build predating the
+> health handler, and that is fine too.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://ringmaster.example.com/login
@@ -341,10 +397,15 @@ have been setting up. Nothing above this line does.
 curl -s -o /dev/null -w '%{http_code}\n' http://<ringmaster-private-ip>:3000/api/ingest
 ```
 
-`405`, for the same reason as above — it proves the peered path reaches the app.
+`200`, for the same reason as above — it proves the peered path reaches the app.
 Use the **private** IP; the public one would test a route over the internet and
 prove nothing about the peering. A hang means the security group; a refusal
 means the app is not running.
+
+This is the path both server-to-server calls take, so it covers the pause-menu
+handoff as well as the player feed. **It does not cover the Admin tab itself**,
+which loads the public origin over 443 from inside the game client — if the feed
+works and the pause menu still opens signed out, the peering is not the problem.
 
 ```
 brddb
