@@ -16,7 +16,7 @@
  * and this imports nothing.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * THE FOUR RULES THAT ARE EASY TO GET WRONG
+ * THE FIVE RULES THAT ARE EASY TO GET WRONG
  * ─────────────────────────────────────────────────────────────────────────
  *
  * 1. `list_append` DOES NOT ORDER. DynamoDB appends where it likes under
@@ -43,6 +43,17 @@
  *    the deadline has passed and nothing wrote the end, which means a crash or
  *    a restart ate it. {@link matchProgress} returns those as different states
  *    and the console must not merge them.
+ *
+ * 5. A MATCH BEING FORMED IS NOT A MATCH STARTING. A match is minted into
+ *    warmup and stamps `matchStartedAt` only on entering play, so a case filed
+ *    on the warmup pad carries `matchCreatedAt` and NOTHING ELSE — no start, no
+ *    deadline, no end. That row is not "filed outside a match": it names a
+ *    `matchId` and it is the earliest a weapon-strip case can possibly be
+ *    filed. {@link matchProgress} answers `warmup` for it, `match_created` is
+ *    the timeline entry the game anchors it on, and neither may be collapsed
+ *    into the start. The game keeps the two apart in `br_ddb`'s `incident.js`
+ *    for the same reason this does: one field holding two facts is a field
+ *    nothing can render honestly.
  */
 
 /** A number, or null for anything that is not one. Absent, null and NaN alike. */
@@ -74,10 +85,18 @@ function text(v: unknown): string | null {
 export interface MatchTimelineEntry {
   /** Absolute milliseconds. */
   at: number
-  /** `match_start`, `match_end`, `kill` — and whatever a newer build adds. */
+  /**
+   * `match_created`, `match_start`, `match_end`, `kill`, `weapon_strip` — and
+   * whatever a newer build adds.
+   *
+   * `weapon_strip` CARRIES A `weapon` AND NOTHING ELSE. No label, because the
+   * gamemode has no name for a weapon it does not hand out; no `weaponIssued`,
+   * because the kind IS the claim; no parties, because a strip is a fact about
+   * the subject's own ped and the row already names them.
+   */
   kind: string
 
-  /** Kill entries only, from here down. */
+  /** Kill entries only, from here down — except `weapon`, which a strip has. */
   killerLicense?: string | null
   killerName?: string | null
   victimLicense?: string | null
@@ -117,6 +136,8 @@ export interface ConsoleTimelineEvent {
 export interface MatchFields {
   /** The game's match number. See {@link matchRecordFor} for why it is not a key. */
   matchId?: number | null
+  /** When the match was FORMED. Rule 5 — not an early `matchStartedAt`. */
+  matchCreatedAt?: number | null
   matchStartedAt?: number | null
   matchEndedAt?: number | null
   matchEndsBy?: number | null
@@ -130,14 +151,60 @@ export function isKill(e: MatchTimelineEntry): boolean {
 }
 
 /**
+ * The ends of the match, as opposed to something that happened inside it.
+ *
+ * WHAT IT DECIDES: the marker tone on the timeline — a bracket is drawn in the
+ * accent, everything else muted. Nothing about the sentence.
+ *
+ * A FUNCTION HERE RATHER THAN A COMPARISON IN THE JSX, and the reason is
+ * exactly the one this module's header gives. The set had two members and was
+ * spelled inline in `IncidentTimeline`; `match_created` is a third, and a set
+ * that grows in markup is a set nothing checks. `check:timeline` pins the
+ * membership and asserts the component asks this rather than asking itself.
+ *
+ * `match_created` IS A BRACKET BECAUSE IT IS THE OPENING ONE. Rule 5: the game
+ * anchors a warmup case's timeline on it precisely because there is no start,
+ * so on that row it is the beginning, and a beginning drawn in the muted tone
+ * would read as one more thing that happened rather than as the edge.
+ */
+export function isBracket(e: MatchTimelineEntry): boolean {
+  return (
+    e.kind === 'match_created' || e.kind === 'match_start' || e.kind === 'match_end'
+  )
+}
+
+/**
  * English for the kinds the game writes.
  *
  * Past tense to match the console's own three — `Opened`, `Note`, `Resolved` —
  * so one merged list does not read as though it came from two places. Consulted
  * through `labelFor`, so a kind from a newer build degrades to a humanised id
  * rather than to a blank.
+ *
+ * ═══ `match_created` READS "FORMED", AND THE WORD IS THE WHOLE POINT ═══
+ *
+ * The game gave this a kind of its own precisely so the console would stop
+ * having to say "the match started" about a match that had not. Anything
+ * sharing a stem with `match_start` gives that back: on a row that has both,
+ * two lines beginning "Match st…" are two beginnings, and on a warmup row a
+ * reader who skims sees a start that never happened. "Formed" is also the
+ * gamemode's own word for it — `br_ddb`'s `incident.js` says the console "can
+ * say 'formed' where that is what happened", and `docs/security.md` there
+ * describes the field as when the match was formed.
+ *
+ * IT IS NOT WHAT THE FALLBACK WOULD PRODUCE, and that is deliberate rather than
+ * incidental. `labelFor` humanises an unmapped id, so an absent entry here
+ * renders `Match created` — legible, machine-flavoured, and close enough to
+ * "started" to defeat the reason the kind exists. Because the two differ, this
+ * map entry is load-bearing and deleting it is visible.
+ *
+ * `weapon_strip` IS DELIBERATELY NOT IN THIS MAP. `labelFor` already humanises
+ * it to `Weapon strip`, and a map entry spelling the identical string would be
+ * a second place for one word to live and to rot. If it ever wants wording that
+ * is not the mechanical one, that is the owner's to give.
  */
 export const MATCH_EVENT_LABEL: Record<string, string> = {
+  match_created: 'Match formed',
   match_start: 'Match started',
   match_end: 'Match ended',
   kill: 'Kill',
@@ -158,9 +225,17 @@ export type TimelineRow =
  * cannot start after something that happened inside it, and cannot end before
  * one. Everything else ties at 1 and falls through to source and index, which
  * is what makes the order stable rather than merely deterministic-looking.
+ *
+ * `match_created` OUTRANKS `match_start` BECAUSE A MATCH IS FORMED BEFORE IT
+ * BEGINS. The game only writes one of the two — `match_created` is the anchor
+ * when there is no start to anchor on — so a row carrying both is not a shape
+ * it produces today. This orders them anyway, because the cost is one line and
+ * the alternative is a sort that is correct only while an upstream promise
+ * holds.
  */
 function rank(row: TimelineRow): number {
   if (row.source !== 'match') return 1
+  if (row.entry.kind === 'match_created') return -1
   if (row.entry.kind === 'match_start') return 0
   if (row.entry.kind === 'match_end') return 2
   return 1
@@ -254,6 +329,17 @@ export interface OffsetSpan {
  * excluded at that end. With no `startedAt` there is no match to be inside, so
  * nothing gets an offset; that is what a report filed in the lobby looks like.
  *
+ * ═══ AND IT IS ALSO WHAT A WARMUP CASE LOOKS LIKE, ON PURPOSE ═══
+ *
+ * A case filed on the warmup pad has a `matchCreatedAt` and no `matchStartedAt`
+ * (rule 5), so every row on it goes unplaced. Falling `startedAt` back on the
+ * creation time was considered and NOT DONE: the same row has no `matchEndsBy`
+ * either, so the ruler would open at one end and never close, and the resolve
+ * event three days later would print `+4322:17` — the exact number `bound`
+ * exists to suppress. A warmup timeline is short and every row on it carries a
+ * wall clock, so the cost of no offsets is small and the cost of a wrong one is
+ * a moderation page stating a falsehood in monospace.
+ *
  * SUB-SECOND TRUNCATES TOWARDS ZERO, on both sides, which is why the sign and
  * the magnitude are computed separately. A single `Math.floor` over a signed
  * difference rounds a row 1.999s BEFORE the report to `-0:02` — away from
@@ -279,10 +365,12 @@ export function matchOffset(at: unknown, span: OffsetSpan): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * THREE STATES, NOT TWO — rule 4.
+ * THREE STATES, NOT TWO — rule 4. AND `none` IS NOT ONE OF THEM — rule 5.
  *
  *   none        no match attributes at all: filed outside a match, or a row
  *               written before the game recorded any of this
+ *   warmup      the match was FORMED and had not begun. `matchCreatedAt` and
+ *               nothing else. See below — this used to answer `none`.
  *   ended       `matchEndedAt` landed
  *   running     no end yet, and the deadline has not passed
  *   unreported  no end, and the deadline HAS passed — the server died holding
@@ -290,16 +378,54 @@ export function matchOffset(at: unknown, span: OffsetSpan): string | null {
  *   unknown     a match with no end and no deadline. Cannot be placed, so the
  *               console says nothing rather than guessing which of the two
  *               middle states it was.
+ *
+ * ═══ WHY `warmup` HAD TO STOP BEING `none` ═══
+ *
+ * `none` is documented above as "filed outside a match", AND THAT WAS A FALSE
+ * STATEMENT ABOUT A ROW CARRYING A `matchId`. A match is minted into warmup and
+ * stamps `matchStartedAt` only on entering play, so a case opened on the warmup
+ * pad arrived here with a creation time and nothing else and was classified as
+ * though no match existed. It does exist; the offender is standing in it.
+ *
+ * AND THOSE ARE THE CASES WORTH THE MOST, which is why a wrong word about them
+ * is not a cosmetic problem. vMenu is a development tool that is not going to
+ * production, so there is no benign route to a weapon this gamemode never
+ * issued: a `weapon_strip` is a cheat signal, and one filed during warmup is
+ * the earliest signal available — before the offender has touched a real
+ * player.
+ *
+ * THE SAME ROW LEAVES THIS STATE ON ITS OWN. The game's match-end write
+ * backfills `matchStartedAt` and `matchEndsBy`, so a warmup case that ran to
+ * completion answers `ended` afterwards, from the same attributes, with no
+ * migration and nothing here to special-case.
+ *
+ * `warmup` GETS NO CHIP, and {@link MATCH_PROGRESS_LABEL} is where that is
+ * argued rather than here.
  */
-export type MatchProgress = 'none' | 'ended' | 'running' | 'unreported' | 'unknown'
+export type MatchProgress =
+  | 'none'
+  | 'warmup'
+  | 'ended'
+  | 'running'
+  | 'unreported'
+  | 'unknown'
 
 export function matchProgress(m: MatchFields, now: number): MatchProgress {
   const started = num(m.matchStartedAt)
   const ended = num(m.matchEndedAt)
   const deadline = num(m.matchEndsBy)
 
-  if (started === null && ended === null && deadline === null) return 'none'
   if (ended !== null) return 'ended'
+  /*
+   * NO START AND NO DEADLINE IS THE WARMUP SHAPE OR IT IS NOTHING, and the
+   * creation time is the only thing that can tell those two apart. Read here
+   * rather than at the top so that every row which HAS a start or a deadline
+   * keeps the answer it had before this field existed — a creation time on an
+   * ordinary match is extra context, never a reclassification.
+   */
+  if (started === null && deadline === null) {
+    return num(m.matchCreatedAt) === null ? 'none' : 'warmup'
+  }
   if (deadline === null) return 'unknown'
   return now < deadline ? 'running' : 'unreported'
 }
@@ -311,6 +437,26 @@ export function matchProgress(m: MatchFields, now: number): MatchProgress {
  * a `match_end` row in the list saying so, and `none`/`unknown` are the states
  * where the console has nothing to claim — a chip there would be the console
  * announcing its own ignorance, which is not data.
+ *
+ * ═══ `warmup` GETS NO CHIP EITHER, AND THAT IS A DECISION, NOT AN OMISSION ═══
+ *
+ * The two entries below are the OWNER'S OWN WORDS. There are no owner's words
+ * for a warmup case, and `docs/hover-text.md` rule 8 is explicit about what to
+ * do with a state that has none: "report it and wait", not write something
+ * reasonable-sounding. So the state is classified honestly and the page says
+ * only what the game gave it to say — a `Match formed` row where a `Match
+ * started` row would otherwise be.
+ *
+ * IF THE OWNER WANTS ONE, THIS IS THE LINE IT GOES ON, and it costs a string.
+ * `--phase-warmup` is already a token in `globals.css` and its ten-percent
+ * background tint is already listed in the CEF override block at the end of
+ * that file, so the colour would not cost a gate either. The wording is the
+ * only thing missing and it is not ours to invent.
+ *
+ * THE UTILITY IS DESCRIBED HERE RATHER THAN SPELLED. Tailwind 4 scans source
+ * TEXT, so a class name written in prose is extracted, emitted and then
+ * correctly reported by `check:cef` — see {@link WEAPON_UNAUTHORIZED_CLASS},
+ * which cost this file a failing gate once already.
  */
 export const MATCH_PROGRESS_LABEL: Partial<Record<MatchProgress, string>> = {
   running: 'still in progress',

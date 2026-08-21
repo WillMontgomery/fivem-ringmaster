@@ -260,6 +260,17 @@ export interface Incident {
    * no `matchEndedAt` can be told apart into "still running" and "the server
    * died before it could say". Without it an unfinished match reads as running
    * forever. `matchProgress` is the one reader.
+   *
+   * ═══ THREE TIMES, THREE FACTS, AND THEY ARE NOT INTERCHANGEABLE ═══
+   *
+   * `matchCreatedAt` is when the match was FORMED. `matchStartedAt` is when it
+   * went live. `matchEndedAt` is when it finished. A match is minted into
+   * warmup and only stamps a start on entering play, so the three are three
+   * different instants and the middle one is ABSENT on a case filed on the
+   * warmup pad. The gamemode keeps them apart on purpose (`br_ddb`'s
+   * `incident.js`): one field holding two facts would make `matchStartedAt`
+   * mean "the lobby opened" on some rows and "the match began" on others, with
+   * nothing on either row saying which.
    */
   /**
    * THE GAME'S OWN MATCH NUMBER, and the join key to the player's history.
@@ -277,6 +288,22 @@ export interface Incident {
    * separates them, and the case is pinned by `check:timeline`.
    */
   matchId?: number | null
+  /**
+   * WHEN THE MATCH WAS FORMED, not when it began. Written by the `PutItem` at
+   * filing, so it is present for every case with a match — including the one
+   * shape that has nothing else: a case filed during warmup, which has no
+   * start, no deadline and no end until the match actually runs.
+   *
+   * IT IS THE ONLY MATCH TIME A WARMUP CASE CARRIES, and reading it as a start
+   * is the mistake the gamemode split the field to prevent. `matchProgress` is
+   * the one reader.
+   */
+  matchCreatedAt?: number | null
+  /**
+   * WHEN THE MATCH WENT LIVE. Absent on a case filed before it did — the game
+   * backfills it on the match-end write, so the same row gains a start and a
+   * deadline later and stops being a warmup case.
+   */
   matchStartedAt?: number | null
   /** Null until the match-end write lands. Absent is not the same as null. */
   matchEndedAt?: number | null
