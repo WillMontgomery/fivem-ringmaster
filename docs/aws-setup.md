@@ -308,11 +308,12 @@ the game box cannot touch a single `ringmaster-*` table.** It writes its own
 match data and nothing else. Not the grants table, not the audit log, not the
 ban list, not telemetry.
 
-**Three statements have been added to it since, and they are the only three.**
+**Four statements have been added to it since, and they are the only four.**
 The sections below are them — a read on bans, grants and the maintenance window;
-an append on incidents; and, since 2026-08-17, a read back of incident verdicts.
-The third one cost a property this document used to advertise, and it is written
-down below rather than quietly dropped.
+an append on incidents; since 2026-08-17, a read back of incident verdicts; and
+since 2026-08-21, an attribute-scoped update that closes an incident's match
+timeline. The third one cost a property this document used to advertise, and it
+is written down below rather than quietly dropped.
 
 That matters because the game server is the box most exposed to the public
 internet, running software people actively try to exploit. If it is ever
@@ -476,6 +477,54 @@ sounds.
 > rather than deleted because they were load-bearing: `br_ddb`'s own header
 > comment cites them, and anyone who read this file between 2026-08-14 and
 > 2026-08-17 came away with the opposite of the current answer.
+
+### The update it gained — closing a match timeline, 2026-08-21
+
+**Added because this file did not have it and the code already needed it.** The
+game writes an incident's match timeline at match end, through an `UpdateItem`
+in `js-src/br_ddb/src/close.js`. That verb was never documented here, which is
+the failure mode this file warns about at the top of the incident section: a
+role rebuilt from an older copy would file cases perfectly and then fail every
+close, silently, leaving every case reading "end never reported".
+
+```json
+{
+  "Sid": "GameServerCloseIncidentTimeline",
+  "Effect": "Allow",
+  "Action": ["dynamodb:UpdateItem"],
+  "Resource": ["arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-incidents"],
+  "Condition": {
+    "ForAllValues:StringEquals": {
+      "dynamodb:Attributes": [
+        "incidentId", "matchEndedAt", "matchTimeline",
+        "matchTimelineComplete", "matchKillsSeen"
+      ]
+    },
+    "StringEquals": { "dynamodb:ReturnValues": "NONE" }
+  }
+}
+```
+
+**THE ATTRIBUTE LIST IS THE WHOLE CONTROL.** Without it this would be a general
+write on the moderation record, and the game box could rewrite `state`,
+`verdict` or `resolvedBy` on any case whose id it holds. With it the game may
+touch only the five fields it actually writes. `ReturnValues: NONE` is not
+decoration either: the attribute list restricts what a request may WRITE, and
+`ReturnValues` is how the same request could otherwise READ a verdict back out.
+
+**THE ALLOWLIST AND `close.js` MUST AGREE, AND ONLY ONE OF THEM FAILS LOUDLY.**
+That file's SET expression sets exactly these attributes and its comment names
+this policy as the reason. Adding a sixth attribute there without changing the
+policy produces AccessDenied at match end, in production, on a path with no user
+watching it. `BR.Ring.incidentStats().closeFailed` is the counter that says so;
+on a healthy server it is zero.
+
+> **This section is late.** The grant was applied by the owner on 2026-08-20 and
+> written down here on 2026-08-21. In between, this document said the game box
+> had exactly three added statements and that an append on incidents was the only
+> write it held — which would have been an accurate description of a role that
+> could not close a single case.
+
 
 ### The read it gained — verdicts, decided 2026-08-17
 
