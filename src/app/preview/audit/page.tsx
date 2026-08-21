@@ -74,6 +74,33 @@ const AUDIT_ROWS: AuditRow[] = [
     targetName: 'nightjar',
     reason: 'abusive in voice chat',
   },
+  /**
+   * A SPECTATE ROW, WHICH IS THE ONLY KIND WITH NO REASON UNDER IT (#192).
+   *
+   * Every other row on this page carries a quoted string, so a row without one
+   * is a shape the list had never been asked to draw — and this one never will
+   * carry it: the console does not ask for a reason, because the button is a
+   * single click by design. Worth a fixture for that alone.
+   *
+   * `pending`, AND IT IS NOT A FAILURE. The command reached the console and the
+   * outcome comes back separately, exactly as a kick's does. This is the state
+   * such a row sits in for the second or two before the game answers — and
+   * forever, if nobody is listening. Under #19 it says nothing at all, which is
+   * what to look for: no label, no "unacknowledged", no marker.
+   */
+  {
+    pk: 'AUDIT',
+    ts: NOW - 14 * 60_000,
+    commandId: 'cmd-spectate',
+    action: 'player.spectate',
+    outcome: 'pending',
+    actorLicense: 'license:110000100000001',
+    actorName: 'Will',
+    actorDiscordId: null,
+    targetLicense: 'license:110000100000004',
+    targetName: 'Vandal',
+    reason: null,
+  },
   {
     pk: 'AUDIT',
     ts: NOW - 26 * 60_000,

@@ -67,6 +67,22 @@ const ACTION_LABEL: Record<string, string> = {
   'ban.issue': 'issued a ban',
   'ban.lift': 'lifted a ban',
   'player.kick': 'kicked a player',
+  /**
+   * #192. THE ONE ROW WHOSE SUBJECT NEVER FINDS OUT.
+   *
+   * A kick and a ban announce themselves to the person they happen to; this one
+   * cannot, or the tool stops working. That is precisely why it is here — "an
+   * admin watching a player who does not know they are being watched is exactly
+   * the class of action `ringmaster-audit` exists to record". This page is the
+   * only place it is ever seen.
+   *
+   * THE ROW COVERS THE START AND NOT THE END. Nothing in the console stops a
+   * session: the admin closes it from the pause menu, or the target disconnects
+   * and it closes itself. Both ends reach the game's own event channel as
+   * `admin_spectate`; neither is a command anybody issued, so neither writes a
+   * row here.
+   */
+  'player.spectate': 'spectated a player',
   'maintenance.schedule': 'scheduled a server update',
   'maintenance.cancel': 'cancelled the server update',
   'maintenance.drain': 'started draining the server',

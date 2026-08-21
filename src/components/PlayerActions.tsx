@@ -1,6 +1,6 @@
 'use client'
 
-import { Ban as BanIcon, LogOut, ShieldOff } from 'lucide-react'
+import { Ban as BanIcon, Eye, Loader2, LogOut, ShieldOff } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
@@ -14,10 +14,34 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { actionBar } from '@/lib/actionBar'
 import { postJson } from '@/lib/api'
 
 /**
- * Kick and ban, for the player whose page this is.
+ * The sentence a Spectate button that cannot be pressed carries.
+ *
+ * A CONSTANT BECAUSE IT IS RENDERED TWICE — into the tooltip popup, and into an
+ * `sr-only` span beside it. Base UI's popup gets no `role` and no
+ * `aria-describedby`, and this trigger is an inert `<span>` wrapping a disabled
+ * button, so the popup is a mouse affordance and nothing more. The rule in
+ * docs/hover-text.md is that no fact may live only on hover; one string, two
+ * renders, is how the placement badge and `Face` already satisfy it.
+ *
+ * IT IS THE ONLY SENTENCE THIS FEATURE ADDS, and it is deliberately the shape
+ * the button beside it already uses ("Kicking needs the ban scope, which this
+ * account does not have"). Nothing anywhere explains what spectating IS.
+ *
+ * WHY THE STATE IS WORTH A SENTENCE AT ALL: `spectate` is a scope nothing in
+ * this console has ever checked, so nobody's grant row carries it yet. Folding
+ * it into `shown` would make the button silently absent for every admin on the
+ * server, which reads as "the feature did not ship". Greyed with this on hover
+ * reads as "grant yourself the scope", which is the truth.
+ */
+const NO_SPECTATE_SCOPE =
+  'Spectating needs the spectate scope, which this account does not have.'
+
+/**
+ * Kick, ban and spectate, for the player whose page this is.
  *
  * BUTTONS, NOT A BAR (#22 items 1 and 2). This used to be its own Card sitting
  * above the profile, with a heading and a line of help text under it. It is now
@@ -66,7 +90,9 @@ export function PlayerActions({
   name,
   banned,
   online,
+  adminOnline,
   canBan,
+  canSpectate,
 }: {
   license: string
   name: string
@@ -85,54 +111,83 @@ export function PlayerActions({
    * ban on somebody connected removes them and a ban on somebody absent waits.
    */
   online: boolean
+  /**
+   * THE ACTING ADMIN is on the server right now.
+   *
+   * THE SAME QUESTION AS `online`, ASKED OF A DIFFERENT LICENSE, and derived
+   * from the same `liveView` array at the same call site — not a second notion
+   * of presence. It decides whether Spectate EXISTS, because the camera runs on
+   * the admin's own client: reading the console in a browser at a desk, there
+   * is no body in the world to put behind it.
+   */
+  adminOnline: boolean
   canBan: boolean
+  /** The `spectate` scope. Decides whether Spectate WORKS, never whether it is
+   *  drawn — see {@link actionBar}. */
+  canSpectate: boolean
 }) {
   const router = useRouter()
   const [banOpen, setBanOpen] = useState(false)
   const [liftOpen, setLiftOpen] = useState(false)
   const [kickOpen, setKickOpen] = useState(false)
+  /**
+   * Spectate is the only action here with no dialog in front of it, so it is
+   * the only one that can be fired twice by a double click. Every other button
+   * opens something and the something owns the busy state.
+   */
+  const [watching, setWatching] = useState(false)
 
   /**
-   * EVERY CONDITION ON THE KICK BUTTON, IN ONE PLACE, AND THEY ARE TWO
-   * DIFFERENT QUESTIONS.
+   * WHICH BUTTONS EXIST AND WHICH OF THEM WORK — ALL OF IT, FROM ONE FUNCTION.
    *
-   *   shown    THERE IS SOMEBODY TO KICK. Two ways there is not, and both
-   *            HIDE rather than grey out:
+   * `const kick = { shown: !banned && online, enabled: canBan }` USED TO BE
+   * THIS LINE, with every word of its reasoning above it. The reasoning moved
+   * to `lib/actionBar.ts` unchanged; what changed is that it is no longer
+   * written down twice. `ProfileView`'s loading skeleton has to draw the right
+   * NUMBER of button-shaped rectangles before this component has rendered, so
+   * it re-spelled the rule as `!banned && online ? 2 : 1` and carried a comment
+   * admitting the two were "kept in step by hand". Spectate would have made
+   * that two hand-kept copies of two rules.
    *
-   *            `!banned` — "the kick button should not be displayed on the
-   *            profile page when a ban is in place" — the owner. A banned
-   *            player is not somebody you kick, so there is no action being
-   *            withheld and nothing to explain.
+   * So both readers call the same function and the skeleton counts
+   * `bar.buttons`. THE ONE THING THAT STILL HAS TO BE KEPT IN STEP is that
+   * every input remains knowable without Discord — see the note in that file.
    *
-   *            `online` — "let's remove the 'kick' button from the profile page
-   *            if the user is offline" — the owner, and it MOVED HERE FROM
-   *            `enabled`. It used to draw a dead button over an absent player.
-   *            An action with no target is not an action being withheld either;
-   *            it is one that does not exist right now, and a greyed control
-   *            with a caption under it was the console explaining an absence
-   *            nobody asked about. Nothing marks the gap.
-   *
-   *   enabled  `canBan`, and only that. It is the one condition that is
-   *            genuinely about the ADMIN rather than the player: the action
-   *            exists, there is somebody it would apply to, and this account
-   *            may not take it. That stays DISABLED-with-a-reason on hover,
-   *            because a permission you do not have is worth knowing about in a
-   *            way that an empty seat is not.
-   *
-   * THE DISTINCTION THE TWO LINES DRAW, since it is the whole shape of this:
-   * the state of the PLAYER decides whether the control is there at all, and
-   * the scope of the ADMIN decides whether it works.
-   *
-   * A banned player who is somehow still connected is a transient state —
-   * `/api/bans` kicks them in the same request — and it resolves towards the
-   * button being irrelevant either way.
-   *
-   * `ProfileView`'s loading skeleton COUNTS THESE BUTTONS and must be changed
-   * with this line. Both `banned` and `online` are known without waiting for
-   * Discord, so the skeleton can draw the right number rather than drawing two
-   * and resolving to one.
+   * `src/lib/actionBar.check.ts` drives this function over the whole truth
+   * table AND asserts that this file still gates each button on it, because a
+   * correct rule with a call site that ignores it is the failure this repo
+   * keeps shipping.
    */
-  const kick = { shown: !banned && online, enabled: canBan }
+  const bar = actionBar({ banned, online, adminOnline, canBan, canSpectate })
+
+  /**
+   * Ask the game to point this admin's camera at this player (#192).
+   *
+   * NO CONFIRMATION STEP, and that is a choice rather than an omission. A kick
+   * and a ban each open a dialog because each needs a reason the player will
+   * read; nobody reads this one, because the whole point is that the subject is
+   * not told. What would a confirm box ask? "Yes, watch them" adds a click and
+   * no information — and the record that makes this accountable is the audit
+   * row `/api/spectate` writes before the command leaves, not a box the admin
+   * clicked through.
+   *
+   * THE SESSION IS NOT ENDED FROM HERE, EITHER. The admin stops it from the
+   * game's own pause menu, and it stops itself if the target disconnects (#192,
+   * the owner). Neither is something the console asked for, so neither is a
+   * button here — a "Stop spectating" control in a browser tab would be a
+   * second way to end a session that has already ended itself.
+   */
+  const watch = async () => {
+    setWatching(true)
+    try {
+      await postJson('/api/spectate', { license, playerName: name })
+      toast.success(`Spectating ${name}.`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Spectate failed.')
+    } finally {
+      setWatching(false)
+    }
+  }
 
   const lift = async () => {
     try {
@@ -148,26 +203,88 @@ export function PlayerActions({
     <>
       <div className="flex items-center gap-2">
         {/*
+          SPECTATE IS FIRST BECAUSE IT IS THE LIGHTEST. The row runs
+          watch → remove → bar, which is the order of how much of somebody's
+          evening it costs, and it is the order a moderator escalates in.
+
+          IT IS ABSENT UNLESS BOTH PEOPLE ARE IN-GAME — the player, and the
+          admin reading this page. See `spectate` in lib/actionBar.ts for why
+          the admin's own presence is half the rule. Nothing marks the gap; a
+          ghost button explaining that nobody is on the server would be text
+          nobody asked for.
+        */}
+        {bar.spectate.shown && (
+          <>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <span
+                    className={
+                      bar.spectate.enabled ? undefined : 'cursor-not-allowed'
+                    }
+                  />
+                }
+              >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!bar.spectate.enabled || watching}
+                  onClick={watch}
+                >
+                  {watching ? <Loader2 className="animate-spin" /> : <Eye />}
+                  Spectate
+                </Button>
+              </TooltipTrigger>
+              {/*
+                NO POPUP AT ALL ON THE ENABLED BUTTON, which is where this
+                differs from Kick beside it. Kick's enabled tooltip predates
+                rule 8 in docs/hover-text.md and says what a kick does; writing
+                the equivalent here would be a sentence explaining what
+                spectating is, which is the one thing this feature was told not
+                to add. A button labelled "Spectate" is not improved by a pill
+                repeating the word.
+              */}
+              {!bar.spectate.enabled && (
+                <TooltipContent side="bottom">
+                  {NO_SPECTATE_SCOPE}
+                </TooltipContent>
+              )}
+            </Tooltip>
+            {/*
+              The trigger is an inert `<span>` and Base UI's popup carries no
+              `role` and no `aria-describedby`, so the popup is a mouse
+              affordance only. The same sentence therefore also exists in the
+              DOM — the conversion `Face` and the placement badge already use.
+            */}
+            {!bar.spectate.enabled && (
+              <span className="sr-only">{NO_SPECTATE_SCOPE}</span>
+            )}
+          </>
+        )}
+
+        {/*
           KICK IS ABSENT ALTOGETHER WHENEVER THERE IS NOBODY TO KICK — while a
-          ban is in force, and while the player is offline. See `kick` above for
-          both. Nothing marks either gap: a caption or a ghost button explaining
-          the absence would be text nobody asked for.
+          ban is in force, and while the player is offline. See `kick` in
+          lib/actionBar.ts for both. Nothing marks either gap: a caption or a
+          ghost button explaining the absence would be text nobody asked for.
 
           WHAT IS LEFT ON HOVER IS THE SCOPE. Without `ban` this button and the
           one beside it disable the same way and say why, which is where the
           removed "you can see this record but not act on it" paragraph went.
         */}
-        {kick.shown && (
+        {bar.kick.shown && (
           <Tooltip>
             <TooltipTrigger
               render={
-                <span className={kick.enabled ? undefined : 'cursor-not-allowed'} />
+                <span
+                  className={bar.kick.enabled ? undefined : 'cursor-not-allowed'}
+                />
               }
             >
               <Button
                 variant="outline"
                 size="sm"
-                disabled={!kick.enabled}
+                disabled={!bar.kick.enabled}
                 onClick={() => setKickOpen(true)}
               >
                 <LogOut />

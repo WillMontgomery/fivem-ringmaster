@@ -97,9 +97,27 @@ did: what was removed was the trigger, so there was nothing left to hang a popup
 on. The count each pip stood for is still the `matches` figure they sat next to,
 and the phase each one was coloured by is spelled out on the match cards.
 
-**Twelve `Tooltip` sites remain outside `src/components/ui/`**, down from
-thirteen. A grep for `<Tooltip` returns one line more than that, and the extra
-one is prose inside `ProfileView`'s own comment.
+**Thirteen `Tooltip` sites remain outside `src/components/ui/`.** It read twelve
+— down from thirteen, when `ServerStrip`'s pips went — and #192's Spectate button
+takes it back to thirteen. A grep for `<Tooltip>` returns one line more than the
+count, and the extra one is prose inside `ProfileView`'s own comment.
+
+**The new one is the first site in `PlayerActions.tsx` that satisfies this rule
+rather than appearing under Known gaps for breaking it**, and it is worth reading
+before the next disabled control is built:
+
+- **The popup is conditional and the button is not.** `<Tooltip>` wraps the
+  Spectate button whenever it is drawn; `TooltipContent` renders only while the
+  button is disabled. There is no enabled-state sentence at all, because the only
+  honest one would explain what spectating is — rule 8, and the standing
+  instruction on the issue that built it. A pill repeating a button's own label
+  is not a fallback for anything. (`ProfileView`'s dead-first badge makes the
+  same move one level up, conditioning the whole `<Tooltip>`; both spellings are
+  fine, and the comment at `ProfileView.tsx:507` says why that one goes further.)
+- **The sentence exists twice**, as `NO_SPECTATE_SCOPE` — once in the popup and
+  once in an `sr-only` span beside it, the `Face` conversion. The trigger is an
+  inert `<span>` around a disabled button, so without the second copy the fact
+  would live on hover alone for a mouse and nowhere at all for anybody else.
 
 ### 5. `HoverCard` = content with real internal structure
 
@@ -338,9 +356,12 @@ two-sentence paragraphs in a single-line pill.
 - **`PlayerRow.tsx`** uses a `Tooltip` as a copy-confirmation toast on a
   `setTimeout`, invisible to the keyboard user who just pressed Enter. `sonner`
   is already mounted in the root layout.
-- **`PlayerActions.tsx`** has the disabled-button defect twice more, worked
+- **`PlayerActions.tsx`** has the disabled-button defect twice, worked
   around with a bare wrapper `<span>` that restores the mouse case and nothing
-  else.
+  else. **It is two rather than three**: the Spectate button added by #192 uses
+  the same wrapper and also carries the sentence as `sr-only`, which is the fix
+  those two still need — see rule 4. Doing it there did not fix them, because the
+  string is different at each site and Kick's enabled branch has a second one.
 - **The incident page's Ban button is disabled with nothing saying why**, and
   that is rule 8 outranking the trap above rather than an oversight. The resolve
   buttons moved into the player-report bar at the owner's request — *"No helper

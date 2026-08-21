@@ -50,6 +50,7 @@ import {
  * chip reads `p.ban` for its card and `banned` for whether to draw at all, and
  * the buttons take the same `banned`. See the `moderation` prop.
  */
+import { actionBar } from '@/lib/actionBar'
 import type { AccentSurface } from '@/lib/contrast'
 import { ago, humanDuration } from '@/lib/duration'
 import { filedByAPlayer, incidentChips, verdictTone } from '@/lib/incidentChip'
@@ -615,6 +616,15 @@ const ACTION_LABEL: Record<string, string> = {
   'ban.issue': 'Banned',
   'ban.lift': 'Ban lifted',
   'player.kick': 'Kicked',
+  // #192. WITHOUT THIS ENTRY THE ROW STILL APPEARS — `labelFor` humanises an
+  // unmapped id, so it would read "Player spectate" — which is why this is a
+  // label and not a decision about whether the row belongs on the page. It
+  // belongs: the issue's own words are "the same as a kick or a ban".
+  //
+  // THE SECTION IS STILL HEADED "Kicks and bans", which is now one word short
+  // of what it lists. That heading is the owner's and renaming it is theirs to
+  // ask for, so it is reported rather than quietly rewritten.
+  'player.spectate': 'Spectated',
   'maintenance.schedule': 'Scheduled a server update',
   'maintenance.cancel': 'Cancelled a server update',
   'host.deploy': 'Ran a server update',
@@ -2249,13 +2259,15 @@ function ProfileSkeleton({
   /** The same breadcrumb the loaded page will draw. See {@link BackTo}. */
   backTo?: BackTo
   /**
-   * How many buttons the moderation bar will have: 0 (no bar at all), 1 (a ban
-   * is in force, so Kick is not drawn) or 2.
+   * How many buttons the moderation bar will have: 0 (no bar at all) through 3.
    *
-   * A COUNT RATHER THAN A BOOLEAN, since the Kick button became conditional. It
-   * is knowable here — `banned` comes from the server and owes nothing to
-   * Discord — so a skeleton that always drew two would leave an 88px hole in a
-   * right-aligned flex group on every banned player's page. See PlayerActions.
+   * A COUNT RATHER THAN A BOOLEAN, since the Kick button became conditional,
+   * and it now runs to three because Spectate is conditional too. It is
+   * knowable here — every input comes from the server and owes nothing to
+   * Discord — so a skeleton that always drew the maximum would leave an 88px
+   * hole per missing button in a right-aligned flex group. The caller does not
+   * count them by hand: `lib/actionBar.ts` counts them, for this and for the
+   * bar itself.
    */
   moderationButtons: number
   /** Whether the "Actions taken" panel is already certain to render. */
@@ -2523,7 +2535,24 @@ export function ProfileView({
   moderation?: {
     /** On the server right now — decides whether a kick is even possible. */
     online: boolean
+    /**
+     * THE ADMIN READING THIS PAGE is on the server right now (#192).
+     *
+     * THE SAME FACT AS `online`, ABOUT A DIFFERENT PERSON. Both are computed at
+     * the call site from one `liveView(now).players` array — see
+     * `players/[license]/page.tsx` — so this is not a second way of asking who
+     * is connected. It exists because Spectate needs somewhere to put a camera:
+     * an admin in a browser tab has no client for the game to point anywhere.
+     *
+     * IT HAS NO COUNTERPART ELSEWHERE ON THIS PAGE, unlike `online`, which the
+     * ONLINE NOW chip also reads via `p.live`. Nothing on a player's profile is
+     * a biographical fact about the person LOOKING at it, so this one is read
+     * only where it belongs — the moderation bar's own contract.
+     */
+    adminOnline: boolean
     canBan: boolean
+    /** The `spectate` scope. */
+    canSpectate: boolean
   }
   /** Report categories in English. From `lib/incidents`, which is server-only. */
   categoryLabel?: Record<string, string>
@@ -2588,18 +2617,34 @@ export function ProfileView({
         // rather than "Back to live players" swapping to "Back to incident" the
         // moment Discord answers — the same argument as the button count below.
         backTo={backTo}
-        // THE SAME CONDITION `PlayerActions` DRAWS FROM, kept in step by hand
-        // because the skeleton cannot ask the component that has not rendered.
+        // THE SAME FUNCTION `PlayerActions` DRAWS FROM, not a second spelling
+        // of it, and that is the change Spectate forced.
         //
-        // Ban-or-lift is always there, so the count is one plus kick, and kick
-        // needs BOTH a player who is not banned and one who is connected —
-        // `kick.shown` over there is `!banned && online`. Neither input waits on
-        // Discord: `banned` is the server's `bans.isActive`, and `online` is the
-        // presence snapshot (see its own comment above). So the skeleton draws
-        // the number that is about to appear rather than always two, and an
-        // offline or banned player's bar no longer jumps from two buttons to one
-        // when Discord answers.
-        moderationButtons={moderation === undefined ? 0 : !banned && online ? 2 : 1}
+        // This line used to read `!banned && online ? 2 : 1` with a comment
+        // saying it was "kept in step by hand because the skeleton cannot ask
+        // the component that has not rendered". The skeleton still cannot ask
+        // the component — but it can ask what the component asks, and a third
+        // button meant a second hand-kept copy of a second rule. `bar.buttons`
+        // counts Ban-or-lift, Kick and Spectate by the rules that actually draw
+        // them; see lib/actionBar.ts.
+        //
+        // NONE OF THE FIVE INPUTS WAITS ON DISCORD, which is the property that
+        // makes counting here legitimate at all: `banned` is the server's
+        // `bans.isActive`, both presence booleans come from the snapshot, and
+        // both scopes are DynamoDB reads. So the skeleton draws the number that
+        // is about to appear rather than always three, and no bar jumps when
+        // Discord answers.
+        moderationButtons={
+          moderation === undefined
+            ? 0
+            : actionBar({
+                banned,
+                online,
+                adminOnline: moderation.adminOnline,
+                canBan: moderation.canBan,
+                canSpectate: moderation.canSpectate,
+              }).buttons
+        }
         actionsTaken={p.actionsTaken.length > 0}
       />
     )
@@ -2772,7 +2817,13 @@ export function ProfileView({
                 // which is its own defect. The header pair cannot do the same,
                 // because it must still render when `moderation` is absent.
                 online={moderation.online}
+                // THE OTHER HALF OF THE SPECTATE RULE (#192). It is read here
+                // and nowhere else on this page, because it is a fact about the
+                // reader rather than about the player — see the `moderation`
+                // prop.
+                adminOnline={moderation.adminOnline}
                 canBan={moderation.canBan}
+                canSpectate={moderation.canSpectate}
               />
             )}
           </div>

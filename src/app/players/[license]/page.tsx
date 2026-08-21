@@ -106,10 +106,35 @@ export default async function PlayerProfilePage({
   // The real snapshot, not a fixture: are they on the server right now?
   const live = view.players.find((p) => p.license === license) ?? null
 
-  const [ban, canBan, record, game, matches, log, against, filed, origin] =
+  /**
+   * IS THE ADMIN READING THIS PAGE ON THE SERVER RIGHT NOW? (#192)
+   *
+   * THE SAME ARRAY, THE SAME PREDICATE, A DIFFERENT LICENSE — deliberately one
+   * line below `live` rather than anywhere else, so the two presence facts the
+   * moderation bar needs are visibly one reading of one snapshot. Deriving the
+   * admin's presence any other way (a second query, a session flag, the
+   * pause-menu handoff) would give this page two notions of who is connected
+   * that could disagree with each other and with the ONLINE NOW chip.
+   *
+   * IT IS FALSE FOR AN ADMIN WITH NO LICENSE, which is right and not an
+   * accident of `find`: an account whose grant row carries no license cannot be
+   * matched to a body in the world, and `/api/spectate` refuses it for the same
+   * reason. `undefined === undefined` never fires here because a snapshot row
+   * with no license is dropped upstream (see lib/state), but the explicit guard
+   * is what makes that a rule rather than a lucky property of the feed.
+   */
+  const adminLive =
+    admin.license !== null &&
+    view.players.some((p) => p.license === admin.license)
+
+  const [ban, canBan, canSpectate, record, game, matches, log, against, filed, origin] =
     await Promise.all([
       bans.banFor(license),
       can(admin.license, 'ban'),
+      // #192. A SCOPE OF ITS OWN, never folded into `ban`: watching somebody is
+      // strictly less destructive than removing them, so it is trustable far
+      // earlier. Same batch, so it costs no extra round trip.
+      can(admin.license, 'spectate'),
       players.playerFor(license),
       gameProfileFor(license),
       // A SECOND READ OF THE SAME TABLE, and it has to be: the aggregate is a
@@ -467,7 +492,14 @@ export default async function PlayerProfilePage({
             // `bannedNow` above — `bans.isActive`, the one rule — and it is
             // already going over as `banned` on the line above. The moderation
             // buttons read that same boolean now instead of re-deriving it.
-            moderation={{ online: live !== null, canBan }}
+            // BOTH PRESENCE BOOLEANS COME OUT OF THE ONE `view.players` READ
+            // above — the player's, and the admin's own. See `adminLive`.
+            moderation={{
+              online: live !== null,
+              adminOnline: adminLive,
+              canBan,
+              canSpectate,
+            }}
           />
         </div>
       </DiscordChromeProvider>

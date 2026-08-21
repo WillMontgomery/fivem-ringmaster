@@ -53,7 +53,13 @@ import { thresholdFor } from '@/lib/xp'
  *                passed `bans: []` could never show. `offline` and
  *                `banned-online` pull the Kick button's two hiding rules apart:
  *                it is drawn only for a player who is present AND not banned,
- *                and each of those cases isolates one half of that
+ *                and each of those cases isolates one half of that.
+ *                `admin-offline` and `spectate-noscope` do the same job for
+ *                Spectate (#192) — the first holds the ADMIN out of the game
+ *                with the player still in it, which is the only way to see that
+ *                both halves of that rule are live; the second holds the
+ *                `spectate` grant back while `ban` is held, which is what a new
+ *                moderator's account actually looks like
  *   ?names=      the names the "Other names" row is built from: never renamed,
  *                renamed twice, and enough to fill the line
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
@@ -780,19 +786,76 @@ const BACK_CASES = {
 
 type BackKey = keyof typeof BACK_CASES
 
+/**
+ * ═══ EVERY CASE CARRIES `adminOnline` AND `canSpectate` SINCE #192 ═══
+ *
+ * The bar now has THREE conditional shapes rather than two, and the new one is
+ * the only rule in this console that depends on a fact about the ADMIN's body
+ * rather than the player's: Spectate is drawn when the admin and the target are
+ * both in-game, and hidden — never greyed — otherwise.
+ *
+ * THAT RULE CANNOT BE REVIEWED ON A FIXTURE WHERE BOTH HALVES AGREE, which is
+ * the whole argument `banned-online` already makes about Kick. Deleting
+ * `adminOnline` from the expression leaves every case below looking correct
+ * except `admin-offline`, which exists for exactly that reason.
+ */
 const MOD_CASES = {
-  online: { online: true, canBan: true, ban: null },
+  online: {
+    online: true,
+    adminOnline: true,
+    canBan: true,
+    canSpectate: true,
+    ban: null,
+  },
   /**
    * ABSENT, AND THEREFORE NO KICK BUTTON AT ALL.
    *
    * "let's remove the 'kick' button from the profile page if the user is
    * offline" — the owner. THIS CASE USED TO DRAW A DEAD BUTTON with a tooltip
    * saying nobody was there to kick, and it is the fixture that proves the
-   * button is now gone rather than greyed. One button in the bar, not two.
+   * button is now gone rather than greyed. One button in the bar, not three:
+   * Spectate goes with it, because there is nobody to watch either.
    */
-  offline: { online: false, canBan: true, ban: null },
-  banned: { online: false, canBan: true, ban: ACTIVE_BAN },
-  'banned-temp': { online: false, canBan: true, ban: TEMP_BAN },
+  offline: {
+    online: false,
+    adminOnline: true,
+    canBan: true,
+    canSpectate: true,
+    ban: null,
+  },
+  /**
+   * THE ADMIN IS AT A DESK AND THE PLAYER IS IN A MATCH (#192).
+   *
+   * THE ONE CASE THAT ISOLATES THE ADMIN HALF OF THE SPECTATE RULE, and the
+   * ordinary state for most of this console's life — somebody reading the
+   * profile in a browser tab rather than through the game's pause menu. Kick
+   * and Ban are unaffected and both draw; Spectate must be ABSENT, because the
+   * camera runs on the admin's own client and there is no client.
+   *
+   * Without this fixture, `shown: online && adminOnline` and `shown: online`
+   * render identically on every other case here.
+   */
+  'admin-offline': {
+    online: true,
+    adminOnline: false,
+    canBan: true,
+    canSpectate: true,
+    ban: null,
+  },
+  banned: {
+    online: false,
+    adminOnline: true,
+    canBan: true,
+    canSpectate: true,
+    ban: ACTIVE_BAN,
+  },
+  'banned-temp': {
+    online: false,
+    adminOnline: true,
+    canBan: true,
+    canSpectate: true,
+    ban: TEMP_BAN,
+  },
   /**
    * BANNED AND STILL CONNECTED, and it is the case that keeps the two hiding
    * rules from being confused for one.
@@ -804,13 +867,56 @@ const MOD_CASES = {
    * respect, so the absence here can only be the ban. Without it, deleting
    * `!banned` from that expression would still look right in the harness.
    *
+   * IT ALSO PROVES SPECTATE DOES NOT SHARE THAT RULE. Two buttons here, not
+   * one: Lift ban, and Spectate — because a ban is a reason not to KICK
+   * somebody (the action is redundant) and not a reason to stop WATCHING them
+   * in the seconds before the ban's own kick lands.
+   *
    * It is a real state and a short-lived one — `/api/bans` kicks a connected
    * player in the same request that bans them, so a profile opened in between,
    * or one whose snapshot is a couple of seconds behind, sits here.
    */
-  'banned-online': { online: true, canBan: true, ban: ACTIVE_BAN },
-  served: { online: true, canBan: true, ban: SERVED_BAN },
-  noscope: { online: true, canBan: false, ban: null },
+  'banned-online': {
+    online: true,
+    adminOnline: true,
+    canBan: true,
+    canSpectate: true,
+    ban: ACTIVE_BAN,
+  },
+  served: {
+    online: true,
+    adminOnline: true,
+    canBan: true,
+    canSpectate: true,
+    ban: SERVED_BAN,
+  },
+  noscope: {
+    online: true,
+    adminOnline: true,
+    canBan: false,
+    canSpectate: false,
+    ban: null,
+  },
+  /**
+   * THE SCOPES PULLED APART, which `noscope` above cannot do.
+   *
+   * `ban` and `spectate` are separate grants — watching somebody is trustable
+   * long before removing them is — so an account can hold one and not the
+   * other, and that is the state a new moderator is actually in. Kick and Ban
+   * work; Spectate is DRAWN AND GREYED, with the reason on hover and in the DOM
+   * as `sr-only`.
+   *
+   * IT IS THE STATE EVERY ADMIN IS IN TODAY. `spectate` has never been checked
+   * by anything, so no grant row carries it — this is what the console looks
+   * like the moment #192 ships and before anybody runs `scripts/grant.mjs`.
+   */
+  'spectate-noscope': {
+    online: true,
+    adminOnline: true,
+    canBan: true,
+    canSpectate: false,
+    ban: null,
+  },
 } as const
 
 type ModKey = keyof typeof MOD_CASES
@@ -1433,7 +1539,9 @@ async function Preview({
         verdictLabel={VERDICT_LABEL}
         moderation={{
           online: MOD_CASES[mod].online,
+          adminOnline: MOD_CASES[mod].adminOnline,
           canBan: MOD_CASES[mod].canBan,
+          canSpectate: MOD_CASES[mod].canSpectate,
         }}
       />
     </div>

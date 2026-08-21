@@ -29,6 +29,23 @@ export type AuditAction =
   | 'ban.issue'
   | 'ban.lift'
   | 'player.kick'
+
+  /**
+   * An admin asked to put their camera on a player (#192).
+   *
+   * THE ROW IS THE POINT, not a by-product of one. A kick and a ban are visible
+   * to the person they happen to; this one is not — the player is not told, and
+   * cannot be, or the tool stops being useful. "An admin watching a player who
+   * does not know they are being watched is exactly the class of action
+   * `ringmaster-audit` exists to record — the same as a kick or a ban. Nothing
+   * else in the console acts on a player without leaving a row" (#192). This is
+   * the row, and it is written BEFORE the command is sent like every other one.
+   *
+   * NO REASON, and unlike the kick that is not a judgement call about how much
+   * typing is reasonable — the console never asks for one, because the button
+   * is a single click by design. Who watched whom, and when, is the record.
+   */
+  | 'player.spectate'
   | 'maintenance.schedule'
   | 'maintenance.cancel'
   | 'maintenance.drain'

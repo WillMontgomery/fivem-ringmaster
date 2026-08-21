@@ -21,17 +21,23 @@ tool, and "restart the server to change a number" is not a config system.
 | | |
 |---|---|
 | **Sees** | who is on the server right now, live; host CPU/memory/network; every anticheat firing; the game box's live convars, read-only; screenshots of the screen a case was filed against |
-| **Acts** | kick, ban, resolve an incident with a verdict |
+| **Acts** | kick, ban, spectate a live player, resolve an incident with a verdict |
 | **Remembers** | bans with the admin who issued them, an audit log of every action, incident reports with their artifacts and the match that was running around them |
 | **Operates** | schedule maintenance windows around live matches, deploy the game box, switch the branch it is parked on |
 | **Travels** | opens inside the game's own pause menu, already signed in — see [The console in the pause menu](#the-console-in-the-pause-menu) |
 
-**Four of the nine grant scopes have no surface behind them.** `spectate`,
-`moderate`, `notify` and `config` are all defined in `src/lib/grants.ts` and
-nothing checks any of them: every `authorize()` call under `src/app/api/` asks
-for `view`, `kick`, `ban` or `process`. Holding one of the four grants nothing
-today. Spectate in particular is deliberate rather than pending — see
-[Spectate is deliberately absent](#milestones).
+**Three of the nine grant scopes have no surface behind them.** `moderate`,
+`notify` and `config` are all defined in `src/lib/grants.ts` and nothing checks
+any of them: every `authorize()` call under `src/app/api/` asks for `view`,
+`kick`, `ban`, `spectate` or `process`. Holding one of the three grants nothing
+today.
+
+> **`spectate` was the fourth, and it is the fourth no longer.** `/api/spectate`
+> authorises on it (#192), so it is now a grant that does something — and, since
+> nothing had ever checked it, **no existing grant row carries it**. Every admin
+> on the server sees the Spectate button greyed until somebody runs
+> `scripts/grant.mjs`. That state is on purpose and it says so on hover;
+> `/preview/profile?mod=spectate-noscope` is what it looks like.
 
 > **This paragraph used to name `spectate` alone, and then add: "Screenshots on
 > incidents are the same shape: the incident pipeline ships, the capture half
@@ -233,17 +239,28 @@ never a shell. `dispatch.sh` switches on a fixed set of verbs and never `eval`s
 what it receives.
 
 It carries everything, and the verb set is closed. `dispatch.sh` switches on
-exactly seven, mirrored by the `Verb` union in `src/lib/ssh.ts`:
+exactly eight, mirrored by the `Verb` union in `src/lib/ssh.ts`:
 
 | Verb | What it does |
 |---|---|
 | `status` | what the box is running, and which ref it is parked on |
 | `telemetry` | CPU, memory, network — polled every 15s, held in memory here |
 | `configreport` | the allowlisted convars, for the read-only Live config page |
-| `kick` | the one game command, relayed to FXServer's stdin by the supervisor |
+| `kick` | a game command, relayed to FXServer's stdin by the supervisor |
+| `spectate` | the other one: point an admin's camera at a player (#192) |
 | `deploy` | starts the `royale-deploy` unit, detached |
 | `branches` | every remote branch, with whether it may be deployed |
 | `switchref` | park the box on a different ref |
+
+> **`kick` used to be described as "the one game command", and it was seven
+> verbs rather than eight.** `spectate` joined with #192. Both halves of that
+> sentence are load-bearing, so both moved: the set is pinned on the far side by
+> the game repo's `tools/verify.sh`, which greps `dispatch.sh` for it and fails
+> the build when it grows, precisely so that a new capability from this console
+> to that box is a decision somebody records rather than a line somebody added.
+> `spectate` is the lightest write there is — it carries no free text at all,
+> just two hex licenses and a UUID — but it is still a write, and it still ends
+> up on FXServer's stdin.
 
 > **This section used to say the channel carried "process lifecycle (`stop`,
 > `restart`, `update_check`)".** No such verb has ever existed on either side —
@@ -490,11 +507,26 @@ Both could not be true. The verbs that only read (`status`, `telemetry`) belong
 before the boundary; the ones that end a match for everyone on the box belong
 after it, next to the audit log that records them.
 
-**Spectate is deliberately absent.** The camera and client-state machinery
-belongs to the game repo's M7 (death-cam spectating), and Ringmaster's
-admin-spectate is that same machinery plus a routing-bucket hop and a grant
-check. Building it here would mean two spectator modes. The UI can be built
-ahead of the tooling; the wiring waits.
+**Spectate was deliberately absent, and the wait is over.** The paragraph here
+used to read: "The camera and client-state machinery belongs to the game repo's
+M7 (death-cam spectating), and Ringmaster's admin-spectate is that same machinery
+plus a routing-bucket hop and a grant check. Building it here would mean two
+spectator modes. The UI can be built ahead of the tooling; the wiring waits."
+
+That was right and it is now spent. M7 built the machinery, so #192 built the
+console half onto it rather than beside it: a Spectate button on the profile, a
+`player.spectate` audit row, and one more verb on the SSH channel the kick
+already uses — `spectate <admin-license> <target-license> <command-id>`, whose
+name and argument order the game repo's `tools/verify.sh` pins. **There is still
+exactly one spectator mode**, which was the whole point of waiting: this console
+resolves two licenses and hands them to `br_core`, which owns the camera, the
+session and the policy. Ringmaster does not know what spectating is.
+
+**The button is hidden unless the admin and the target are both in-game**, which
+is the standing rule for an action with no target and the same treatment the
+profile already gives Kick. Both presence readings come out of one snapshot; the
+rule is `src/lib/actionBar.ts` and `check:actionbar` asserts that the components
+actually gate on it.
 
 ## Stack
 
