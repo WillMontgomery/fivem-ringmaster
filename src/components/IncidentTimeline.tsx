@@ -24,6 +24,7 @@ import { profileHref } from '@/lib/profileLink'
 import {
   MATCH_EVENT_LABEL,
   MATCH_PROGRESS_LABEL,
+  isBracket,
   killDiscrepancy,
   killLine,
   matchOffset,
@@ -49,11 +50,22 @@ import { cn } from '@/lib/utils'
  * thing, because an admin reading a case does not care which process wrote
  * which row; they care what happened and in what order.
  *
+ * ═══ AND A CASE FILED IN WARMUP HAS NO START TO BE ANCHORED ON ═══
+ *
+ * A match is formed into warmup and only stamps a start on entering play, so a
+ * case opened on the warmup pad carries a `match_created` entry where every
+ * other case carries `match_start`. Its word is a different word on purpose,
+ * and `MATCH_EVENT_LABEL` is where the word and the argument for it live —
+ * NOT HERE, because a label spelled in markup is a label nothing checks.
+ * Nothing else special-cases the kind either: it is a bracket, it goes through
+ * the same lookup, and the `weapon_strip` entries that opened the case sit
+ * under it like any other row.
+ *
  * EVERY DECISION IN HERE THAT COULD BE WRONG LIVES IN `lib/matchTimeline`, and
  * that is deliberate rather than tidy. `npm run verify` runs `check:timeline`
- * against those functions — the sort, the three match states, the article, and
- * above all the one comparison that decides whether a weapon turns red. A rule
- * spelled inline in JSX is a rule nothing can test.
+ * against those functions — the sort, the match states, the bracket set, the
+ * article, and above all the one comparison that decides whether a weapon turns
+ * red. A rule spelled inline in JSX is a rule nothing can test.
  *
  * ═══ THE RED IS A SERIOUS CLAIM AND IT IS MADE ONCE ═══
  *
@@ -218,7 +230,12 @@ function MatchRow({
   /** The incident these names should lead back to. See `lib/profileLink`. */
   from: string
 }) {
-  const bracket = entry.kind === 'match_start' || entry.kind === 'match_end'
+  /*
+    THE SET OF BRACKETS LIVES IN `lib/matchTimeline`, not here. It gained a
+    third member — `match_created`, the anchor a warmup case has instead of a
+    start — and a membership test spelled in JSX is one nothing can check.
+  */
+  const bracket = isBracket(entry)
 
   return (
     <TimelineItem>
