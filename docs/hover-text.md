@@ -16,13 +16,24 @@ Every string a reader needs must exist in the markup — visible, or `sr-only` a
 associated with a control via `aria-describedby`. Only after that may it *also*
 appear on hover.
 
-**The component library is Base UI, not Radix.** `@base-ui/react`, pinned at
-**1.7.0** in `package-lock.json`; there is no `@radix-ui/*` package in this repo
-at all. That matters on every line below, and it matters most when you go
-looking for help: nearly all shadcn material on the internet assumes Radix, and
-the two differ in the one prop this document leans on hardest —
-**`render={<span … />}`, never Radix's `asChild`.** Generating a component from
-the shadcn registry without checking will hand you the Radix variant.
+**The component library is Base UI, not Radix.** `@base-ui/react`, resolved to
+**1.7.0** in `package-lock.json`, and **nothing under `src/` imports
+`@radix-ui/*`** — a grep for it returns no hits outside `node_modules`. That
+matters on every line below, and it matters most when you go looking for help:
+nearly all shadcn material on the internet assumes Radix, and the two differ in
+the one prop this document leans on hardest — **`render={<span … />}`, never
+Radix's `asChild`.** Generating a component from the shadcn registry without
+checking will hand you the Radix variant.
+
+> **This used to say "there is no `@radix-ui/*` package in this repo at all",
+> and that is not true of the installed tree.** Sixteen of them are there,
+> pulled in transitively by `cmdk` — the command palette — through
+> `@radix-ui/react-dialog`. So `node_modules/@radix-ui/` exists, and whoever
+> finds it after reading the old sentence has been given a reason to doubt the
+> rest of this file. **The load-bearing claim is about imports, not about the
+> tree**: no Radix component is a direct dependency, none is rendered by
+> anything here, and a Radix idiom in `src/` is a mistake whatever
+> `node_modules` contains.
 
 This is not a stylistic preference. In Base UI 1.7.0, verified in
 `node_modules` and then in a browser:
@@ -97,11 +108,14 @@ single sentence does not get promoted to a 256px card for being important. It
 gets moved there for having parts.
 
 **There are four sites, in three files** — `Provenance.tsx`, two in
-`ProfileView.tsx`, and one in `IncidentTimeline.tsx`. A grep for `<HoverCard`
-returns exactly those.
+`ProfileView.tsx`, and one in `IncidentTimeline.tsx`. A grep for `<HoverCard>`
+returns exactly those four. (`<HoverCard` without the bracket returns twelve,
+because it also catches every `Trigger` and `Content`.)
 
-Two are gone and two are new since this list was last written, so the count has
-moved from three to four and the membership has not otherwise:
+**Six entries follow: the four that exist, and two kept as the record of what
+was removed and why.** The removed pair — `FeedStatus` and `IdLabel` — stay on
+the list because rule 8 is the reason both went, and an entry that is simply
+deleted invites the next person to rebuild it.
 
 - **`FeedStatus`** held the first card in the app, and the component was deleted
   when the owner asked for the live/falling-behind/feed-lost chips to be hidden;
@@ -112,10 +126,15 @@ moved from three to four and the membership has not otherwise:
   back"). What they asked for is the chip — a tone and a word — and the card was
   "Last update: 4.2s ago" over "The board refreshes every 2s", which rule 8
   forbids restoring and rule 5's closing line forbids re-adding in that shape:
-  it was a chip-shaped card whose only affordance was `cursor-help`. So the
-  count is still three, and this entry stays on the list of what is gone. The
-  exact age in seconds is what was lost with it; if the owner wants a number
-  back it is theirs to ask for, in their own words.
+  it was a chip-shaped card whose only affordance was `cursor-help`. **So
+  restoring the component did not move the count**, and this entry stays on the
+  list of what is gone. The exact age in seconds is what was lost with it; if
+  the owner wants a number back it is theirs to ask for, in their own words.
+
+  > This bullet used to close "**so the count is still three**", which was true
+  > when it was written and then sat two paragraphs under a heading saying
+  > four. Whichever a reader believed, the other was in front of them. The count
+  > is stated once, above, and this bullet no longer restates it.
 - **`Provenance`** is the oldest survivor: four two-sentence paragraphs that had
   been crammed into a single-line tooltip.
 - **`ProfileView`'s `IdLabel`** was the first that was a *label* rather than a
@@ -187,12 +206,19 @@ never fires on touch. A machine value belongs in a machine-readable attribute �
 `<time dateTime>` — not in a tooltip.
 
 > This does **not** touch the `title` **props** on this app's own components.
-> `Section`, `SectionHead`, `ConvarGroup`, `ConfirmDialog`, `CommandDialog` and
-> `Wireframe` all take a `title` prop, and every one of them is a heading or an
-> accessible name. A grep for `title=` returns both kinds; read each hit and
-> classify it. In particular **`PlayerSearch.tsx` `title="Search"` is the
-> accessible name of the command palette dialog** and looks more like a tooltip
-> than anything that actually was one.
+> `Section`, `SectionHead`, `ConvarGroup`, `ConfirmDialog`, `CommandDialog`,
+> `Wireframe`, and `HostCharts`' `HostAreaChart` and `NoSeries` all take a
+> `title` prop, and every one of them is a heading or an accessible name. A grep
+> for `title=` returns both kinds; read each hit and classify it. In particular
+> **`PlayerSearch.tsx` `title="Search"` is the accessible name of the command
+> palette dialog** and looks more like a tooltip than anything that actually was
+> one.
+>
+> **As of this sweep the grep returns 29 hits outside `src/components/ui/`: 28
+> component props and one sentence of prose** (`PrefsProvider.tsx`, describing
+> this very rule). None is a DOM attribute, so the rule currently has no
+> violations — and the two chart components were missing from the list above,
+> which made the grep look like it had unexplained hits.
 
 ### 7. Delays are per-trigger, not global
 
