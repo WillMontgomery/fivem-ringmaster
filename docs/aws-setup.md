@@ -5,7 +5,13 @@ Everything the admin console needs on the AWS side, in the order to do it.
 **Read this first:** you can stop after any numbered section and come back. The
 sections are ordered so that each one works on its own — nothing later breaks
 something earlier. **Sections 1–3 are the ones that unblock development.**
-Sections 4–6 are networking and can wait until there is something to deploy.
+Sections 4 and 5 are networking and can wait until there is something to deploy.
+
+> **Section 6 is not networking and is not optional.** It used to be a bucket to
+> build later, and this line used to sweep it in with the networking; it now
+> holds a live S3 bucket and **the fifth statement on the game box's IAM role**,
+> which section 3 does not contain. A role built from 1–3 alone files incidents
+> correctly and then fails every screenshot upload, silently.
 
 **No step here creates an access key.** If you find yourself downloading a
 `.csv` of credentials, stop — something has gone wrong. Both servers get their
@@ -36,7 +42,7 @@ Create ten tables. For every one of them:
 | `ringmaster-grants` | `license` (String) | — | Who can do what. **Needs a secondary index — see below.** Ringmaster writes; the game server only reads. |
 | `ringmaster-bans` | `license` (String) | — | Active and lifted bans. Ringmaster writes; the game server only reads. |
 | `ringmaster-audit` | `pk` (String) | `ts` (Number) | Every admin action. **Ringmaster only.** |
-| `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations. The game appends; both sides read. |
+| `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations. The game appends and updates five named attributes at match end; both sides read. Verdicts are written only by Ringmaster. |
 | `ringmaster-sessions` | `pk` (String) | `sk` (String) | Auth.js writes this. **Needs a secondary index *and* TTL — see below** |
 | `ringmaster-telemetry` | `host` (String) | `ts` (Number) | **Add a TTL attribute named `expires`.** Provisioned, and nothing writes it yet — see the note below. |
 | `ringmaster-maintenance` | `id` (String) | — | The scheduled maintenance window. **One item, `id = "current"`.** The game reads it for the drain gate. |
@@ -68,7 +74,7 @@ Create ten tables. For every one of them:
 > token at all. The split is what keeps that grant expressible as something
 > safe.
 
-> **Three of those nine were missing from this document until 2026-08-18**, and
+> **Three of the ten were missing from this document until 2026-08-18**, and
 > the omission was not cosmetic: `ringmaster-maintenance`, `ringmaster-players`
 > and `ringmaster-player-ids` are all live in `src/lib/dynamo.ts`, and a stack
 > built from the old list gives you a console that signs you in and then throws
@@ -308,12 +314,21 @@ the game box cannot touch a single `ringmaster-*` table.** It writes its own
 match data and nothing else. Not the grants table, not the audit log, not the
 ban list, not telemetry.
 
-**Four statements have been added to it since, and they are the only four.**
-The sections below are them — a read on bans, grants and the maintenance window;
-an append on incidents; since 2026-08-17, a read back of incident verdicts; and
-since 2026-08-21, an attribute-scoped update that closes an incident's match
-timeline. The third one cost a property this document used to advertise, and it
-is written down below rather than quietly dropped.
+**Five statements have been added to it since, and they are the only five.**
+Four of them are DynamoDB and are the sections immediately below — a read on
+bans, grants and the maintenance window; an append on incidents; since
+2026-08-17, a read back of incident verdicts; and since 2026-08-21, an
+attribute-scoped update that closes an incident's match timeline. The verdict
+read cost a property this document used to advertise, and it is written down
+below rather than quietly dropped.
+
+> **The fifth is S3 and it is not in this section.** `s3:PutObject` on the
+> artifacts bucket lives in **§6**, because that is where the bucket is
+> described. **This paragraph used to say four and stop here**, which was
+> accurate about DynamoDB and wrong about the role: a role built from §1–§3
+> alone files incidents correctly and then fails every screenshot upload, on the
+> subject's own client, with nothing on screen to say so. If you are rebuilding
+> this role, §6 is not optional reading.
 
 That matters because the game server is the box most exposed to the public
 internet, running software people actively try to exploit. If it is ever
@@ -323,7 +338,7 @@ banned.
 
 > **⚠ The `Resource` above is `br-stats-*`, and the shipped game code reads and
 > writes `br-players`.** Nothing matches `br-stats-*`. This is not a consequence
-> of any of the three additions below — it predates all of them.
+> of any of the additions below — it predates all of them.
 >
 > **What the code needs**, from `js-src/br_ddb/src/index.js` (`TABLE_PREFIX_GAME`
 > defaults to `br-`, and every call site names the table `players`):
@@ -404,8 +419,9 @@ pasting:
 - **`GetItem` only, on named tables.** Enough to answer "is *this* license
   banned?", "what scopes does *this* license hold?" and "are we draining?" —
   each about one specific key the box already has in hand. (A `PutItem` was
-  added alongside it on 2026-08-14 and a fourth table on 2026-08-17; both are
-  the sections below.)
+  added alongside it on 2026-08-14, a fourth table on 2026-08-17 and an
+  attribute-scoped `UpdateItem` on 2026-08-21; all three are the sections
+  below.)
 - **No `ringmaster-audit`, at all.** The audit log is the record of what admins
   did. A compromised game host must not be able to read — still less rewrite —
   the account of its own compromise. **This is the line that does not move**,
@@ -418,6 +434,12 @@ pasting:
   `ScanCommand` appear nowhere in the resource's source. So a compromised game
   server cannot enumerate who is banned, who the admins are, or which cases are
   open — it can only confirm or deny a key it was already given.
+
+  **Re-verified 2026-08-21, and the import list has grown by one:**
+  `PutObjectCommand` from `@aws-sdk/client-s3`, for artifact uploads (§6).
+  There is no `ListObjectsV2Command` and no `GetObjectCommand` beside it, so the
+  same sentence holds on the bucket: the game box can add a frame and cannot
+  enumerate or read one back.
 
   **Say it that way round on purpose.** Since 2026-08-17 the *grant* is broader
   than the code (see below), so "it can only touch these ARNs" is no longer the
@@ -517,7 +539,33 @@ That file's SET expression sets exactly these attributes and its comment names
 this policy as the reason. Adding a sixth attribute there without changing the
 policy produces AccessDenied at match end, in production, on a path with no user
 watching it. `BR.Ring.incidentStats().closeFailed` is the counter that says so;
-on a healthy server it is zero.
+on a healthy server it is zero (`brring` in the FXServer console prints it).
+
+#### A widening to two more attributes is coming, and is NOT in the JSON above
+
+**Written down as pending on 2026-08-21, deliberately unapplied here.** The
+owner intends to add **`matchStartedAt`** and **`matchEndsBy`** to the list, so
+that a case filed during warmup — before a match had a start or a deadline —
+receives both when the match ends. Today `close.js` on the gamemode's `dev`
+branch sets four attributes and the five above are exactly what it needs; a
+warmup-filed case therefore never gains a start, and the console has no span to
+hang its timeline offsets on.
+
+**The JSON has not been edited to match, and that is this file's standing rule
+rather than an oversight** — the same one §2 states about `br-players`: a
+document that silently widens a policy to fit code that has not landed is a
+document that widens it again next time without anybody deciding to. Decide it,
+then write it. What to do when it lands:
+
+1. Read the real role. It may already have been widened by hand.
+2. Widen `dynamodb:Attributes` and the SET expression in `close.js` **in that
+   order**. Policy first is a no-op; code first is AccessDenied at match end on
+   every match, silently.
+3. Update the list above so the next rebuild is correct.
+
+Both names already exist on the incident row — `incident.js` writes them on the
+original `PutItem`. What changes is only whether the *close* path may touch
+them.
 
 > **This section is late.** The grant was applied by the owner on 2026-08-20 and
 > written down here on 2026-08-21. In between, this document said the game box
@@ -546,7 +594,7 @@ story of this section.** The prefix covers `audit`, `bans`, `grants`,
 | `ringmaster-bans` | `GetItem` | the connect gate |
 | `ringmaster-grants` | `GetItem` | in-game admin scopes |
 | `ringmaster-maintenance` | `GetItem` | the drain gate |
-| `ringmaster-incidents` | `GetItem` + `PutItem` | file a case, read its verdict |
+| `ringmaster-incidents` | `GetItem` + `PutItem` + attribute-scoped `UpdateItem` | file a case, read its verdict, close its match timeline |
 
 **What was actually applied**, so this file matches the role rather than
 describing an ideal of it:
@@ -731,9 +779,12 @@ the peering.
 
 ## 6. S3 bucket for incident screenshots
 
-**The bucket exists as of 2026-08-20.** The operator created it and configured
-IAM on both roles. The code does not use it yet — see #34 (Artifacts) — but this
-is no longer a thing to build later.
+**The bucket exists and is in use.** The operator created it on 2026-08-20 and
+configured IAM on both roles; the code landed the same day. **This section used
+to say "the code does not use it yet — see #34 (Artifacts)", which was true for
+about a day and is quoted here because it is the sentence that makes a reader
+skip the section.** Do not skip it: this is the fifth statement on
+`FiveMGameServerRole`, and §3 does not contain it.
 
 | | |
 |---|---|
@@ -741,23 +792,71 @@ is no longer a thing to build later.
 | **Region** | us-east-2 (co-located with the game box, which is the writer) |
 | **Public access** | Blocked |
 | **Lifecycle** | 180-day expiry — see below |
+| **Keys** | `incidents/<incident-uuid>/01..09.webp` |
 
 The name is fixed and may be hard-coded (operator, 2026-08-20). It is not a
 secret: the bucket blocks public access, so knowing the name grants nothing
-without credentials, and `check-secrets` has no reason to object. Prefer a
-single named constant over a literal repeated at each call site — the one thing
-that would make a future rename expensive.
+without credentials, and `check-secrets` has no reason to object. It is a single
+named constant on each side rather than a literal repeated at each call site —
+`ARTIFACT_BUCKET` in `src/lib/artifactStore.ts` — which is the one thing that
+would make a future rename expensive.
 
 **Direction of access, which the IAM already reflects:**
 
-- **Game box** (`FiveMGameServerRole`) — `s3:PutObject` only. It writes evidence
-  and can neither read it back nor erase it.
-- **Ringmaster** (`RingmasterAppRole`) — `s3:GetObject` only, and no
-  `ListBucket`: the console learns which frames belong to an incident from
-  DynamoDB, so it never needs to enumerate the bucket.
+- **Game box** (`FiveMGameServerRole`) — `s3:PutObject` only, **scoped to the
+  `incidents/` prefix**. It writes evidence and can neither read it back nor
+  erase it. `js-src/br_ddb/src/artifacts.js` builds every key from that prefix
+  and states this policy as the reason, so a key that does not start there is
+  refused by IAM rather than by the resource.
 
-Images reach the browser through **short-lived presigned GETs** issued by the
-console, never public reads.
+  ```json
+  {
+    "Sid": "GameServerPutArtifact",
+    "Effect": "Allow",
+    "Action": ["s3:PutObject"],
+    "Resource": ["arn:aws:s3:::royale-incidents-bucket/incidents/*"]
+  }
+  ```
+
+- **Ringmaster** (`RingmasterAppRole`) — `s3:GetObject` only, and **no
+  `ListBucket`**.
+
+  ```json
+  {
+    "Sid": "RingmasterReadArtifact",
+    "Effect": "Allow",
+    "Action": ["s3:GetObject"],
+    "Resource": ["arn:aws:s3:::royale-incidents-bucket/incidents/*"]
+  }
+  ```
+
+> **Both blocks are transcribed from what the shipped code assumes, not read
+> back off the live role.** The operator applied the real policy by hand on
+> 2026-08-20 and this file did not record it for a day. Read the real role
+> before changing either — and if it disagrees with this, *this* is the stale
+> copy.
+
+**Nine keys, and the console finds them by guessing.** Nothing in DynamoDB says
+which frames a case has and nothing can — the game's grant on
+`ringmaster-incidents` cannot append a capture key after the fact. So the key
+format is fixed and enumerable **on purpose**: `incidents/<uuid>/01.webp`
+through `09.webp`, three timed frames plus six corroborations. The console
+issues nine `HEAD`s and keeps the ones that answer. **That is what buys the
+missing `ListBucket`**, and it is why the key format is a contract rather than an
+implementation detail: change the padding, the extension or the ceiling on one
+side and the other silently finds nothing. `npm run check:artifacts` asserts the
+two ceilings against each other.
+
+Images reach the browser through **60-second presigned GETs** issued by the
+console, never public reads — the URL is the target of a redirect the browser
+follows immediately, so its whole life is one round trip.
+
+> **The frames transit the game box, and the IAM is shaped for that.** The
+> capture runs on the subject's own client, which uploads to `screenshot-basic`'s
+> HTTP endpoint **on the game server**; the file lands in a spool directory
+> there, `br_ddb` `PutObject`s it, and a sweeper deletes the local copy. There is
+> no presigned PUT and no path from a game client to this bucket, so nothing
+> here needs a credential to reach a player's machine.
 
 **180-day expiry lifecycle rule** (decided 2026-08-20 by the operator, and it
 reverses what this section said before — the reversal is deliberate, not drift).
@@ -781,7 +880,9 @@ surprised by it:**
   EVIDENCE OF ANYTHING"* — was the comment on `Incident.captureKeys`. **That
   field has been deleted** (owner, 2026-08-20: "yeah let's not have captureKeys
   if we don't need it"); it could never be populated, because the game's grant on
-  `ringmaster-incidents` is `PutItem` conditional on the id being absent. The
+  `ringmaster-incidents` is `PutItem` conditional on the id being absent — and
+  the `UpdateItem` it has since gained names five attributes, none of which is a
+  capture key, so that has not changed. The
   sentence moved to `src/lib/artifacts.ts`, which is where the console now
   decides what an empty set means. An old case with no frames is an old case,
   not an innocent one.
@@ -794,10 +895,19 @@ surprised by it:**
   automatically stops holding pictures of players' screens. Retention that
   expires is easier to defend than retention that does not.
 
-> Worth knowing what this trades away: screenshots of players' screens are then
-> retained indefinitely. If a player ever asks for their data to be deleted, that
-> is a manual job against this bucket, and there is no automated process that
-> would have done it for you.
+> **A paragraph directly contradicting all of the above stood here until
+> 2026-08-21**, and it is named rather than silently dropped because it is the
+> half a skimming reader would have taken away. It read: *"Worth knowing what
+> this trades away: screenshots of players' screens are then retained
+> indefinitely. If a player ever asks for their data to be deleted, that is a
+> manual job against this bucket, and there is no automated process that would
+> have done it for you."*
+>
+> That was written to argue **against** a lifecycle rule, and it survived the
+> operator choosing one — sitting underneath the decision it was arguing with,
+> asserting the exact opposite of the line above it. **The 180-day expiry is the
+> live configuration.** Frames age out on their own, and a deletion request
+> inside that window is still a manual job.
 
 ---
 
