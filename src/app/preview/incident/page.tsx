@@ -335,7 +335,7 @@ type ScopeKey = keyof typeof SCOPE_CASES
  * server to CRASH at the right moment. So this axis is the only place any of it
  * can be looked at.
  *
- * WHY THESE FIVE:
+ * WHY THESE SEVEN:
  *
  *   none        no match attributes at all. THE DEFAULT, because it is what
  *               every incident in the table looks like today and what a report
@@ -348,6 +348,10 @@ type ScopeKey = keyof typeof SCOPE_CASES
  *               the write. This is the case that must not read as "running".
  *   dropped     `ended`, plus the buffer overflowed: six kills stored, 47
  *               counted.
+ *   warmup      FILED ON THE WARMUP PAD. A creation time, two weapon strips and
+ *               no start, no deadline, no end. See below.
+ *   backfilled  THE SAME CASE AFTER ITS MATCH RAN AND ENDED. The pair to flip
+ *               between; `warmup` and `backfilled` are one row at two moments.
  *
  * `running` AND `unreported` ARE THE PAIR TO FLIP BETWEEN. They differ only in
  * the deadline and the clock — the stored timeline is identical, neither has a
@@ -515,6 +519,120 @@ const NO_END: MatchFields = {
   matchTimeline: MATCH_TIMELINE.filter((e) => e.kind !== 'match_end'),
 }
 
+/**
+ * ═══ THE WARMUP PAIR (#35) ═══
+ *
+ * A match is minted into WARMUP and stamps `startedAt` only on entering play, so
+ * a case opened on the pad has a creation time and nothing else — no start, no
+ * deadline, no end. The console used to classify that as "filed outside a
+ * match", which is false about a row carrying a `matchId`, and there was no way
+ * to look at the shape at all: reaching it for real needs a live server, a
+ * player granting themselves a weapon in a menu, and somebody opening the case
+ * inside the two or three minutes before the bus leaves.
+ *
+ * AND IT IS THE SHAPE THAT MATTERS MOST, WHICH IS WHY IT IS TWO CASES RATHER
+ * THAN ONE. vMenu is a development tool that is not going to production, so
+ * there is no benign route to a weapon this gamemode never issued: every strip
+ * is a cheat signal, and one on the warmup pad is the earliest signal there is —
+ * before the offender has touched a real player.
+ *
+ * `warmup` AND `backfilled` ARE ONE ROW AT TWO MOMENTS. The game's match-end
+ * write fills in `matchStartedAt` and `matchEndsBy` later, so the same case
+ * becomes fully contexted on its own. Flip between them and the creation time,
+ * the anchor row and both early strips must stay exactly where they were; what
+ * arrives is an end, a deadline, and the rows that happened after filing.
+ *
+ * THERE IS NO `match_start` ROW ON EITHER, and that is not an omission in the
+ * fixture. `timelineClose` in the gamemode's `incident_build.lua` appends kills,
+ * strips and a `match_end` — never a start — so a warmup case's list is anchored
+ * on `match_created` for the rest of its life even after the attribute arrives.
+ * The offsets show it: rows before `matchStartedAt` are outside the match window
+ * and get none, which is why the anchor and the two early strips carry a clock
+ * and no `+`/`-` while everything after the start carries both.
+ */
+const WARMUP_CREATED = FILED - 3 * MIN
+
+/**
+ * The two strips the row carries at filing, stored out of order like everything
+ * DynamoDB appends.
+ *
+ * THE SECOND STRIP IS AT THE FILING INSTANT EXACTLY. The gamemode records the
+ * strip and then builds the payload, so its `at` equals `openedAt` — which is
+ * also why the close write's "strictly after filing" cut excludes it rather than
+ * writing it twice. The first was recorded and announced to nobody: one weapon
+ * in one hand for one tick is what two inventory mirrors disagreeing looks like,
+ * and a second one a second later is not.
+ *
+ * ONE NAMED ID AND ONE RAW HASH, because both really arrive. The game sends
+ * whatever the client had in hand and has NO display name for a weapon it does
+ * not issue — `weaponLabel` is deliberately absent on a strip, and inventing one
+ * would dress up the finding.
+ */
+const WARMUP_STRIPS: MatchTimelineEntry[] = [
+  { at: FILED, kind: 'weapon_strip', weapon: 'WEAPON_RAILGUN' },
+  { at: WARMUP_CREATED, kind: 'match_created' },
+  { at: FILED - 62_000, kind: 'weapon_strip', weapon: '-1357824103' },
+]
+
+const WARMUP: MatchFields = {
+  matchId: MATCH_ID,
+  matchCreatedAt: WARMUP_CREATED,
+  /*
+    NULLS RATHER THAN ABSENCES, because that is what the game writes: `br_ddb`'s
+    `incident.js` coerces every one of these through `int()`, which answers null
+    for a value the payload does not carry. A fixture using absences would be
+    exercising a shape the table does not hold.
+  */
+  matchStartedAt: null,
+  matchEndedAt: null,
+  matchEndsBy: null,
+  matchTimeline: WARMUP_STRIPS,
+}
+
+/** The match left the pad two minutes after the case was filed. */
+const WARMUP_STARTED = FILED + 2 * MIN
+
+/**
+ * And ended five minutes after that, WHICH IS THE SAME INSTANT `?record=found`
+ * says the subject's match 412 ended.
+ *
+ * The two axes are independent and combine freely, so a backfilled case whose
+ * timeline ended at one time beside a history row claiming another is a
+ * combination the harness can produce and no server can. `matchRecordFor` would
+ * still join them — it only asks that the row ended after the match started —
+ * so nothing would look wrong, which is the reason to line them up rather than
+ * to rely on it.
+ */
+const WARMUP_ENDED = WARMUP_STARTED + 5 * MIN
+
+const BACKFILLED: MatchFields = {
+  ...WARMUP,
+  matchStartedAt: WARMUP_STARTED,
+  matchEndedAt: WARMUP_ENDED,
+  matchEndsBy: WARMUP_STARTED + MATCH_CAP,
+  matchTimeline: [
+    ...WARMUP_STRIPS,
+    /* Still on the pad, and still helping themselves. */
+    { at: FILED + 18_000, kind: 'weapon_strip', weapon: 'WEAPON_RAILGUN' },
+    /* In play now, and the strip is the same fact it was two minutes ago. */
+    { at: WARMUP_STARTED + 47_000, kind: 'weapon_strip', weapon: '-1357824103' },
+    {
+      at: WARMUP_STARTED + 4 * MIN,
+      kind: 'kill',
+      killerLicense: SUBJECT,
+      killerName: 'Preview Player',
+      victimLicense: HALEY,
+      victimName: 'Haley',
+      weapon: 'WEAPON_CARBINERIFLE',
+      weaponLabel: 'Carbine Rifle',
+      weaponIssued: true,
+      cause: 'gunshot',
+      headshot: false,
+    },
+    { at: WARMUP_ENDED, kind: 'match_end' },
+  ],
+}
+
 const MATCH_CASES = {
   none: { fields: {}, now: BASE + 5 * MIN },
   ended: { fields: ENDED, now: BASE + 5 * MIN },
@@ -524,6 +642,13 @@ const MATCH_CASES = {
     fields: { ...ENDED, matchTimelineComplete: false, matchKillsSeen: 47 },
     now: BASE + 5 * MIN,
   },
+  /*
+    THE CLOCK IS INSIDE THE WARMUP, for the same reason `running`'s is inside its
+    match: a case that has not left the pad cannot also have an admin's note on
+    it from an hour later. `asOf` trims the rest of the fixture to match.
+  */
+  warmup: { fields: WARMUP, now: FILED + 90_000 },
+  backfilled: { fields: BACKFILLED, now: BASE + 5 * MIN },
 } satisfies Record<string, { fields: MatchFields; now: number }>
 
 type MatchKey = keyof typeof MATCH_CASES
@@ -775,6 +900,7 @@ function shifted(incident: Incident, by: number): Incident {
       match ran this afternoon — a shape no row can have, which is exactly what
       this function exists to prevent.
     */
+    matchCreatedAt: move(incident.matchCreatedAt),
     matchStartedAt: move(incident.matchStartedAt),
     matchEndedAt: move(incident.matchEndedAt),
     matchEndsBy: move(incident.matchEndsBy),
