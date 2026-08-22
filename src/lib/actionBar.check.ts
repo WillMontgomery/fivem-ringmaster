@@ -491,10 +491,24 @@ const ROUTE = 'src/app/api/spectate/route.ts'
 {
   const code = codeOf(read(ROUTE))
 
-  if (!/authorize\(\s*'spectate',\s*'write'\s*\)/.test(code)) {
+  /**
+   * THE SCOPE IS `view`, AND THIS ASSERTION USED TO REQUIRE `spectate`.
+   *
+   * A separate scope was the original design and the argument for it was good:
+   * watching somebody is less destructive than removing them, so it is a thing
+   * a trainee could hold earlier. It was still wrong, because NOTHING IN THIS
+   * CONSOLE CAN GRANT A SCOPE -- there is no scopes UI, the only route is
+   * editing DynamoDB by hand, and the owner does not. The check built a wall
+   * with no door and the feature shipped unreachable.
+   *
+   * WHAT IS STILL ASSERTED IS THE INTENT, and that half was never the problem.
+   * `write` is what re-reads the grant live and re-checks Discord; a read
+   * intent would skip both. The scope moved, the freshness requirement did not.
+   */
+  if (!/authorize\(\s*'view',\s*'write'\s*\)/.test(code)) {
     fail(
       'transport',
-      `${ROUTE} does not authorise on the spectate scope as a WRITE (a read intent skips the Discord re-check)`,
+      `${ROUTE} does not authorise on the view scope as a WRITE (a read intent skips the Discord re-check, and a granular scope nothing can grant is a wall with no door)`,
     )
   }
 
