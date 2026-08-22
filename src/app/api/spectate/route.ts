@@ -22,14 +22,32 @@ import { spectatePlayer, sshConfigured } from '@/lib/ssh'
  * there. A second transport to the same box would be a second thing to secure,
  * a second thing to audit and a second thing to get wrong.
  *
- * ═══ THE SCOPE IS `spectate`, WHICH HAD NEVER BEEN CHECKED ANYWHERE ═══
+ * ═══ THE SCOPE IS `view`, AND A SEPARATE `spectate` SCOPE WAS THE WRONG CALL ═══
  *
- * It has been in `SCOPES` since the grants table was written, one of four that
- * `README.md` listed as "no surface behind them". This is the surface. Note
- * that it is a scope of its own and NOT folded into `ban`: watching somebody is
- * strictly less destructive than removing them, so it is a thing a trainee
- * moderator can be trusted with far earlier — which is the entire argument for
- * granular scopes and the reason `kick` and `ban` are separate too.
+ * This route first required a `spectate` scope. The reasoning was sound in the
+ * abstract — watching somebody is strictly less destructive than removing them,
+ * so it is a thing a trainee moderator could be trusted with far earlier, which
+ * is the same argument that keeps `kick` and `ban` apart.
+ *
+ * IT WAS STILL WRONG, FOR A REASON THAT HAS NOTHING TO DO WITH THE ARGUMENT.
+ * `spectate` is one of the scopes that had never been checked anywhere, and
+ * NOTHING IN THIS CONSOLE CAN GRANT ONE. There is no scopes UI; the only way to
+ * add a scope to a grant row is to edit DynamoDB by hand, and the owner has
+ * said plainly that they do not do that. So requiring it built a wall with no
+ * door — the feature shipped unreachable by the only person able to use it.
+ *
+ * The owner, on hitting it: "in console it says I need a permission that I
+ * don't have. That should not even exist."
+ *
+ * SO IT IS `view`, THE SCOPE THAT ALREADY MEANS "may open this console". Every
+ * signed-in admin can spectate. What controls it is not a permission gate but
+ * the audit row this route writes on every press: watching a player who has not
+ * been told is the one console action with no other trace, and that row is the
+ * reason it does not need to be rationed.
+ *
+ * IF A GRANULAR SCOPE IS EVER WANTED, THE PREREQUISITE IS A WAY TO GRANT ONE,
+ * not this line. Reintroducing the check before that exists reintroduces the
+ * wall.
  *
  * ═══ NO PRESENCE CHECK HERE, AND THAT IS A DECISION ═══
  *
@@ -69,7 +87,7 @@ const spectateSchema = z.object({
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor, admin } = await authorize('spectate', 'write')
+    const { actor, admin } = await authorize('view', 'write')
 
     if (!sshConfigured()) {
       throw new ActionError(
