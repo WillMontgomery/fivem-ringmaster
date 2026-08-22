@@ -200,6 +200,50 @@ export async function POST(req: Request): Promise<Response> {
       throw new ActionError(noDeploy.reason, 409)
     }
 
+    /**
+     * AND WOULD THE BOX ACTUALLY TAKE IT? A SEPARATE QUESTION FROM WHETHER
+     * ANYTHING IS WAITING.
+     *
+     * `tools/dispatch.sh` refuses a ref that changes `tools/dispatch.sh`, and it
+     * says so per branch in the `branches` answer this snapshot was built from.
+     * Until now only the branch picker read that: an update of the branch the
+     * box is already on picks no branch, so nothing consulted eligibility and
+     * the refusal arrived as a failed deploy in a systemd log. A window
+     * scheduled for later is the same bug with a delay on it and nobody
+     * watching when it fires, which is why this refuses at scheduling time
+     * rather than leaving it to the driver.
+     *
+     * SAME FUNCTION AS THE PAGE, SAME SNAPSHOT, exactly as `nothingToDeploy`
+     * above: `refBlockedNow` greys the panel's button and refuses here, so a
+     * disabled control and a 409 cannot come apart. The rule itself — a stated
+     * refusal only, staleness not consulted, a reading paired to its own ref —
+     * is in lib/maintenance and is not restated here.
+     *
+     * ONLY FOR AN UNPINNED UPDATE, AND THAT GUARD IS LOAD-BEARING. `refUpdate`
+     * describes the ref the box is ON. A request carrying `targetRef` is a
+     * SWITCH to a different ref, which the picker has already gated on that
+     * branch's own `eligible` and which `switchref` checks again on the box —
+     * and gating it on the current branch's verdict would refuse the one action
+     * that gets an operator OFF a branch the box will not deploy, including
+     * "Revert to main". A blocked branch must never be a branch nobody can
+     * leave.
+     *
+     * THE SENTENCE IS THE BOX'S, in the register the revert path already uses
+     * for the same fact (`MaintenancePanel`'s `revert`).
+     */
+    if (!input.targetRef) {
+      const refBlocked = maint.refBlockedNow(
+        hostStatus?.deployedRef ?? null,
+        refUpdate,
+      )
+      if (refBlocked !== null) {
+        throw new ActionError(
+          `${hostStatus?.deployedRef} cannot be deployed right now: ${refBlocked}`,
+          409,
+        )
+      }
+    }
+
     if (input.deployMode === 'at-time' && input.deployAt! <= drainStartsAt) {
       throw new ActionError(
         'The deploy time has to be after draining starts, or nobody gets a chance to finish.',

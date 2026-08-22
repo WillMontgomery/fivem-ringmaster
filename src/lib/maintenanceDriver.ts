@@ -306,6 +306,20 @@ export async function tick(): Promise<void> {
      * TAKES. A tick that does not know how far behind main the box is does not
      * schedule a deploy on the strength of not knowing; it waits for the poller,
      * which is fifteen seconds away.
+     *
+     * AND `onMain` IS ALSO WHAT KEEPS THIS OUT OF THE ELIGIBILITY HOLE, which
+     * is worth writing down because "the automatic path deploys without anybody
+     * watching" makes it the first place to look. The box refuses a ref whose
+     * `tools/dispatch.sh` differs from main's, so the only ref this can ever aim
+     * at is the one that rule is measured against and cannot be blocked. The
+     * console-side gate for the human path lives where the human path is —
+     * `refBlockedNow`, read by `MaintenancePanel` and by `api/maintenance` — and
+     * there is deliberately no copy of it here: a tick refusing to fire a window
+     * an admin already scheduled, on a two-minute reading that may have been
+     * answered from stale refs, is #146's shape with an audit row attached. If
+     * the branch has become undeployable in the meantime the box says so, the
+     * window lands in `failed` with the reason on the row, and nothing was
+     * restarted — which is the safe end of that trade.
      */
     if (!maint.isLive(w) && onMain && behind !== null && behind > 0) {
       const fresh = await maint.current()
