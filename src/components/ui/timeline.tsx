@@ -66,6 +66,13 @@ const timelineMarkerVariants = cva(
         default: "text-muted-foreground [--timeline-dot:var(--border)]",
         /** The rows that bracket a span rather than sit inside one. */
         accent: "text-primary [--timeline-dot:var(--primary)]",
+        /**
+         * The rows that bracket the RECORD itself. Asked for by colour rather
+         * than by role — see `isCaseBracket` in `lib/matchTimeline`, which is
+         * the one place that decides which rows get it and why it is not a
+         * severity claim.
+         */
+        danger: "text-danger [--timeline-dot:var(--danger)]",
         muted:
           "text-muted-foreground/70 [--timeline-dot:var(--muted-foreground)]",
       },

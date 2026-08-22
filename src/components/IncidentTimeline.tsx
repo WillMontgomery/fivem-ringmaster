@@ -22,9 +22,11 @@ import {
 import { labelFor } from '@/lib/labels'
 import { profileHref } from '@/lib/profileLink'
 import {
+  CONSOLE_EVENT_LABEL,
   MATCH_EVENT_LABEL,
   MATCH_PROGRESS_LABEL,
   isBracket,
+  isCaseBracket,
   killDiscrepancy,
   killLine,
   matchOffset,
@@ -182,13 +184,6 @@ export function IncidentTimeline({
   )
 }
 
-/** The three the console writes about itself. Unchanged wording. */
-const CONSOLE_EVENT_LABEL: Record<string, string> = {
-  opened: 'Opened',
-  note: 'Note',
-  resolved: 'Resolved',
-}
-
 /** Where zero is, and the window offsets may be quoted in. See `matchOffset`. */
 type MatchSpan = OffsetSpan
 
@@ -201,7 +196,14 @@ function ConsoleRow({
 }) {
   return (
     <TimelineItem>
-      <TimelineMarker />
+      {/*
+        THE ENDS OF THE CASE ARE DRAWN AS ENDS (owner, playtest: red dots on
+        "Incident opened" and "Incident resolved", "not black dots"). Which rows
+        those are lives in `isCaseBracket` and the colour argument lives with
+        it — a membership test spelled here is one nothing can check, which is
+        the same rule the match brackets already follow one component down.
+      */}
+      <TimelineMarker tone={isCaseBracket(event) ? 'danger' : 'default'} />
       <TimelineContent>
         <TimelineTitle>
           <span className="font-medium">

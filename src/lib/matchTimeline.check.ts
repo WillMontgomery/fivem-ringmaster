@@ -79,6 +79,26 @@
  *   the kill branch stops keying on the kind     1 case,  section 8
  *   the harness stops shifting the creation      1 case,  section 8
  *
+ * AND AGAIN FOR THE CONSOLE'S OWN ROWS (playtest 2026-08-22 — the owner's two
+ * strings and the red dots), observed the same way:
+ *
+ *   `opened` goes back to "Opened"                3 cases, sections 4d and 8
+ *   `resolved` becomes "Case resolved"            2 cases, section 4d
+ *   the `note` entry is deleted                   1 case,  section 4d
+ *   `isCaseBracket` becomes "not a note"          3 cases, section 4d
+ *   `isCaseBracket` forgets `resolved`            1 case,  section 4d
+ *   every console row is painted danger           2 cases, section 8
+ *   the component hardcodes "Incident opened"     2 cases, section 8
+ *   the component re-declares the label map       1 case,  section 8
+ *   the tone prop is dropped (dots go back)       2 cases, section 8
+ *   the dot is painted `--destructive` instead    1 case,  section 8
+ *
+ * THE LAST FIVE ARE THE COMPONENT ONES AND THEY ARE WHY SECTION 8 GREW AGAIN.
+ * Each leaves `CONSOLE_EVENT_LABEL` and `isCaseBracket` correct and untouched,
+ * and each changes what an admin reads — which is exactly the gap that had
+ * already cost this file once, when the offset origin was swapped and the whole
+ * suite stayed green.
+ *
  * TWO OF THOSE FIELDS ARE PINNED BY THE COMPILER RATHER THAN BY A CASE, and
  * they were broken on purpose too, because a type nobody instantiates proves
  * nothing. Deleting `matchCreatedAt` from `Incident` fails `npm run typecheck`
@@ -111,11 +131,13 @@ import { fileURLToPath } from 'node:url'
 import type { IncidentEvent } from './incidents'
 import { humanLabel, labelFor } from './labels'
 import {
+  CONSOLE_EVENT_LABEL,
   MATCH_EVENT_LABEL,
   MATCH_PROGRESS_LABEL,
   WEAPON_UNAUTHORIZED_CLASS,
   indefiniteArticle,
   isBracket,
+  isCaseBracket,
   killDiscrepancy,
   killLine,
   matchOffset,
@@ -600,6 +622,100 @@ for (const [kind, expected] of bracketCases) {
   const got = isBracket({ at: NOW, kind })
   check(`isBracket(${JSON.stringify(kind)}) === ${expected}`, got === expected, got)
 }
+
+// ---------------------------------------------------------------------------
+// 4d. THE CONSOLE'S OWN THREE: what they are called, and which are edges.
+// ---------------------------------------------------------------------------
+
+console.log("4d. the console's own rows, in the owner's words")
+
+/*
+ * VERBATIM, BECAUSE THE OWNER GAVE THE STRINGS: "'Opened' and 'Resolved' on the
+ * timeline should be called 'Incident opened' and 'Incident resolved'". Pinned
+ * character for character — a label the owner dictated is not one a later pass
+ * gets to improve into "Case opened".
+ */
+check(
+  'CONSOLE_EVENT_LABEL: opened reads "Incident opened"',
+  CONSOLE_EVENT_LABEL.opened === 'Incident opened',
+  CONSOLE_EVENT_LABEL.opened,
+)
+check(
+  'CONSOLE_EVENT_LABEL: resolved reads "Incident resolved"',
+  CONSOLE_EVENT_LABEL.resolved === 'Incident resolved',
+  CONSOLE_EVENT_LABEL.resolved,
+)
+/*
+ * `note` IS NOT RENAMED. The instruction named two rows and this is the third;
+ * "Incident note" would be wording nobody asked for, which is the house rule
+ * this console is built to.
+ */
+check(
+  'CONSOLE_EVENT_LABEL: the note is left alone',
+  CONSOLE_EVENT_LABEL.note === 'Note',
+  CONSOLE_EVENT_LABEL.note,
+)
+/*
+ * AND ALL THREE ENTRIES ARE LOAD-BEARING, the same assertion 4b makes about
+ * `match_created`. `labelFor` humanises an unmapped id, so if a label happened
+ * to equal the mechanical fallback, deleting the entry would change nothing and
+ * these cases would be pinning the fallback instead of the decision. The two
+ * renamed ones fall back to `Opened` and `Resolved` — which is exactly what the
+ * owner asked to stop reading.
+ */
+check(
+  'CONSOLE_EVENT_LABEL: the renamed entries are not what the fallback produces',
+  humanLabel('opened') === 'Opened' &&
+    humanLabel('resolved') === 'Resolved' &&
+    CONSOLE_EVENT_LABEL.opened !== humanLabel('opened') &&
+    CONSOLE_EVENT_LABEL.resolved !== humanLabel('resolved'),
+  [humanLabel('opened'), humanLabel('resolved')],
+)
+check(
+  "labelFor: the component's lookup returns the words, not the ids",
+  labelFor(CONSOLE_EVENT_LABEL, 'opened') === 'Incident opened' &&
+    labelFor(CONSOLE_EVENT_LABEL, 'resolved') === 'Incident resolved',
+  [
+    labelFor(CONSOLE_EVENT_LABEL, 'opened'),
+    labelFor(CONSOLE_EVENT_LABEL, 'resolved'),
+  ],
+)
+
+/*
+ * THE RED DOTS. "with red dots next to them, not black dots" — so the set is
+ * exactly the two the owner named, and a note is not in it. An unknown kind
+ * from a newer console is not either: an edge is a claim about structure, and
+ * the safe answer for a row nothing here recognises is "something that
+ * happened", which is what the `default` tone draws.
+ */
+const caseBracketCases: Array<[string, boolean]> = [
+  ['opened', true],
+  ['resolved', true],
+  ['note', false],
+  ['', false],
+  ['reopened', false],
+]
+
+for (const [kind, expected] of caseBracketCases) {
+  const got = isCaseBracket({ at: NOW, kind, byLicense: null, byName: 'System' })
+  check(
+    `isCaseBracket(${JSON.stringify(kind)}) === ${expected}`,
+    got === expected,
+    got,
+  )
+}
+
+/*
+ * THE TWO BRACKET SETS ARE ABOUT DIFFERENT LISTS AND MUST NOT OVERLAP. They are
+ * consulted on different row types — `isBracket` on the game's entries,
+ * `isCaseBracket` on the console's — and one answering true for the other's
+ * kinds would mean a merge of the two predicates had quietly happened.
+ */
+check(
+  'the case brackets are not the match brackets',
+  !isCaseBracket({ at: NOW, kind: 'match_start', byLicense: null, byName: 'x' }) &&
+    !isBracket({ at: NOW, kind: 'opened' }),
+)
 
 // ---------------------------------------------------------------------------
 // 5. DROPPED KILLS, AS A COUNT.
@@ -1153,6 +1269,71 @@ check(
 )
 
 /*
+ * ═══ THE CONSOLE'S OWN THREE, WHICH USED TO LIVE IN THIS COMPONENT ═══
+ *
+ * `CONSOLE_EVENT_LABEL` was a const in the markup file, which is precisely the
+ * arrangement this module's header argues against and the reason the owner's
+ * two strings were free to be anything. It is in `lib` now, section 4d pins the
+ * words, and these two close the same gap section 4b closes for the match
+ * labels: 4d cannot see what the component actually renders, and a component
+ * that re-declared the map or hardcoded a row would pass every case above.
+ */
+check(
+  'the component looks its own labels up rather than writing them',
+  /labelFor\(CONSOLE_EVENT_LABEL,/.test(component?.text ?? ''),
+)
+check(
+  'and it does not keep a second copy of the map',
+  !/const CONSOLE_EVENT_LABEL/.test(component?.text ?? ''),
+)
+check(
+  'and it spells neither of the owner\'s two words itself',
+  !/Incident (opened|resolved)/.test(component?.text.replace(/\/\*[\s\S]*?\*\//g, '') ?? ''),
+  (component?.text.replace(/\/\*[\s\S]*?\*\//g, '').match(/Incident (opened|resolved)/g) ?? []).join(' '),
+)
+
+/*
+ * THE RED DOTS COME FROM THE PREDICATE, NOT FROM A COMPARISON IN THE JSX. This
+ * is `isBracket`'s grep aimed at the console's half of the list: the set is two
+ * of three kinds, and `event.kind === 'opened' || …` written inline is a rule
+ * section 4d cannot see. The second case is the one that catches the plausible
+ * mutation — painting every console row red, which would leave the notes
+ * shouting and the predicate unused.
+ */
+check(
+  'the timeline component gets its case brackets from `isCaseBracket`',
+  component?.text.includes('isCaseBracket(') === true,
+)
+check(
+  'and no console-kind literal is left in the markup to drift from it',
+  !/['"](opened|resolved|note)['"]/.test(component?.text ?? ''),
+  (component?.text.match(/['"](opened|resolved|note)['"]/g) ?? []).join(' '),
+)
+check(
+  'the danger tone is applied conditionally rather than to every console row',
+  /tone=\{isCaseBracket\(event\) \? 'danger' : 'default'\}/.test(
+    component?.text ?? '',
+  ),
+)
+
+/*
+ * AND THE TONE HAS TO EXIST WHERE THE PRIMITIVE DEFINES IT. `TimelineMarker`'s
+ * variants are a `cva` object; a tone the component names and the primitive
+ * does not have compiles (cva types it as the union, so this would in fact be a
+ * type error) but the dot would still be worth pinning to the danger TOKEN
+ * rather than to some other red — `--destructive` is a different colour in this
+ * palette and is the one a hurried edit reaches for.
+ */
+const marker = sources.find((s) => s.path === 'src/components/ui/timeline.tsx')
+check('the timeline primitive is where this thinks it is', marker !== undefined)
+check(
+  'the danger tone paints the dot from the danger token',
+  /danger:\s*"text-danger \[--timeline-dot:var\(--danger\)\]"/.test(
+    marker?.text ?? '',
+  ),
+)
+
+/*
  * A STRIP IS NOT A KILL, AND THE KILL SENTENCE MUST NOT REACH IT. A
  * `weapon_strip` entry carries a `weapon` and no `weaponIssued` — the kind IS
  * the claim — so running one through the kill branch would put it under the
@@ -1238,6 +1419,21 @@ console.log(
 console.log(
   `  match kinds       ${['match_created', 'match_start', 'match_end', 'kill', 'weapon_strip']
     .map((k) => `${k}=${labelFor(MATCH_EVENT_LABEL, k)}`)
+    .join('  ')}`,
+)
+/*
+ * THE CONSOLE'S THREE, WITH THE DOT EACH ONE GETS. Printed rather than only
+ * asserted for the same reason as the line above: the owner dictated two of
+ * these strings, and a change to either should show up in a diff of this
+ * output as different words rather than as nothing.
+ */
+console.log(
+  `  console kinds     ${['opened', 'note', 'resolved']
+    .map(
+      (k) =>
+        `${k}=${labelFor(CONSOLE_EVENT_LABEL, k)}` +
+        `[${isCaseBracket({ at: NOW, kind: k, byLicense: null, byName: 'System' }) ? 'red' : 'default'}]`,
+    )
     .join('  ')}`,
 )
 /*

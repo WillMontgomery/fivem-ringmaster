@@ -39,9 +39,12 @@ import { cn } from '@/lib/utils'
  *
  *   report bar   what this is, who it is against, who filed it — and the three
  *                resolve buttons, right-aligned in the same row
+ *   match record what the subject did in that match — only when there was one.
+ *                "Can you move the 'Match record' box to be displayed above the
+ *                timeline please?" (2026-08-22). It was below it.
  *   timeline     "Directly under the 'player report' section should be the
- *                timeline section"
- *   match record what the subject did in that match — only when there was one
+ *                timeline section" — which it was, until the line above moved
+ *                one short panel in between
  *   verdict      only once it is closed
  *   artifacts    last. It was second.
  *
@@ -411,28 +414,25 @@ export function IncidentDetail({
       </Card>
 
       {/*
-        THE TIMELINE MOVED OUT OF THIS FILE (#30) and grew a second writer. It
-        was the console's own `events` in a bare `<ul>`; it is now those merged
-        with the match the game recorded around this incident — the brackets,
-        every kill inside them, and whether the match ever reported an end. Two
-        attributes, two writers, one list, sorted here because DynamoDB's
-        `list_append` does not order. See `IncidentTimeline`.
-
-        IT SITS DIRECTLY UNDER THE REPORT BAR (owner, playtest: "Directly under
-        the 'player report' section should be the timeline section"). It used to
-        be second, behind the artifacts; the artifacts are last now. The reading
-        order that produces is what happened, then what was decided, then the
-        pictures — rather than the pictures before the account of what they are
-        pictures of.
-      */}
-      <IncidentTimeline incident={incident} now={now} />
-
-      {/*
         WHAT THE SUBJECT DID IN THAT MATCH (owner, playtest: "In the incident
         there should also be a section about what they did that match - like how
         many kills they got, what position they got, how much loot they got,
-        etc."). Under the timeline, because it is the same match seen the other
-        way round: the timeline is what happened, this is how it came out.
+        etc."). See `IncidentMatchRecord`.
+
+        ═══ AND IT SITS ABOVE THE TIMELINE NOW (owner, playtest 2026-08-22) ═══
+
+        "Can you move the 'Match record' box to be displayed above the timeline
+        please?" It was directly under it, on the argument that the two are the
+        same match seen two ways round — the timeline is what happened, this is
+        how it came out — so the account should precede the result.
+
+        THE OWNER'S ORDER IS THE BETTER ONE AND IT IS WORTH SAYING WHY, so that
+        nobody reverses it back on the old reasoning. This panel is six numbers
+        and one screen-line tall; the timeline is unbounded and on a busy match
+        runs to dozens of rows. Putting the short, fixed-height summary first
+        means an admin opening a case reads placement and kills before deciding
+        whether to scroll at all — and the thing they were going to scroll past
+        to reach it is no longer in the way.
 
         LOOT IS NOT IN IT AND CANNOT BE — nothing on either row records it. See
         `IncidentMatchRecord`, which says what a game-side change would have to
@@ -444,8 +444,32 @@ export function IncidentDetail({
         this — and a panel about a match that did not happen is furniture. A
         matchId with no history row is a DIFFERENT state, it is ordinary, and it
         renders inside the panel as an em dash rather than by deleting it.
+
+        NOTHING ABOUT THE MOVE IS RESPONSIVE-SENSITIVE. Both are Cards in the
+        page's single `space-y-4` column and neither is in a grid with the
+        other, so the order is the DOM order at every width; the panel's own
+        `sm:` columns are internal to it and unaffected.
       */}
       {incident.matchId != null && <IncidentMatchRecord record={matchRecord} />}
+
+      {/*
+        THE TIMELINE MOVED OUT OF THIS FILE (#30) and grew a second writer. It
+        was the console's own `events` in a bare `<ul>`; it is now those merged
+        with the match the game recorded around this incident — the brackets,
+        every kill inside them, and whether the match ever reported an end. Two
+        attributes, two writers, one list, sorted here because DynamoDB's
+        `list_append` does not order. See `IncidentTimeline`.
+
+        IT USED TO SIT DIRECTLY UNDER THE REPORT BAR (owner, playtest: "Directly
+        under the 'player report' section should be the timeline section"), and
+        the match record has since been moved above it at the owner's request —
+        see the note on that panel. What that instruction was against is still
+        intact: the timeline is above the artifacts, which were second and are
+        now last. The reading order is what happened, then what was decided,
+        then the pictures — rather than the pictures before the account of what
+        they are pictures of.
+      */}
+      <IncidentTimeline incident={incident} now={now} />
 
       {!pending && (
         <Card className="surface-edge gap-0 px-5 py-4">

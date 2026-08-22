@@ -210,6 +210,64 @@ export const MATCH_EVENT_LABEL: Record<string, string> = {
   kill: 'Kill',
 }
 
+/**
+ * English for the three the CONSOLE writes about itself.
+ *
+ * THE OWNER'S OWN WORDING, PLAYTEST 2026-08-22: "'Opened' and 'Resolved' on the
+ * timeline should be called 'Incident opened' and 'Incident resolved'". Both
+ * strings are verbatim.
+ *
+ * WHY THAT READS BETTER ON A MERGED LIST, which is the argument for keeping it.
+ * This list has two writers, and the game's half already names its subject on
+ * every row it contributes — `Match formed`, `Match started`, `Match ended`.
+ * Beside those, a bare `Opened` was the only bracket on the page that did not
+ * say what had opened, on a list whose other brackets are all about the match.
+ *
+ * `note` IS UNQUALIFIED AND STAYS THAT WAY. It is not a bracket, the owner did
+ * not rename it, and "Incident note" would be prose nobody asked for.
+ *
+ * MOVED OUT OF `IncidentTimeline` TO GET HERE, for this module's stated reason:
+ * a label spelled in markup is a label nothing checks. `check:timeline` pins
+ * these strings and asserts the component looks them up rather than writing
+ * them.
+ */
+export const CONSOLE_EVENT_LABEL: Record<string, string> = {
+  opened: 'Incident opened',
+  note: 'Note',
+  resolved: 'Incident resolved',
+}
+
+/**
+ * The ends of the CASE, as opposed to something recorded along the way.
+ *
+ * {@link isBracket} is this function for the match; this is it for the
+ * incident. What it decides is the marker tone and nothing else.
+ *
+ * ═══ RED, AND THE OWNER ASKED FOR IT BY COLOUR ═══
+ *
+ * "'Opened' and 'Resolved' … with red dots next to them, not black dots." Those
+ * two rows were taking the `default` marker tone, whose dot is `--border` — so
+ * the two events that bracket the entire record were the faintest marks on the
+ * list, fainter than the kills. The match brackets already own the accent; the
+ * case's own brackets take the danger token.
+ *
+ * IT IS NOT A SEVERITY CLAIM, and that is worth writing down because red means
+ * "something was done to a person" everywhere else in this console — see
+ * `verdictTone` in `lib/incidentChip`. Here it is structural: these are the
+ * edges of the record, drawn like edges. A case closed with "no action" gets
+ * exactly the same dot as one that ended in a ban, because the dot is not about
+ * the verdict.
+ *
+ * A FUNCTION RATHER THAN A COMPARISON IN THE JSX, for `isBracket`'s reason: a
+ * set spelled in markup is a set nothing can check, and this one is two thirds
+ * of the console's own kinds — the day a fourth arrives, the question of which
+ * side it falls on should fail a test rather than be answered by whoever is
+ * editing the component.
+ */
+export function isCaseBracket(e: ConsoleTimelineEvent): boolean {
+  return e.kind === 'opened' || e.kind === 'resolved'
+}
+
 // ---------------------------------------------------------------------------
 // Merging the two lists
 // ---------------------------------------------------------------------------
