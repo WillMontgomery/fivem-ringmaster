@@ -541,15 +541,54 @@ policy produces AccessDenied at match end, in production, on a path with no user
 watching it. `BR.Ring.incidentStats().closeFailed` is the counter that says so;
 on a healthy server it is zero (`brring` in the FXServer console prints it).
 
-#### A widening to two more attributes is coming, and is NOT in the JSON above
+#### The widening HAS LANDED IN CODE, and the policy must already match
 
-**Written down as pending on 2026-08-21, deliberately unapplied here.** The
-owner intends to add **`matchStartedAt`** and **`matchEndsBy`** to the list, so
-that a case filed during warmup — before a match had a start or a deadline —
-receives both when the match ends. Today `close.js` on the gamemode's `dev`
-branch sets four attributes and the five above are exactly what it needs; a
-warmup-filed case therefore never gains a start, so the console cannot say how
-long that match ran or whether its end was ever reported.
+**Recorded 2026-08-22, correcting this section.** It previously said this was
+"coming" and "deliberately unapplied". That is no longer true: `close.js` on the
+gamemode's `dev` branch now pushes both names into its SET expression —
+
+```js
+if (startedAt !== null) sets.push('matchStartedAt = :start')
+if (endsBy   !== null) sets.push('matchEndsBy = :endsBy')
+```
+
+— so a case filed during warmup gains a start and a deadline when the match
+ends. The JSON above lists **five** attributes and the close path can now write
+**seven**.
+
+**THIS IS THE ORDER THIS FILE WARNS ABOUT, TAKEN IN THE WRONG DIRECTION.** The
+rule three paragraphs down is *"Policy first is a no-op; code first is
+AccessDenied at match end on every match, silently."* The code went first.
+
+So one of two things is true, and only the live role says which:
+
+- **The owner widened the role by hand and this document was not updated.** The
+  likelier of the two: an incident page has been observed with a backfilled
+  `matchStartedAt` on a warmup-filed case, which is precisely the write this
+  grant governs.
+- **The role was never widened**, and every match end since has been failing its
+  close with AccessDenied on a path no user watches.
+
+**`BR.Ring.incidentStats().closeFailed` distinguishes them** — `brring` in the
+FXServer console prints it, and on a healthy server it is zero. A non-zero
+counter here means the policy is short two attributes, not that the code is
+wrong.
+
+The attribute list, once confirmed, is:
+
+```json
+"dynamodb:Attributes": [
+  "incidentId", "matchEndedAt", "matchStartedAt", "matchEndsBy",
+  "matchTimeline", "matchTimelineComplete", "matchKillsSeen"
+]
+```
+
+**The JSON earlier in this section is deliberately left at five.** This file's
+standing rule is that a document which silently widens a policy to fit code is a
+document that widens it again next time without anybody deciding — so the
+correction is written here, beside the evidence, rather than edited into the
+block as though it had always been so. Copy the seven-name list into the block
+once `closeFailed` has been read and the role checked.
 
 **The timeline offsets no longer depend on it.** They used to: the `+2:14`
 column was drawn only inside `[matchStartedAt, matchEndedAt ?? matchEndsBy]`, so
