@@ -257,6 +257,81 @@ export function refBehindNow(
 }
 
 /**
+ * WOULD THE GAME BOX REFUSE A DEPLOY OF THE REF IT IS ON? The sentence it would
+ * refuse with, or NULL for "go ahead".
+ *
+ * WHY THIS EXISTS. The game box refuses to deploy a ref that changes
+ * `tools/dispatch.sh` — "Deploying it would replace the console's only channel
+ * to this box with code that has not been through PR review" — and it says so
+ * per branch, in `branches`, in a sentence written for a human. The branch
+ * picker has consumed that since it was built. The ordinary "Schedule update"
+ * button never did: it deploys the branch the box is ALREADY on, so no branch
+ * is being picked and nothing consulted eligibility. A branch can be ahead AND
+ * ineligible at the same time, and when it is, the console had every fact
+ * needed to refuse up front and instead started a deploy that failed on the box
+ * from a systemd unit, discovered later in a log.
+ *
+ * "AHEAD" IS NOT "DEPLOYABLE", AND THOSE ARE THE TWO SEPARATE QUESTIONS. The
+ * card renders on `nothingToDeploy` — is there anything to ship — and the
+ * button is gated on this one — may it be shipped. Folding this into
+ * `nothingToDeploy` would take the card off the page and with it the only place
+ * the reason can be read; the operator would be left with the same silence they
+ * already had, plus a missing control. The card stays, the button greys, the
+ * box's own sentence sits beside it.
+ *
+ * `=== false`, NEVER `!eligible`, AND IT IS THE SAME CHARACTER-LEVEL RULE AS
+ * `nothingToDeploy`'s `!== 0`. The whole payload is a `JSON.parse` cast, and a
+ * dispatcher too old to answer this question sends no field at all — so
+ * `!eligible` folds "this box has never heard of the rule" in with "this box
+ * refuses", and would grey out the console's only ordinary deploy button
+ * against every game host that predates the feature. Only a STATED refusal
+ * refuses anything here. Same polarity as `isParkedOffMain`, for the same
+ * reason: act on what the host said, not on its silence.
+ *
+ * STALENESS IS NOT CONSULTED, WHICH IS THE OPPOSITE OF `refBehindNow` ABOVE,
+ * and the asymmetry is the same one `updateTargetNow` makes. A stale ZERO is
+ * shaped exactly like "we have not looked" — an absence — so it must not refuse
+ * a deploy. This is a PRESENCE: a sentence the box wrote about code it has
+ * actually read, and the refusal it names is the one `deploy.sh` will repeat
+ * when the window fires. Honouring a stale refusal costs at most one refresh of
+ * a branch somebody has since fixed; ignoring one costs the failed deploy this
+ * function exists to prevent.
+ *
+ * THE PAIRING RULE, AS EVERYWHERE ON THIS PAGE: a reading taken for another
+ * branch is not a reading. Between a switch landing and the next two-minute
+ * `branches` answer, `deployedRef` already names the new branch while
+ * `refUpdate` still describes the old one, and refusing the new branch on the
+ * old one's verdict would be the same mislabelling in a more expensive place.
+ *
+ * MAIN IS NOT COVERED AND DOES NOT NEED TO BE. `refUpdateFrom` answers only off
+ * main (see lib/ssh), and the rule the box enforces is defined relative to
+ * main, so main cannot be blocked against itself. The `=== 'main'` below is
+ * therefore redundant with the pairing test — it is spelled out anyway, exactly
+ * as `refBehindNow` spells it, so the exclusion is greppable rather than
+ * implied.
+ *
+ * AN EMPTY STRING IS STILL A REFUSAL. `null` is the only "go ahead"; a caller
+ * must test `!== null` and never truthiness. The box does not produce a stated
+ * refusal with no sentence — `eligible` is false exactly when `ref_blocked_by`
+ * returned one — but if it ever did, a control that stayed live because the
+ * explanation was missing would be the worse of the two failures. What renders
+ * beside the button is gated on the sentence being there, the same way
+ * `BranchPicker` disables on `!b.eligible` and prints on `b.blockedBy`.
+ */
+export function refBlockedNow(
+  deployedRef: string | null | undefined,
+  refUpdate:
+    | Pick<RefUpdate, 'ref' | 'eligible' | 'blockedBy'>
+    | null
+    | undefined,
+): string | null {
+  if (typeof deployedRef !== 'string' || deployedRef === 'main') return null
+  if (!refUpdate || refUpdate.ref !== deployedRef) return null
+  if (refUpdate.eligible !== false) return null
+  return refUpdate.blockedBy ?? ''
+}
+
+/**
  * HOW FAR BEHIND MAIN THE BOX IS, OR NULL FOR "WE DO NOT KNOW".
  *
  * THE OTHER HALF OF `refBehindNow`, AND IT EXISTS BECAUSE THE TWO READINGS DID
