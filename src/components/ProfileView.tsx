@@ -92,11 +92,6 @@ import { nextThresholdFor } from '@/lib/xp'
  * all, because there is nothing to wait for. See DiscordChromeProvider.
  */
 
-function when(ms: number): string {
-  const d = new Date(ms)
-  return d.toISOString().slice(0, 16).replace('T', ' ') + 'Z'
-}
-
 /**
  * A panel, with its header painted in the player's Discord accent colour.
  *

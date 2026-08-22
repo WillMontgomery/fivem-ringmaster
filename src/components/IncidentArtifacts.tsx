@@ -3,7 +3,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useCallback, useState } from 'react'
 
-import { LocalTime } from '@/components/LocalTime'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { artifactSrc, type Artifact } from '@/lib/artifacts'

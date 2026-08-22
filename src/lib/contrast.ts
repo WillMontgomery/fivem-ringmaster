@@ -217,7 +217,7 @@ export function accentSurface(input: string | null | undefined): AccentSurface |
   let l = Math.min(L_MAX, Math.max(L_MIN, l0))
   let background = toHex(hslToRgb(h, s, l))
   let bgLum = relativeLuminance(parseHex(background) as [number, number, number])
-  let fg = pickForeground(bgLum)
+  const fg = pickForeground(bgLum)
   let ratio = contrastRatio(bgLum, fg.lum)
 
   // Push the SURFACE away from its text, not the text away from the surface:

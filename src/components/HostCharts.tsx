@@ -287,7 +287,11 @@ function NoSeries({ title }: { title: string }) {
  * the swatch is reproduced rather than lost.
  */
 function tooltipRow(fmt: (n: number) => string) {
-  return (value: unknown, name: unknown, item: unknown) => {
+  // NAMED, BECAUSE IT LOOKS LIKE A COMPONENT AND IS NOT ONE. It returns JSX
+  // and is capital-free, so react/display-name flags the anonymous form; it is
+  // actually a `formatter` callback recharts calls per row, never mounted and
+  // never given state. A name satisfies the rule and reads better in a stack.
+  return function TooltipRow(value: unknown, name: unknown, item: unknown) {
     const color = (item as { color?: string } | undefined)?.color
     return (
       <div className="flex w-full items-center gap-2">
