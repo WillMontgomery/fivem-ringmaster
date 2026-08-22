@@ -49,6 +49,7 @@ import {
   behindMainNow,
   nothingToDeploy,
   refBehindNow,
+  refBlockedNow,
   updateTargetNow,
   UPDATE_AVAILABLE,
   type MaintenanceWindow,
@@ -339,6 +340,29 @@ export function MaintenancePanel({
    * eventually describe a state its own button disagrees with.
    */
   const refBehind = refBehindNow(deployedRef, refUpdate)
+
+  /**
+   * WHY THE GAME BOX WOULD REFUSE TO DEPLOY THIS BRANCH, or null for "it would
+   * not".
+   *
+   * THE SECOND QUESTION ABOUT THE SAME BRANCH, and the one this page never
+   * asked. `refBehind` says there is something to deploy; this says whether the
+   * box would take it. They are independent, and the state where they disagree
+   * — ahead AND refused — is the one that reached production: the update card
+   * rendered, the button was live, the deploy was scheduled, and the refusal
+   * turned up afterwards in a systemd log.
+   *
+   * DERIVED IN lib/maintenance FOR THE SAME REASON `refBehind` IS. The pairing
+   * rule and the `=== false` polarity are stated once, beside the reading, and
+   * `api/maintenance` runs the same function over the same snapshot before it
+   * accepts the request — so a greyed button and a refused POST are one
+   * expression evaluated twice rather than two rules that happen to agree.
+   *
+   * THE SENTENCE IS THE GAME BOX'S, WORD FOR WORD. Nothing here rewrites it,
+   * shortens it or explains it; the branch picker has rendered the same string
+   * the same way since it was built.
+   */
+  const refBlocked = refBlockedNow(deployedRef, refUpdate)
 
   /**
    * The two commits a deploy would move between, on whichever ref the box is
@@ -1588,16 +1612,71 @@ export function MaintenancePanel({
               the verb rather than the only thing that differs.
             */}
             {/*
-              NEVER DISABLED, BECAUSE IT IS NEVER HERE WHEN IT WOULD BE. The
-              card this button lives in does not render at all unless there is
-              something to deploy — see `noDeploy` — so the only state left for
-              the control itself is "in flight".
+              THIS SAID "NEVER DISABLED, BECAUSE IT IS NEVER HERE WHEN IT WOULD
+              BE" — the card does not render unless there is something to
+              deploy, so the only state left for the control was "in flight".
+              THE HOLE IN THAT IS THAT "THERE IS SOMETHING TO DEPLOY" IS NOT
+              "IT CAN BE DEPLOYED". A branch can be ahead and refused at the
+              same time, and that combination is what actually happened: the
+              game box declined the deploy because the branch changes
+              `tools/dispatch.sh`, from a systemd unit, discovered in a log —
+              while this console held the refusal, in a sentence, the whole
+              time. `noDeploy` answers whether anything is waiting; it was never
+              asked whether the box would take it.
+
+              SO THERE ARE TWO GATES NOW AND THEY ARE NOT INTERCHANGEABLE.
+              `noDeploy` removes the CARD, because there is nothing to say; this
+              greys the BUTTON and leaves the card, because there is — the box's
+              own sentence, below.
+
+              THE REASON GOES BESIDE THE CONTROL, NOT ON IT. A disabled button
+              eats pointer events, so a tooltip here would delete the
+              explanation in exactly the state that needs one; `docs/hover-text.md`
+              records that trap and the branch picker already answers it by
+              rendering the sentence next to the disabled row.
             */}
             {canRun && (
-              <Button disabled={busy} onClick={schedule}>
-                {busy ? <Loader2 className="animate-spin" /> : <CalendarClock />}
-                Schedule update
-              </Button>
+              /*
+                THE COLUMN IS THE REVERT BUTTON'S SHAPE, ONE CARD UP — a button
+                with its reason under it — and `items-start` rather than that
+                one's `items-end` for one measured reason. This card's left half
+                is three paragraphs wide, so the row ALWAYS wraps and the button
+                sits on a line of its own; the column's width is then whatever
+                its widest child is, and a right-aligned column that grows to
+                `max-w-xs` when the sentence appears would slide the button 186px
+                sideways between two states a reviewer is asked to flip between
+                (`/preview/maintenance?state=parked-behind` and `parked-blocked`).
+                Starting both children at the same edge holds the button exactly
+                where it renders today and runs the sentence under it from that
+                edge — which is also how the branch picker aligns the same
+                string on a refused row.
+              */
+              <div className="flex flex-col items-start gap-1.5">
+                <Button
+                  disabled={busy || refBlocked !== null}
+                  onClick={schedule}
+                >
+                  {busy ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <CalendarClock />
+                  )}
+                  Schedule update
+                </Button>
+                {/*
+                  VERBATIM, AND IN THE PICKER'S OWN WORDS. `Cannot be deployed —`
+                  is the existing lead-in on a refused branch row; the rest is
+                  the game box's sentence, unedited. Rendered on the sentence
+                  being present rather than on the refusal, exactly as the
+                  picker does it — the button is greyed by the verdict, the line
+                  appears when there is something to read.
+                */}
+                {refBlocked && (
+                  <p className="max-w-xs text-xs text-warn">
+                    Cannot be deployed — {refBlocked}
+                  </p>
+                )}
+              </div>
             )}
           </div>
 

@@ -22,6 +22,7 @@ import { cn } from '@/lib/utils'
  * `?state=` picks the case:
  *   parked         on `dev`, host has not said how far behind `dev` it is
  *   parked-behind  on `dev`, THREE NEW COMMITS ON `dev` — the discovered update
+ *   parked-blocked the same three commits, and a box that will REFUSE to deploy
  *   parked-level   on `dev`, level with it — NO SCHEDULING BOX AT ALL
  *   parked-stale   on `dev`, a zero the host answered from stale refs — BOX STAYS
  *   parked-live    on `dev`, a plain update scheduled and draining
@@ -48,6 +49,13 @@ import { cn } from '@/lib/utils'
  * waiting, and only the SECOND may take the scheduling box off the page. They
  * are indistinguishable in a type check and each needs a live game box in a
  * particular state to see, which is the same argument that produced this file.
+ * `parked-blocked` IS A FIFTH READING AND A DIFFERENT QUESTION. The four above
+ * all ask how far behind the branch is; that one asks whether the box would
+ * take the deploy at all, and the answer travelled on the same payload for as
+ * long as the branch picker has existed while the update card ignored it. It is
+ * `parked-behind` with one extra field set, which is exactly how invisible the
+ * defect was.
+ *
  * The two that cost #146 are `parked` and `parked-stale`: an unknown count must
  * never read as "nothing to do" while an operator is looking at a branch they
  * just pushed to — and now that the box VANISHES on a zero rather than greying
@@ -153,15 +161,44 @@ interface View {
 const DEPLOYED_SHA = '4f2b9c1de8a7365019bd4ac2e5f80917bb3c6d24'
 const TIP_SHA = '9c1e77a4b02d5f38e6ab41cc7d90e2f5138ba604'
 
-/** A reading of the parked branch, as the telemetry poller would hold one. */
-const refAt = (ref: string, behind: number, stale = false): RefUpdate => ({
+/**
+ * A reading of the parked branch, as the telemetry poller would hold one.
+ *
+ * `blockedBy` IS THE ONLY WAY TO MAKE ONE INELIGIBLE, and the two fields are
+ * derived from it rather than passed separately — which is how the game box
+ * produces them: `eligible` is exactly "`ref_blocked_by` had nothing to say".
+ * A fixture able to set them independently could describe a payload the
+ * dispatcher cannot send, and the state worth rehearsing here is the real one.
+ */
+const refAt = (
+  ref: string,
+  behind: number,
+  stale = false,
+  blockedBy = '',
+): RefUpdate => ({
   ref,
   behind,
   tipSha: TIP_SHA,
   deployedSha: DEPLOYED_SHA,
+  eligible: blockedBy === '',
+  blockedBy,
   stale,
   at: NOW - 30_000,
 })
+
+/**
+ * WHY THE BOX REFUSED, IN THE BOX'S OWN WORDS.
+ *
+ * NOT INVENTED — this is what the game host actually printed the night the bug
+ * was found, trimmed to the sentence `branches` carries per ref. Every other
+ * string in this file is a plausible fixture; this one is a transcript, because
+ * the whole point of the state below is that the console renders the host's
+ * wording rather than any of its own.
+ */
+const BLOCKED_BY =
+  "it changes tools/dispatch.sh. Deploying it would replace the console's " +
+  'only channel to this box with code that has not been through PR review. ' +
+  'Land changes to tools/ on main.'
 
 /** The pair of commits a deploy on `ref` would move between. */
 const targetOn = (ref: string, stale = false): UpdateTarget => ({
@@ -205,6 +242,41 @@ const views: Record<string, View> = {
   'parked-behind': {
     deployedRef: 'dev',
     refUpdate: refAt('dev', 3),
+    behindMain: null,
+    updateTarget: targetOn('dev'),
+    window: BASE,
+    players: 7,
+  },
+
+  /**
+   * AHEAD AND REFUSED AT THE SAME TIME — THE STATE THAT SHIPPED A BROKEN
+   * DEPLOY, and the combination that had no fixture until it had cost
+   * something.
+   *
+   * Identical to `parked-behind` in every reading this page had ever consulted:
+   * three commits waiting on `dev`, an arrow between two real commits, the
+   * off-main banner above. The one thing that differs is a field the update
+   * card used to throw away — the game box saying it will not deploy this ref
+   * because it changes `tools/dispatch.sh`. The console held that sentence and
+   * scheduled the deploy anyway; the refusal turned up on the box, from a
+   * systemd unit, in a log.
+   *
+   * WHAT TO CHECK, and the first two are the whole bug: "Schedule update" is
+   * GREYED, and the box's sentence is rendered BESIDE it rather than on hover —
+   * a disabled control eats pointer events, so a tooltip would delete the
+   * explanation in exactly the state that needs one (`docs/hover-text.md`). Then:
+   * the card is still here, because there IS something to deploy and the reason
+   * needs somewhere to live; the wording is the host's, unedited, with no
+   * console-authored gloss around it; and "Revert to main" and "Deploy a
+   * different branch" are both still live below. A branch the box will not
+   * deploy must never be a branch nobody can leave.
+   *
+   * FLIP BETWEEN THIS AND `parked-behind`. Same count, same commits, same
+   * banner; one schedules and one refuses. If they look alike, the fix is gone.
+   */
+  'parked-blocked': {
+    deployedRef: 'dev',
+    refUpdate: refAt('dev', 3, false, BLOCKED_BY),
     behindMain: null,
     updateTarget: targetOn('dev'),
     window: BASE,
@@ -602,7 +674,7 @@ async function Preview({
           {view.refUpdate
             ? `${view.refUpdate.behind} (${view.refUpdate.ref})${
                 view.refUpdate.stale ? ', from stale refs — read as not known' : ''
-              }`
+              }${view.refUpdate.eligible ? '' : ', which the host refuses to deploy'}`
             : '(not known)'}
           , moving{' '}
           {view.updateTarget
