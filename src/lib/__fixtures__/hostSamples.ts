@@ -220,6 +220,13 @@ export const HOST_STATUS: Record<string, StatusFixture> = {
       behind: 4,
       tipSha: 'f0271ab84c9d3e6a5b17820fd94c6e3a1b58a7c2',
       deployedSha: '7c14e0d93b6a2f8517cc40e1b9d3a67f2e05c8d4',
+      // A BRANCH THE BOX WOULD ACTUALLY TAKE, which is a separate question from
+      // how far behind it is and now travels beside it. The Host page states
+      // the reading; the control that acts on it is on /maintenance, and
+      // `/preview/maintenance?state=parked-blocked` is where the refusal is
+      // rehearsed.
+      eligible: true,
+      blockedBy: '',
       stale: false,
       at: 1_786_910_000_000,
     },

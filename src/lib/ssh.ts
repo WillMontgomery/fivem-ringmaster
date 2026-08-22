@@ -382,6 +382,28 @@ export interface RefUpdate {
    * dropped for the same reason the branch picker says it out loud.
    */
   stale: boolean
+  /**
+   * WOULD THE BOX ACTUALLY TAKE A DEPLOY OF THIS REF? Straight off the same
+   * {@link HostBranch} row the count came from.
+   *
+   * IT IS NOT A SECOND MEASUREMENT AND IT COSTS NOTHING. The `branches` answer
+   * already carries this per branch and the branch picker already renders it;
+   * `refUpdateFrom` used to read the row, take `ahead` and `sha` off it, and
+   * drop these two on the floor one line before anything needed them. A deploy
+   * refused on the game box — "refusing dev: it changes tools/dispatch.sh" —
+   * was therefore discoverable in the console only by opening the branch
+   * picker, which nobody does before pressing a button that says the branch is
+   * behind.
+   *
+   * `false` IS A STATED REFUSAL AND `undefined` IS NOT ONE. A dispatcher too
+   * old to answer sends neither field, and the whole payload is a `JSON.parse`
+   * cast — so this arrives as `undefined` there, and every reader must test
+   * `=== false` rather than `!eligible`. `lib/maintenance`'s `refBlockedNow` is
+   * the one place that comparison is written.
+   */
+  eligible: boolean
+  /** Why not, as a sentence to render verbatim. Empty when eligible. */
+  blockedBy: string
   /** When the console received this reading, epoch ms. */
   at: number
 }
@@ -396,6 +418,15 @@ export interface RefUpdate {
  * measuring the same distance by a different route would eventually disagree
  * with the first — after a `branches` fetch that timed out, say — and there is
  * no version of "two different commit counts for main" that helps anybody.
+ *
+ * THE EXCLUSION NOW ALSO DECIDES WHERE ELIGIBILITY IS READ, and that is worth
+ * stating because it looks like a gap. `eligible`/`blockedBy` ride this object,
+ * so nothing derived from it can gate a deploy of main — which is correct
+ * rather than tolerated: the rule the game box enforces is defined RELATIVE to
+ * main (`ref_blocked_by` refuses a ref whose `tools/dispatch.sh` differs from
+ * main's), so main cannot be blocked against itself. `MaintenancePanel`'s
+ * revert path still checks `main.eligible` off the branch list before it pins,
+ * because there it holds the row and reading it is free; nothing else needs to.
  */
 export function refUpdateFrom(
   b: HostBranches,
@@ -414,6 +445,9 @@ export function refUpdateFrom(
     behind: row.ahead,
     tipSha: row.sha,
     deployedSha: b.deployedSha,
+    // Carried, not recomputed. The box authors both; this hands them on.
+    eligible: row.eligible,
+    blockedBy: row.blockedBy,
     stale: b.stale,
     at,
   }
