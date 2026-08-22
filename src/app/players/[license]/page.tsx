@@ -127,14 +127,16 @@ export default async function PlayerProfilePage({
     admin.license !== null &&
     view.players.some((p) => p.license === admin.license)
 
-  const [ban, canBan, canSpectate, record, game, matches, log, against, filed, origin] =
+  // `can(admin.license, 'spectate')` USED TO BE IN THIS BATCH and is gone
+  // (dba5a6a and its UI half). Watching somebody really is less destructive
+  // than removing them, so a scope of its own was the right instinct — but
+  // nothing in this console can grant a scope, so the read only ever returned
+  // false and the button was greyed for everybody. `/api/spectate` authorises
+  // the `view` scope that already let this page be opened.
+  const [ban, canBan, record, game, matches, log, against, filed, origin] =
     await Promise.all([
       bans.banFor(license),
       can(admin.license, 'ban'),
-      // #192. A SCOPE OF ITS OWN, never folded into `ban`: watching somebody is
-      // strictly less destructive than removing them, so it is trustable far
-      // earlier. Same batch, so it costs no extra round trip.
-      can(admin.license, 'spectate'),
       players.playerFor(license),
       gameProfileFor(license),
       // A SECOND READ OF THE SAME TABLE, and it has to be: the aggregate is a
@@ -498,7 +500,6 @@ export default async function PlayerProfilePage({
               online: live !== null,
               adminOnline: adminLive,
               canBan,
-              canSpectate,
             }}
           />
         </div>

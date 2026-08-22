@@ -2551,8 +2551,6 @@ export function ProfileView({
      */
     adminOnline: boolean
     canBan: boolean
-    /** The `spectate` scope. */
-    canSpectate: boolean
   }
   /** Report categories in English. From `lib/incidents`, which is server-only. */
   categoryLabel?: Record<string, string>
@@ -2628,10 +2626,10 @@ export function ProfileView({
         // counts Ban-or-lift, Kick and Spectate by the rules that actually draw
         // them; see lib/actionBar.ts.
         //
-        // NONE OF THE FIVE INPUTS WAITS ON DISCORD, which is the property that
+        // NONE OF THE FOUR INPUTS WAITS ON DISCORD, which is the property that
         // makes counting here legitimate at all: `banned` is the server's
         // `bans.isActive`, both presence booleans come from the snapshot, and
-        // both scopes are DynamoDB reads. So the skeleton draws the number that
+        // `canBan` is a DynamoDB read. So the skeleton draws the number that
         // is about to appear rather than always three, and no bar jumps when
         // Discord answers.
         moderationButtons={
@@ -2642,7 +2640,6 @@ export function ProfileView({
                 online,
                 adminOnline: moderation.adminOnline,
                 canBan: moderation.canBan,
-                canSpectate: moderation.canSpectate,
               }).buttons
         }
         actionsTaken={p.actionsTaken.length > 0}
@@ -2823,7 +2820,6 @@ export function ProfileView({
                 // prop.
                 adminOnline={moderation.adminOnline}
                 canBan={moderation.canBan}
-                canSpectate={moderation.canSpectate}
               />
             )}
           </div>

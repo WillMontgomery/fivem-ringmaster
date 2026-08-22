@@ -26,18 +26,25 @@ tool, and "restart the server to change a number" is not a config system.
 | **Operates** | schedule maintenance windows around live matches, deploy the game box, switch the branch it is parked on |
 | **Travels** | opens inside the game's own pause menu, already signed in — see [The console in the pause menu](#the-console-in-the-pause-menu) |
 
-**Three of the nine grant scopes have no surface behind them.** `moderate`,
-`notify` and `config` are all defined in `src/lib/grants.ts` and nothing checks
-any of them: every `authorize()` call under `src/app/api/` asks for `view`,
-`kick`, `ban`, `spectate` or `process`. Holding one of the three grants nothing
+**Four of the nine grant scopes have no surface behind them.** `moderate`,
+`notify`, `config` and `spectate` are all defined in `src/lib/grants.ts` and
+nothing checks any of them: every `authorize()` call under `src/app/api/` asks
+for `view`, `kick`, `ban` or `process`. Holding one of the four grants nothing
 today.
 
-> **`spectate` was the fourth, and it is the fourth no longer.** `/api/spectate`
-> authorises on it (#192), so it is now a grant that does something — and, since
-> nothing had ever checked it, **no existing grant row carries it**. Every admin
-> on the server sees the Spectate button greyed until somebody runs
-> `scripts/grant.mjs`. That state is on purpose and it says so on hover;
-> `/preview/profile?mod=spectate-noscope` is what it looks like.
+> **`spectate` was checked for exactly one release, and the reason it stopped is
+> the general one.** `/api/spectate` authorised it (#192) — and since nothing
+> had ever checked it, no grant row carried it, so **every admin on the server
+> got a permanently greyed Spectate button** telling them to acquire a scope.
+> There is no scopes UI. The only way to issue one is editing DynamoDB by hand.
+> The check was a wall with no door, so the route moved to `view` (the scope
+> that already opens the console) and the greyed state, its hover sentence and
+> its `/preview/profile?mod=spectate-noscope` fixture were all removed.
+>
+> **The granular check was not wrong, it was early.** If a scopes UI is ever
+> built, `spectate` is the first grant worth putting behind it — watching
+> somebody is trustable far earlier than removing them. It goes back with the
+> door, not before it.
 
 > **This paragraph used to name `spectate` alone, and then add: "Screenshots on
 > incidents are the same shape: the incident pipeline ships, the capture half

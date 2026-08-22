@@ -18,27 +18,20 @@ import { actionBar } from '@/lib/actionBar'
 import { postJson } from '@/lib/api'
 
 /**
- * The sentence a Spectate button that cannot be pressed carries.
+ * THE SPECTATE BUTTON NO LONGER CARRIES A SENTENCE, and its removal is the
+ * point rather than a tidy-up.
  *
- * A CONSTANT BECAUSE IT IS RENDERED TWICE — into the tooltip popup, and into an
- * `sr-only` span beside it. Base UI's popup gets no `role` and no
- * `aria-describedby`, and this trigger is an inert `<span>` wrapping a disabled
- * button, so the popup is a mouse affordance and nothing more. The rule in
- * docs/hover-text.md is that no fact may live only on hover; one string, two
- * renders, is how the placement badge and `Face` already satisfy it.
+ * `NO_SPECTATE_SCOPE` used to live here — "Spectating needs the spectate scope,
+ * which this account does not have" — rendered into a tooltip and into an
+ * `sr-only` span beside it. It was honest about the state and the state was the
+ * bug: nothing in this console can grant a scope, so the sentence asked every
+ * admin on the server to acquire something no surface hands out. The route
+ * moved to the `view` scope (dba5a6a) and the button follows it here.
  *
- * IT IS THE ONLY SENTENCE THIS FEATURE ADDS, and it is deliberately the shape
- * the button beside it already uses ("Kicking needs the ban scope, which this
- * account does not have"). Nothing anywhere explains what spectating IS.
- *
- * WHY THE STATE IS WORTH A SENTENCE AT ALL: `spectate` is a scope nothing in
- * this console has ever checked, so nobody's grant row carries it yet. Folding
- * it into `shown` would make the button silently absent for every admin on the
- * server, which reads as "the feature did not ship". Greyed with this on hover
- * reads as "grant yourself the scope", which is the truth.
+ * SO SPECTATE IS NOW SHOWN-OR-ABSENT WITH NO THIRD STATE. Nothing explains what
+ * spectating is, nothing explains why it is missing, and both silences are the
+ * owner's standing rule rather than an omission.
  */
-const NO_SPECTATE_SCOPE =
-  'Spectating needs the spectate scope, which this account does not have.'
 
 /**
  * Kick, ban and spectate, for the player whose page this is.
@@ -92,7 +85,6 @@ export function PlayerActions({
   online,
   adminOnline,
   canBan,
-  canSpectate,
 }: {
   license: string
   name: string
@@ -122,9 +114,6 @@ export function PlayerActions({
    */
   adminOnline: boolean
   canBan: boolean
-  /** The `spectate` scope. Decides whether Spectate WORKS, never whether it is
-   *  drawn — see {@link actionBar}. */
-  canSpectate: boolean
 }) {
   const router = useRouter()
   const [banOpen, setBanOpen] = useState(false)
@@ -158,7 +147,7 @@ export function PlayerActions({
    * correct rule with a call site that ignores it is the failure this repo
    * keeps shipping.
    */
-  const bar = actionBar({ banned, online, adminOnline, canBan, canSpectate })
+  const bar = actionBar({ banned, online, adminOnline, canBan })
 
   /**
    * Ask the game to point this admin's camera at this player (#192).
@@ -212,54 +201,33 @@ export function PlayerActions({
           the admin's own presence is half the rule. Nothing marks the gap; a
           ghost button explaining that nobody is on the server would be text
           nobody asked for.
+
+          NO TOOLTIP ON THIS BUTTON AT ALL, and the wrapper is gone rather than
+          left empty.
+
+          It had exactly one branch — the scope sentence — and the scope is
+          gone, so a `<Tooltip>` around it would render nothing on every path.
+          Kick beside it keeps its popup because Kick still has a scope that can
+          genuinely be missing. Writing a popup for the ENABLED state instead
+          would be a sentence explaining what spectating is, which is the one
+          thing this feature was told not to add; a button labelled "Spectate"
+          is not improved by a pill repeating the word.
+
+          `disabled` IS NOW ONLY THE DOUBLE-CLICK GUARD. Spectate is the only
+          action here with no dialog in front of it, so `watching` is the whole
+          of it — there is no permission that can withhold a button that is
+          drawn.
         */}
         {bar.spectate.shown && (
-          <>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span
-                    className={
-                      bar.spectate.enabled ? undefined : 'cursor-not-allowed'
-                    }
-                  />
-                }
-              >
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={!bar.spectate.enabled || watching}
-                  onClick={watch}
-                >
-                  {watching ? <Loader2 className="animate-spin" /> : <Eye />}
-                  Spectate
-                </Button>
-              </TooltipTrigger>
-              {/*
-                NO POPUP AT ALL ON THE ENABLED BUTTON, which is where this
-                differs from Kick beside it. Kick's enabled tooltip predates
-                rule 8 in docs/hover-text.md and says what a kick does; writing
-                the equivalent here would be a sentence explaining what
-                spectating is, which is the one thing this feature was told not
-                to add. A button labelled "Spectate" is not improved by a pill
-                repeating the word.
-              */}
-              {!bar.spectate.enabled && (
-                <TooltipContent side="bottom">
-                  {NO_SPECTATE_SCOPE}
-                </TooltipContent>
-              )}
-            </Tooltip>
-            {/*
-              The trigger is an inert `<span>` and Base UI's popup carries no
-              `role` and no `aria-describedby`, so the popup is a mouse
-              affordance only. The same sentence therefore also exists in the
-              DOM — the conversion `Face` and the placement badge already use.
-            */}
-            {!bar.spectate.enabled && (
-              <span className="sr-only">{NO_SPECTATE_SCOPE}</span>
-            )}
-          </>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={watching}
+            onClick={watch}
+          >
+            {watching ? <Loader2 className="animate-spin" /> : <Eye />}
+            Spectate
+          </Button>
         )}
 
         {/*

@@ -54,12 +54,11 @@ import { thresholdFor } from '@/lib/xp'
  *                `banned-online` pull the Kick button's two hiding rules apart:
  *                it is drawn only for a player who is present AND not banned,
  *                and each of those cases isolates one half of that.
- *                `admin-offline` and `spectate-noscope` do the same job for
- *                Spectate (#192) — the first holds the ADMIN out of the game
- *                with the player still in it, which is the only way to see that
- *                both halves of that rule are live; the second holds the
- *                `spectate` grant back while `ban` is held, which is what a new
- *                moderator's account actually looks like
+ *                `admin-offline` does the same job for Spectate (#192) — it
+ *                holds the ADMIN out of the game with the player still in it,
+ *                which is the only way to see that both halves of that rule are
+ *                live. There is no scope case beside it any more: Spectate has
+ *                no scope, so it has no greyed state to review
  *   ?names=      the names the "Other names" row is built from: never renamed,
  *                renamed twice, and enough to fill the line
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
@@ -787,10 +786,10 @@ const BACK_CASES = {
 type BackKey = keyof typeof BACK_CASES
 
 /**
- * ═══ EVERY CASE CARRIES `adminOnline` AND `canSpectate` SINCE #192 ═══
+ * ═══ EVERY CASE CARRIES `adminOnline` SINCE #192 ═══
  *
- * The bar now has THREE conditional shapes rather than two, and the new one is
- * the only rule in this console that depends on a fact about the ADMIN's body
+ * The bar has THREE conditional shapes rather than two, and the newest is the
+ * only rule in this console that depends on a fact about the ADMIN's body
  * rather than the player's: Spectate is drawn when the admin and the target are
  * both in-game, and hidden — never greyed — otherwise.
  *
@@ -798,13 +797,16 @@ type BackKey = keyof typeof BACK_CASES
  * the whole argument `banned-online` already makes about Kick. Deleting
  * `adminOnline` from the expression leaves every case below looking correct
  * except `admin-offline`, which exists for exactly that reason.
+ *
+ * `canSpectate` IS GONE FROM EVERY CASE, and so is the `spectate-noscope` case
+ * that existed to hold it false. Spectate has no scope any more — there is no
+ * greyed state left to review, only drawn or absent.
  */
 const MOD_CASES = {
   online: {
     online: true,
     adminOnline: true,
     canBan: true,
-    canSpectate: true,
     ban: null,
   },
   /**
@@ -820,7 +822,6 @@ const MOD_CASES = {
     online: false,
     adminOnline: true,
     canBan: true,
-    canSpectate: true,
     ban: null,
   },
   /**
@@ -839,21 +840,18 @@ const MOD_CASES = {
     online: true,
     adminOnline: false,
     canBan: true,
-    canSpectate: true,
     ban: null,
   },
   banned: {
     online: false,
     adminOnline: true,
     canBan: true,
-    canSpectate: true,
     ban: ACTIVE_BAN,
   },
   'banned-temp': {
     online: false,
     adminOnline: true,
     canBan: true,
-    canSpectate: true,
     ban: TEMP_BAN,
   },
   /**
@@ -880,41 +878,28 @@ const MOD_CASES = {
     online: true,
     adminOnline: true,
     canBan: true,
-    canSpectate: true,
     ban: ACTIVE_BAN,
   },
   served: {
     online: true,
     adminOnline: true,
     canBan: true,
-    canSpectate: true,
     ban: SERVED_BAN,
   },
+  /**
+   * NO `ban` GRANT: Kick and Ban are drawn and greyed, Spectate is untouched.
+   *
+   * `spectate-noscope` USED TO SIT BELOW THIS CASE and has been removed with
+   * the scope it described. It held `canBan: true, canSpectate: false` — an
+   * account holding one grant and not the other — and the state it depicted can
+   * no longer occur: `/api/spectate` authorises `view` (dba5a6a), so anybody
+   * who can open this page can press the button. A fixture for an unreachable
+   * state is a harness asserting something about a feature nobody ships.
+   */
   noscope: {
     online: true,
     adminOnline: true,
     canBan: false,
-    canSpectate: false,
-    ban: null,
-  },
-  /**
-   * THE SCOPES PULLED APART, which `noscope` above cannot do.
-   *
-   * `ban` and `spectate` are separate grants — watching somebody is trustable
-   * long before removing them is — so an account can hold one and not the
-   * other, and that is the state a new moderator is actually in. Kick and Ban
-   * work; Spectate is DRAWN AND GREYED, with the reason on hover and in the DOM
-   * as `sr-only`.
-   *
-   * IT IS THE STATE EVERY ADMIN IS IN TODAY. `spectate` has never been checked
-   * by anything, so no grant row carries it — this is what the console looks
-   * like the moment #192 ships and before anybody runs `scripts/grant.mjs`.
-   */
-  'spectate-noscope': {
-    online: true,
-    adminOnline: true,
-    canBan: true,
-    canSpectate: false,
     ban: null,
   },
 } as const
@@ -1541,7 +1526,6 @@ async function Preview({
           online: MOD_CASES[mod].online,
           adminOnline: MOD_CASES[mod].adminOnline,
           canBan: MOD_CASES[mod].canBan,
-          canSpectate: MOD_CASES[mod].canSpectate,
         }}
       />
     </div>

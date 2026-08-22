@@ -34,12 +34,26 @@
  * The distinction in one line: the state of the PLAYER decides whether the
  * control is there at all, and the scope of the ADMIN decides whether it works.
  *
+ * ═══ ONLY ONE CONTROL HERE STILL ASKS THE SECOND QUESTION ═══
+ *
+ * Spectate used to. It asked for a `spectate` scope, and the scope was a good
+ * idea that could not work: NOTHING IN THIS CONSOLE CAN GRANT A SCOPE. There is
+ * no scopes UI, the only route is editing DynamoDB by hand, and the owner does
+ * not do that. So the check was a wall with no door — every admin on the server
+ * got a permanently greyed button and a sentence telling them to acquire
+ * something unacquirable. `/api/spectate` moved to the `view` scope that already
+ * opens the console (dba5a6a), and this file is the other half of that move.
+ *
+ * A GRANULAR CHECK WITH NO GRANT PATH IS NOT CAUTION, IT IS A BROKEN FEATURE.
+ * If a scopes UI is ever built, the place to put spectate back is here — but it
+ * goes back WITH the door, not before it.
+ *
  * ═══ NOTHING HERE WAITS ON DISCORD ═══
  *
  * Every input is known on the server as the page is built — `banned` is
  * `bans.isActive`, the two presence booleans come out of the one live snapshot,
- * and the two scopes are DynamoDB reads. That is what lets the skeleton draw
- * the final count instead of drawing three and resolving to one when Discord
+ * and `canBan` is a DynamoDB read. That is what lets the skeleton draw the
+ * final count instead of drawing three and resolving to one when Discord
  * answers, which is the layout jump the skeleton exists to prevent.
  *
  * NO RUNTIME IMPORTS, deliberately — the same property `serverPhase`, `labels`
@@ -51,6 +65,20 @@
 export interface ActionState {
   shown: boolean
   enabled: boolean
+}
+
+/**
+ * A control with no scope behind it: the only question is whether it is drawn.
+ *
+ * DELIBERATELY NOT `ActionState` WITH `enabled: true` HARD-CODED. A field that
+ * is always the same value is a field nobody reads, and this repository's
+ * standing failure is machinery that ships before — or after — anything calls
+ * it. A constant `enabled` invites a call site to keep a `disabled={}` branch
+ * that can never fire, which is how the greyed Spectate button survived the
+ * route change that was supposed to remove it.
+ */
+export interface ShownOnly {
+  shown: boolean
 }
 
 export interface ActionBarInputs {
@@ -84,14 +112,11 @@ export interface ActionBarInputs {
 
   /** The `ban` scope. Kicking needs it too; see `kick` below. */
   canBan: boolean
-
-  /** The `spectate` scope. */
-  canSpectate: boolean
 }
 
 export interface ActionBar {
   kick: ActionState
-  spectate: ActionState
+  spectate: ShownOnly
   /**
    * How many buttons the bar will contain, Ban-or-Lift included.
    *
@@ -160,10 +185,14 @@ export function actionBar(i: ActionBarInputs): ActionBar {
    * kick — the action is redundant, not forbidden. Watching one who is still
    * connected in the seconds before the ban's own kick lands is not redundant
    * at all; it is the last chance to see what they were doing.
+   *
+   * NO SCOPE HALF AT ALL — see the note at the top of this file. Whoever can
+   * open this page can press this button; `/api/spectate` authorises the same
+   * `view` scope that let them read the profile in the first place, and it
+   * still writes its audit row before the command leaves.
    */
-  const spectate: ActionState = {
+  const spectate: ShownOnly = {
     shown: i.online && i.adminOnline,
-    enabled: i.canSpectate,
   }
 
   return {
