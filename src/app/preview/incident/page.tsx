@@ -139,6 +139,13 @@ const BASE_INCIDENT: Incident = {
       byLicense: REPORTER,
       byName: 'Marla',
     },
+    /*
+      EXACTLY ONE HOUR AFTER FILING, WHICH IS EXACTLY THE REACH `matchOffset`
+      DRAWS WITHIN — so this row carries no offset by a single millisecond, and
+      that is the rule rather than a bug in the fixture. Worth knowing before
+      reading `?match=none`, where it is the only row on the list with a blank
+      column. `banned-fast` below is where a note inside the reach can be seen.
+    */
     {
       at: BASE - 2 * HOUR,
       kind: 'note',
@@ -167,11 +174,19 @@ function closed(
   verdict: IncidentVerdict | null,
   /** Set only on a case a permanent ban closed. See lib/incidents. */
   closedByBan?: ClosedByBan,
+  /**
+   * WHEN IT WAS CLOSED, and it is a parameter because one case below needs it in
+   * seconds rather than hours. Two hours after filing is the ordinary shape and
+   * stays the default; `banned-fast` is the case an admin closed while the match
+   * was still on the warmup pad, which is the only way to look at the offset the
+   * close row carries — past an hour it carries none. See `matchOffset`.
+   */
+  at: number = BASE - HOUR,
 ): Incident {
   return {
     ...BASE_INCIDENT,
     state: 'resolved',
-    resolvedAt: BASE - HOUR,
+    resolvedAt: at,
     resolvedByLicense: ADMIN,
     resolvedByName: 'Preview Admin',
     resolution,
@@ -180,7 +195,7 @@ function closed(
     events: [
       ...BASE_INCIDENT.events,
       {
-        at: BASE - HOUR,
+        at,
         kind: 'resolved',
         byLicense: ADMIN,
         byName: 'Preview Admin',
@@ -190,8 +205,47 @@ function closed(
   }
 }
 
+/**
+ * ═══ THE CASE THAT WAS OPEN FOR SEVENTY-ONE SECONDS ═══
+ *
+ * THE SHAPE THE OWNER SCREENSHOTTED, and the reason it needs a fixture of its
+ * own. An anticheat case is filed on the warmup pad, a system note lands
+ * thirty-four seconds later, and an admin bans and closes at `+1:11` — all of it
+ * before the match enters play. Put it beside `?match=warmup` or
+ * `?match=backfilled` and the whole page sits above `matchStartedAt`, which is
+ * exactly where the offset column used to stop.
+ *
+ * IT IS ALSO THE ONLY PLACE THE CLOSE ROW'S OFFSET CAN BE LOOKED AT. Every other
+ * case on this axis closes two hours after filing, which is past the reach
+ * `matchOffset` draws within, so their close rows carry no number and never
+ * will. This one is the sixty-second answer to "should the close carry one",
+ * and the two together are the pair to flip between.
+ */
+const FAST_NOTE = BASE_INCIDENT.openedAt + 34_000
+const FAST_CLOSE = BASE_INCIDENT.openedAt + 71_000
+
+const BANNED_FAST = closed(
+  'Railgun on the warmup pad, stripped twice before the bus left',
+  { action: 'ban', expiresAt: null },
+  undefined,
+  FAST_CLOSE,
+)
+
 const STATE_CASES = {
   pending: BASE_INCIDENT,
+
+  'banned-fast': {
+    ...BANNED_FAST,
+    /*
+      THE NOTE MOVES WITH THE CLOSE, for the reason `shifted` moves the match:
+      `BASE_INCIDENT` puts its system note an hour after filing, which on a case
+      closed at `+1:11` would be a note arriving fifty-nine minutes after the
+      case was closed. Nothing else about the fixture changes.
+    */
+    events: BANNED_FAST.events.map((e) =>
+      e.kind === 'note' ? { ...e, at: FAST_NOTE } : e,
+    ),
+  },
 
   'banned-perm': closed(
     'Aimbot through walls in match 412 — clip in #reports',
@@ -546,9 +600,17 @@ const NO_END: MatchFields = {
  * fixture. `timelineClose` in the gamemode's `incident_build.lua` appends kills,
  * strips and a `match_end` — never a start — so a warmup case's list is anchored
  * on `match_created` for the rest of its life even after the attribute arrives.
- * The offsets show it: rows before `matchStartedAt` are outside the match window
- * and get none, which is why the anchor and the two early strips carry a clock
- * and no `+`/`-` while everything after the start carries both.
+ *
+ * ═══ AND THIS PAIR IS WHERE THE OFFSET COLUMN WAS WRONG ═══
+ *
+ * It used to be drawn only inside `[matchStartedAt, matchEndedAt ?? matchEndsBy]`,
+ * so `warmup` had no column at all and `backfilled` had one that began partway
+ * down the list: the anchor, both early strips and the case's own opening sat
+ * before the start and went blank while everything after it carried a number.
+ * That is the page the owner screenshotted. `matchOffset` counts from the
+ * opening now and consults no match attribute, so BOTH of these read as one
+ * continuous ruler — negative above the opening, positive below it. Flip between
+ * them: the column must not change for any row the two share.
  */
 const WARMUP_CREATED = FILED - 3 * MIN
 

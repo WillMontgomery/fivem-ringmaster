@@ -36,7 +36,6 @@ import {
   type ConsoleTimelineEvent,
   type MatchFields,
   type MatchTimelineEntry,
-  type OffsetSpan,
   type TimelineParty,
   type WeaponPart,
 } from '@/lib/matchTimeline'
@@ -96,9 +95,10 @@ export function IncidentTimeline({
      */
     incidentId: string
     /**
-     * ZERO ON THE OFFSET AXIS. Every `+2:14` and `-1:30` on this list is
-     * measured from here — see `matchOffset`, and the owner's instruction in
-     * `OffsetSpan.origin`.
+     * ZERO ON THE OFFSET AXIS, AND THE WHOLE OF IT. Every `+2:14` and `-1:30` on
+     * this list is measured from here and from nothing else — see `matchOffset`,
+     * which is also where the limit on how far the ruler reaches is argued. No
+     * match attribute takes any part in it.
      */
     openedAt: number
     events: ConsoleTimelineEvent[]
@@ -119,20 +119,6 @@ export function IncidentTimeline({
   const progress = matchProgress(incident, now)
   const progressLabel = MATCH_PROGRESS_LABEL[progress]
   const dropped = killDiscrepancy(incident)
-
-  /**
-   * WHERE ZERO IS, AND WHERE THE RULER STOPS AT BOTH ENDS.
-   *
-   * `origin` is when the incident was opened — the owner's instruction, see
-   * `OffsetSpan`. The other two are the match: `bound` is the last instant that
-   * can honestly be inside it, the recorded end or the deadline while there is
-   * no recorded end. Rows outside the pair get no offset at all.
-   */
-  const span = {
-    origin: incident.openedAt,
-    startedAt: incident.matchStartedAt,
-    bound: incident.matchEndedAt ?? incident.matchEndsBy,
-  }
 
   return (
     <Card className="surface-edge gap-0 overflow-hidden py-0">
@@ -168,12 +154,16 @@ export function IncidentTimeline({
         <Timeline>
           {rows.map((row) =>
             row.source === 'console' ? (
-              <ConsoleRow key={`c-${row.index}`} event={row.event} span={span} />
+              <ConsoleRow
+                key={`c-${row.index}`}
+                event={row.event}
+                origin={incident.openedAt}
+              />
             ) : (
               <MatchRow
                 key={`m-${row.index}`}
                 entry={row.entry}
-                span={span}
+                origin={incident.openedAt}
                 from={incident.incidentId}
               />
             ),
@@ -184,15 +174,13 @@ export function IncidentTimeline({
   )
 }
 
-/** Where zero is, and the window offsets may be quoted in. See `matchOffset`. */
-type MatchSpan = OffsetSpan
-
 function ConsoleRow({
   event,
-  span,
+  origin,
 }: {
   event: ConsoleTimelineEvent
-  span: MatchSpan
+  /** The instant every offset on this list counts from. See `matchOffset`. */
+  origin: number
 }) {
   return (
     <TimelineItem>
@@ -215,7 +203,7 @@ function ConsoleRow({
         </TimelineTitle>
         <TimelineMeta>
           <LocalTime ms={event.at} /> · {event.byName}
-          <Offset at={event.at} span={span} />
+          <Offset at={event.at} origin={origin} />
         </TimelineMeta>
       </TimelineContent>
     </TimelineItem>
@@ -224,11 +212,12 @@ function ConsoleRow({
 
 function MatchRow({
   entry,
-  span,
+  origin,
   from,
 }: {
   entry: MatchTimelineEntry
-  span: MatchSpan
+  /** The instant every offset on this list counts from. See `matchOffset`. */
+  origin: number
   /** The incident these names should lead back to. See `lib/profileLink`. */
   from: string
 }) {
@@ -254,7 +243,7 @@ function MatchRow({
         </TimelineTitle>
         <TimelineMeta>
           <LocalTime ms={entry.at} />
-          <Offset at={entry.at} span={span} />
+          <Offset at={entry.at} origin={origin} />
         </TimelineMeta>
       </TimelineContent>
     </TimelineItem>
@@ -264,11 +253,14 @@ function MatchRow({
 /**
  * How far from the moment the incident was opened, positive or negative.
  *
- * Rendered only for rows inside the match — `matchOffset` returns null for
- * anything outside it, and for a case with no match at all.
+ * WHICH ROWS GET ONE IS `matchOffset`'s DECISION AND NOT THIS COMPONENT'S. It
+ * returns null for a row too far from the opening to be read as a duration, and
+ * that limit is the only thing suppressing a number anywhere on this list — the
+ * match is no longer consulted, so a case filed on the warmup pad and a case
+ * with no match at all are both placed like everything else.
  */
-function Offset({ at, span }: { at: number; span: MatchSpan }) {
-  const offset = matchOffset(at, span)
+function Offset({ at, origin }: { at: number; origin: number }) {
+  const offset = matchOffset(at, origin)
   if (offset === null) return null
   return <span className="text-muted-foreground/70"> · {offset}</span>
 }

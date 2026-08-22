@@ -367,7 +367,14 @@ public access blocked, **180-day expiry**).
 
 A case shows the match that was running around it: kills, the weapon each used,
 and whether that weapon was one the gamemode issues. **Offsets count from the
-moment the incident was opened**, so rows before it read negative.
+moment the incident was opened**, so rows before it read negative — including on
+a case filed during warmup, whose whole list sits before its match began.
+
+**The match is not the ruler and does not bound it.** The only row without an
+offset is one more than an hour either side of the opening, which is a case
+resolved the next morning rather than a case with an unusual match. `+4322:17`
+is arithmetically true and factually nonsense, and that is the only reading the
+limit exists to suppress.
 
 **Red means an explicit `weaponIssued === false` and nothing else.** Not absent,
 not falsy — `npm run check:timeline` exists because absent and `false` rendering

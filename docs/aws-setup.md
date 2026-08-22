@@ -548,8 +548,14 @@ owner intends to add **`matchStartedAt`** and **`matchEndsBy`** to the list, so
 that a case filed during warmup — before a match had a start or a deadline —
 receives both when the match ends. Today `close.js` on the gamemode's `dev`
 branch sets four attributes and the five above are exactly what it needs; a
-warmup-filed case therefore never gains a start, and the console has no span to
-hang its timeline offsets on.
+warmup-filed case therefore never gains a start, so the console cannot say how
+long that match ran or whether its end was ever reported.
+
+**The timeline offsets no longer depend on it.** They used to: the `+2:14`
+column was drawn only inside `[matchStartedAt, matchEndedAt ?? matchEndsBy]`, so
+a warmup-filed case had no column at all and a backfilled one had a column that
+began partway down the list. `matchOffset` counts from `openedAt` and consults
+no match attribute now, so the widening buys context — not a readable timeline.
 
 **The JSON has not been edited to match, and that is this file's standing rule
 rather than an oversight** — the same one §2 states about `br-players`: a

@@ -341,79 +341,91 @@ export function mergeTimeline(
 }
 
 /**
- * The window an offset may be quoted in, and the instant it counts from.
+ * The furthest a row may sit from the incident opening and still be given a
+ * number. One hour, on BOTH sides.
  *
- * TWO DIFFERENT JOBS, WHICH IS WHY THEY ARE THREE FIELDS RATHER THAN TWO. The
- * MATCH decides whether a row can be placed at all — `startedAt` and `bound`
- * are its two ends. The INCIDENT decides where zero is. Collapsing them, which
- * is what this was before, is precisely the thing the owner asked to stop.
+ * ═══ THE LIMIT USED TO BE THE MATCH, AND IT CUT THE WRONG ROWS ═══
+ *
+ * An offset was drawn only for rows inside `[matchStartedAt, matchEndedAt ??
+ * matchEndsBy]`. On an ordinary case that is invisible — the report is filed
+ * mid-match, so everything is inside it. On a WARMUP-FILED case (rule 5, and
+ * the cases worth the most) it deleted the top half of the page: the incident
+ * is opened before the match enters play, so the anchor, every strip that
+ * provoked the report, the opening event itself and often the resolve all fell
+ * before `matchStartedAt` and lost their number, while the rows after the start
+ * kept theirs. THE OWNER, ON A REAL PAGE: "Yes they are missing. Look at the
+ * timestamps here - several are missing '-0:33' etc."
+ *
+ * ═══ BUT THAT WINDOW'S REASON WAS NEVER THE MATCH ═══
+ *
+ * What it actually protected against is a MAGNITUDE. An incident is resolved
+ * hours or days after it is filed, and `+4322:17` on the resolve row is
+ * arithmetically true and factually nonsense — not because the row is outside
+ * the match, but because a four-digit minute count is not a duration anybody
+ * reads. So the limit stays and stops being about the match: a row is placed
+ * while it is within an hour of the opening, and the largest thing this module
+ * can print is therefore `±59:59`.
+ *
+ * ONE HOUR IS THREE MATCHES. `matchEndsBy` is twenty minutes out on this
+ * gamemode, so nothing that happened inside the match an incident was filed
+ * during can fall outside this — the whole match fits with forty minutes to
+ * spare whichever end of it the report landed on. It is a limit on nonsense,
+ * not a limit on evidence.
+ *
+ * SYMMETRIC, WHICH THE OLD RULE WAS ONLY BY ACCIDENT. `matchStartedAt` was the
+ * only thing bounding the negative side, and dropping it with nothing in its
+ * place would let a stored entry belonging to a DIFFERENT match wearing the same
+ * number — the failure {@link matchRecordFor} exists to describe — print
+ * `-182:14` on this one. One comparison now answers both ends.
  */
-export interface OffsetSpan {
-  /**
-   * The zero point: `incident.openedAt`.
-   *
-   * "all the timestamps should be relative to the incident being opened, not
-   * the match starting" — the owner, playtest. It USED to be `startedAt`, and
-   * the reason that was wrong is the reason an admin opens the page: the kills
-   * worth reading are the ones that provoked the report, so the number that
-   * matters is how long BEFORE the report each happened.
-   */
-  origin: unknown
-  /** `matchStartedAt`. Nothing before the match is placed inside it. */
-  startedAt: unknown
-  /** `matchEndedAt ?? matchEndsBy`. Nothing after the match is either. */
-  bound: unknown
-}
+const OFFSET_REACH_MS = 60 * 60_000
 
 /**
  * How far this sits from the moment the incident was opened. `+2:14`, `-1:30`.
  *
  * COMPUTED, NEVER READ — rule 2.
  *
- * ═══ A NEGATIVE IS THE POINT, NOT AN EDGE CASE ═══
+ * ═══ ONE INSTANT DECIDES EVERY NUMBER ON THE LIST ═══
  *
- * An incident is filed AFTER whatever provoked it, so most of the interesting
- * rows on this list happened before its zero. `-1:30` reads "a minute and a
- * half before the report", and `+0:00` is the report itself. The sign is
+ * `incident.openedAt`, and nothing else. "all the timestamps should be relative
+ * to the incident being opened, not the match starting" — the owner, playtest.
+ * A row before it reads negative, a row after it reads positive, and the opening
+ * event itself reads `+0:00` because it IS the origin.
+ *
+ * NO MATCH ATTRIBUTE IS READ HERE ANY MORE, and that is the change rather than
+ * an omission. The ruler belongs to the case, so a case with no match at all — a
+ * report filed in the lobby — is placed exactly like every other: it has an
+ * opening, therefore it has a zero, therefore its notes and its close carry
+ * numbers. There is no longer a shape whose rows are silently unplaceable.
+ *
+ * A NEGATIVE IS THE POINT, NOT AN EDGE CASE. An incident is filed AFTER whatever
+ * provoked it, so most of the interesting rows on this list happened before its
+ * zero. `-1:30` reads "a minute and a half before the report". The sign is
  * always printed, on both sides, so no row is ambiguous about which way it
  * points.
  *
- * THE MATCH IS STILL THE WINDOW, and that has not changed. Only rows inside
- * `[startedAt, bound]` get an offset at all, because an offset is a position
- * in a match: an incident is RESOLVED hours or days later, and `+182:14` on a
- * twenty-minute match is a number that is arithmetically true and factually
- * nonsense. `bound` is `matchEndedAt ?? matchEndsBy` — the last instant that
- * can honestly be inside the match — and with no bound at all nothing is
- * excluded at that end. With no `startedAt` there is no match to be inside, so
- * nothing gets an offset; that is what a report filed in the lobby looks like.
- *
- * ═══ AND IT IS ALSO WHAT A WARMUP CASE LOOKS LIKE, ON PURPOSE ═══
- *
- * A case filed on the warmup pad has a `matchCreatedAt` and no `matchStartedAt`
- * (rule 5), so every row on it goes unplaced. Falling `startedAt` back on the
- * creation time was considered and NOT DONE: the same row has no `matchEndsBy`
- * either, so the ruler would open at one end and never close, and the resolve
- * event three days later would print `+4322:17` — the exact number `bound`
- * exists to suppress. A warmup timeline is short and every row on it carries a
- * wall clock, so the cost of no offsets is small and the cost of a wrong one is
- * a moderation page stating a falsehood in monospace.
+ * THE RESOLVE ROW GETS ONE WHEN IT DESERVES ONE, and that is not a special case
+ * — it is what falls out of the rule. Closed a minute after filing, it reads
+ * `+1:11` and a reader learns something they would otherwise have to subtract
+ * two wall clocks to get. Closed the next morning it is past
+ * {@link OFFSET_REACH_MS} and carries nothing, which is the reading the match
+ * bound was really there to suppress.
  *
  * SUB-SECOND TRUNCATES TOWARDS ZERO, on both sides, which is why the sign and
  * the magnitude are computed separately. A single `Math.floor` over a signed
  * difference rounds a row 1.999s BEFORE the report to `-0:02` — away from
  * zero, and inconsistent with the `+0:01` the same distance after it.
  */
-export function matchOffset(at: unknown, span: OffsetSpan): string | null {
+export function matchOffset(at: unknown, origin: unknown): string | null {
   const t = num(at)
-  const origin = num(span.origin)
-  const start = num(span.startedAt)
-  if (t === null || origin === null || start === null || t < start) return null
+  const zero = num(origin)
+  if (t === null || zero === null) return null
 
-  const end = num(span.bound)
-  if (end !== null && t > end) return null
+  const delta = t - zero
+  const magnitude = Math.abs(delta)
+  if (magnitude >= OFFSET_REACH_MS) return null
 
-  const delta = t - origin
-  const s = Math.floor(Math.abs(delta) / 1000)
+  const s = Math.floor(magnitude / 1000)
   const sign = delta < 0 ? '-' : '+'
   return `${sign}${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }

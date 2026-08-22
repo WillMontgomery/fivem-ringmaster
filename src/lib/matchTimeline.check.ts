@@ -53,11 +53,6 @@
  *   `mergeTimeline` stops comparing `at`          3 cases, section 3
  *   `matchProgress` stops testing the deadline    2 cases, section 4
  *   `killLine` compares names before licenses     2 cases, section 6
- *   `matchOffset` counts from the match start    13 cases, sections 7a and 7b
- *   `matchOffset` always prints a plus            6 cases, section 7b
- *   `matchOffset` stops bounding by the match     3 cases, sections 7a and 7b
- *   `matchOffset` stops testing the bound         2 cases, sections 7a and 7b
- *   one signed floor instead of sign + magnitude  1 case,  section 7b
  *   `matchRecordFor` ignores the match window     5 cases, section 7c
  *   `matchRecordFor` takes the latest end         1 case,  section 7c
  *   `matchRecordFor` guesses when ambiguous       1 case,  section 7c
@@ -93,7 +88,39 @@
  *   the tone prop is dropped (dots go back)       2 cases, section 8
  *   the dot is painted `--destructive` instead    1 case,  section 8
  *
- * THE LAST FIVE ARE THE COMPONENT ONES AND THEY ARE WHY SECTION 8 GREW AGAIN.
+ * AND AGAIN FOR THE RULER ITSELF — the owner's second instruction, that the
+ * offsets count from the incident opening and stop being cut off by the match
+ * window. The old table's four `matchOffset` lines were replaced rather than
+ * added to: three of them named mutations of a bound that no longer exists.
+ * Observed, not expected:
+ *
+ *   the reach test is deleted outright            5 cases, sections 7a/7b/7b2
+ *   the reach is off by one at its edge           2 cases, section 7a
+ *   the reach stops being symmetric               1 case,  section 7a
+ *   a LOWER bound comes back                     12 cases, sections 7a/7b/7b2
+ *   the reach shrinks to a minute                14 cases, sections 7a/7b/7b2
+ *   the reach grows to a day                      5 cases, sections 7a/7b/7b2
+ *   one signed floor instead of sign + magnitude  4 cases, sections 7a and 7b
+ *   the sign is always a plus                    11 cases, sections 7a/7b/7b2
+ *   the seconds stop being zero padded           18 cases, sections 7a/7b/7b2
+ *   an absent origin falls back on the epoch      1 case,  section 7a
+ *   the component measures from the start again   1 case,  section 8
+ *   the component rebuilds the old match bound    1 case,  section 8
+ *   the console rows lose their offset            1 case,  section 8
+ *   the match rows lose theirs                    1 case,  section 8
+ *   the two arguments are swapped at the call     1 case,  section 8
+ *
+ * FOUR OF THOSE FIFTEEN SURVIVED THE FIRST RUN, and each is a different kind of
+ * blind spot worth naming. `origin ?? 0` survived because the reach catches an
+ * epoch-sized number anyway — it is invisible on every realistic instant and
+ * needed a case at 500ms to see. The other three are the React gap: dropping
+ * `<Offset>` from the console rows, dropping it from the match rows, and handing
+ * `matchOffset` its two arguments the other way round all leave every pure
+ * function correct and change what an admin reads. Section 8 has a grep for each
+ * now.
+ *
+ * THE LAST FIVE OF THE PLAYTEST BATCH ARE THE COMPONENT ONES AND THEY ARE WHY
+ * SECTION 8 GREW AGAIN.
  * Each leaves `CONSOLE_EVENT_LABEL` and `isCaseBracket` correct and untouched,
  * and each changes what an admin reads — which is exactly the gap that had
  * already cost this file once, when the offset origin was swapped and the whole
@@ -149,7 +176,6 @@ import {
   type ConsoleTimelineEvent,
   type MatchFields,
   type MatchTimelineEntry,
-  type OffsetSpan,
 } from './matchTimeline'
 
 /**
@@ -851,40 +877,71 @@ check(
 // 7. OFFSETS. Computed here, never stored.
 // ---------------------------------------------------------------------------
 
-console.log('7a. how far from the report, when the report IS the match start')
+console.log('7a. the arithmetic, the padding and how far the ruler reaches')
 
 /*
- * ═══ THE ORIGIN MOVED AND THE WINDOW DID NOT ═══
+ * ═══ THE RULER IS THE CASE, AND THE MATCH IS NO LONGER PART OF IT ═══
  *
- * "all the timestamps should be relative to the incident being opened, not the
- * match starting" — the owner, playtest. Zero is now `openedAt`.
+ * `matchOffset` used to take a three-field span — an origin plus the match's two
+ * ends — and drew a number only for rows inside `[matchStartedAt, matchEndedAt
+ * ?? matchEndsBy]`. THE OWNER KILLED THAT WINDOW after reading a real page:
+ * "Yes they are missing. Look at the timestamps here - several are missing
+ * '-0:33' etc." Section 7b is the page they were looking at.
  *
- * THESE TWELVE CASES ARE THE ORIGINAL TWELVE, UNCHANGED IN EXPECTATION, and
- * that is deliberate rather than lazy: they are run with `origin === startedAt`,
- * where the new rule and the old one must agree exactly. Everything they were
- * ever about — the padding, the truncation, both ends of the match window, an
- * absent start — is still a live rule, so they are kept rather than rewritten,
- * and 7b below is where the origin actually moves.
+ * WHAT SURVIVES IS A LIMIT ON MAGNITUDE, and these cases are where its two edges
+ * are pinned. The old window's real job was suppressing `+4322:17` on a case
+ * resolved days later; that is a number nobody can read, not a row in the wrong
+ * match, so the limit is now a distance from the opening — an hour, either side,
+ * argued at `OFFSET_REACH_MS`. THE CASES THAT USED TO SAY OTHERWISE ARE MARKED
+ * BELOW rather than deleted, because what they pinned is exactly what changed.
  */
-const offsetCases: Array<[string, number, unknown, unknown, string | null]> = [
-  ['the start itself', START, START, null, '+0:00'],
-  ['two minutes and fourteen seconds', START + 134_000, START, null, '+2:14'],
-  ['seconds are zero padded', START + 61_000, START, null, '+1:01'],
-  ['past an hour, minutes keep counting', START + 3_723_000, START, null, '+62:03'],
-  ['sub-second rounds down rather than up', START + 1_999, START, null, '+0:01'],
-  ['no start to measure from', START, null, null, null],
-  ['no start attribute at all', START, undefined, null, null],
-  ['before the match started', START - 1, START, null, null],
-  ['inside the bound', START + 60_000, START, START + 120_000, '+1:00'],
-  ['exactly on the bound', START + 120_000, START, START + 120_000, '+2:00'],
-  // The case this bound exists for: an admin resolves the case days later, and
-  // `+4322:17` into a twenty-minute match is a true number about nothing.
-  ['past the bound — an event after the match', START + 120_001, START, START + 120_000, null],
-  ['no bound means nothing is excluded', START + HOURS(4), START, null, '+240:00'],
+const offsetCases: Array<[string, unknown, unknown, string | null]> = [
+  ['the opening itself is zero', START, START, '+0:00'],
+  ['two minutes and fourteen seconds after it', START + 134_000, START, '+2:14'],
+  ['seconds are zero padded', START + 61_000, START, '+1:01'],
+  ['sub-second rounds down rather than up', START + 1_999, START, '+0:01'],
+  ['no origin to measure from', START, null, null],
+  ['no origin attribute at all', START, undefined, null],
+  ['an unusable origin is the same answer', START, Number.NaN, null],
+  ['and an unusable instant is too', Number.NaN, START, null],
+  /*
+   * A MISSING ORIGIN IS NOT AN ORIGIN OF ZERO, and this case is the only thing
+   * that can tell the two apart. `openedAt` is typed as a number and arrives off
+   * an unvalidated row, so `t - (origin ?? 0)` is the plausible edit; every
+   * instant in this decade is then an epoch offset far past the reach and comes
+   * back null anyway, which hides it everywhere except here. Survived a mutation
+   * run until this line existed.
+   */
+  ['an instant near the epoch with no origin is still nothing', 500, null, null],
+
+  /*
+   * ── THE REACH, AT BOTH EDGES ──────────────────────────────────────────────
+   *
+   * WAS `['past an hour, minutes keep counting', START + 3_723_000, '+62:03']`
+   * AND `['no bound means nothing is excluded', START + HOURS(4), '+240:00']`.
+   * Both pinned a ruler that never stopped once the match window was absent,
+   * which is the reading that produced `+4322:17` on a warmup case's close. A
+   * three-digit minute count is not a duration a reader parses, so the largest
+   * thing this can now print is `±59:59` and these four cases say where the
+   * edge is.
+   */
+  ['a second under the reach still counts', START + 3_599_999, START, '+59:59'],
+  ['an hour exactly does not', START + HOURS(1), START, null],
+  ['four hours later is the reading the reach exists to suppress', START + HOURS(4), START, null],
+  ['the reach is symmetric — a second under it, before', START - 3_599_999, START, '-59:59'],
+  ['and an hour before, exactly, is not placed either', START - HOURS(1), START, null],
+
+  /*
+   * WAS `['before the match started', START - 1, null]`, AND IT IS THE WHOLE
+   * BUG. A row one millisecond before the match entered play is one millisecond
+   * before the opening on this fixture, and it is now drawn. On the owner's page
+   * that case was eight consecutive rows.
+   */
+  ['a millisecond before the opening is drawn, not dropped', START - 1, START, '-0:00'],
 ]
 
-for (const [label, at, startedAt, bound, expected] of offsetCases) {
-  const got = matchOffset(at, { origin: startedAt, startedAt, bound })
+for (const [label, at, origin, expected] of offsetCases) {
+  const got = matchOffset(at, origin)
   check(`matchOffset: ${label} -> ${expected}`, got === expected, got)
 }
 
@@ -901,70 +958,49 @@ console.log('7b. the report is not the match start, so half the list is negative
 const FILED = START + 4 * MIN
 const CAP = START + 20 * MIN
 
-/** The window every 7b case shares, so only the instant under test varies. */
-const span = { origin: FILED, startedAt: START, bound: CAP }
+const originCases: Array<[string, number, unknown, string | null]> = [
+  ['the report itself is zero', FILED, FILED, '+0:00'],
 
-const originCases: Array<[string, number, OffsetSpan, string | null]> = [
-  ['the report itself is zero', FILED, span, '+0:00'],
-
-  // ── BEFORE THE REPORT. The half that did not exist until now. ─────────────
-  ['a kill a minute before the report', FILED - 60_000, span, '-1:00'],
-  ['the match start, four minutes before it', START, span, '-4:00'],
-  ['seconds are zero padded on the negative side too', FILED - 61_000, span, '-1:01'],
-  ['two minutes and fourteen seconds before', FILED - 134_000, span, '-2:14'],
+  // ── BEFORE THE REPORT. The half the reader actually came for. ─────────────
+  ['a kill a minute before the report', FILED - 60_000, FILED, '-1:00'],
+  ['the match start, four minutes before it', START, FILED, '-4:00'],
+  ['seconds are zero padded on the negative side too', FILED - 61_000, FILED, '-1:01'],
+  ['two minutes and fourteen seconds before', FILED - 134_000, FILED, '-2:14'],
 
   // ── AFTER THE REPORT. ────────────────────────────────────────────────────
-  ['a kill a minute after the report', FILED + 60_000, span, '+1:00'],
-  ['and one at the very end of the match', CAP, span, '+16:00'],
+  ['a kill a minute after the report', FILED + 60_000, FILED, '+1:00'],
+  ['and one at the very end of the match', CAP, FILED, '+16:00'],
 
   // ── TRUNCATION IS SYMMETRIC, which a single Math.floor over a signed
   //    difference gets wrong: it renders this one as -0:02. ────────────────
-  ['sub-second truncates towards zero before the report', FILED - 1_999, span, '-0:01'],
-  ['and after it, the same distance the same way', FILED + 1_999, span, '+0:01'],
+  ['sub-second truncates towards zero before the report', FILED - 1_999, FILED, '-0:01'],
+  ['and after it, the same distance the same way', FILED + 1_999, FILED, '+0:01'],
 
-  // ── THE WINDOW IS STILL THE MATCH, NOT THE ORIGIN. Both of these are
-  //    perfectly ordinary distances from the report and neither is inside the
-  //    match, so neither is placed. ───────────────────────────────────────────
-  ['before the match started, though after nothing else', START - 1, span, null],
-  ['past the bound — the admin resolved it days later', CAP + 1, span, null],
-  [
-    'no match at all: a report filed in the lobby gets no offsets',
-    FILED,
-    { origin: FILED, startedAt: null, bound: null },
-    null,
-  ],
   /*
-   * A WARMUP CASE GETS NONE EITHER, AND THAT IS CHOSEN RATHER THAN INHERITED.
-   * It has a real match — a `matchId`, a creation time, the strips that opened
-   * it — and still no `matchStartedAt`, so the span it hands over has a null
-   * start and every row goes unplaced. Falling `startedAt` back on the creation
-   * time was considered and refused: the same row has no `matchEndsBy`, so the
-   * ruler would open and never close, and the resolve event three days later
-   * would print the four-digit minute count `bound` exists to suppress. The
-   * component's half of this is asserted in section 8.
+   * ── THE THREE SHAPES THAT USED TO GO BLANK ────────────────────────────────
+   *
+   * WAS `['before the match started, though after nothing else', START - 1,
+   * null]`, `['no match at all: a report filed in the lobby gets no offsets',
+   * null]` and `['a warmup case has a match and still no ruler to place it on',
+   * null]`. All three were the same mechanism — no `matchStartedAt`, or an
+   * instant before it — and all three are now placed, because the opening is the
+   * only thing the ruler needs and every incident has one.
    */
-  [
-    'a warmup case has a match and still no ruler to place it on',
-    FILED - 30_000,
-    { origin: FILED, startedAt: null, bound: null },
-    null,
-  ],
-  [
-    'no origin to measure from is no offset, not an offset from the start',
-    FILED,
-    { origin: null, startedAt: START, bound: CAP },
-    null,
-  ],
-  [
-    'an unusable origin is the same answer',
-    FILED,
-    { origin: Number.NaN, startedAt: START, bound: CAP },
-    null,
-  ],
+  ['a row before the match started is placed against the report', START - 1, FILED, '-4:00'],
+  ['a report filed in the lobby has an opening, so it has a ruler', FILED, FILED, '+0:00'],
+  ['and a warmup case is placed on the same one', FILED - 30_000, FILED, '-0:30'],
+
+  /*
+   * AND THE ONE THAT STILL GOES BLANK, WHICH IS THE POINT OF KEEPING A LIMIT.
+   * WAS `['past the bound — the admin resolved it days later', CAP + 1, null]`:
+   * the same answer, now for a reason that also holds on a case whose match
+   * never recorded an end.
+   */
+  ['the admin resolved it the next morning', FILED + HOURS(14), FILED, null],
 ]
 
-for (const [label, at, s, expected] of originCases) {
-  const got = matchOffset(at, s)
+for (const [label, at, origin, expected] of originCases) {
+  const got = matchOffset(at, origin)
   check(`matchOffset: ${label} -> ${expected}`, got === expected, got)
 }
 
@@ -975,18 +1011,147 @@ for (const [label, at, s, expected] of originCases) {
  */
 check(
   'matchOffset: every offset before the report carries a leading minus',
-  matchOffset(FILED - 30_000, span)?.startsWith('-') === true,
-  matchOffset(FILED - 30_000, span),
+  matchOffset(FILED - 30_000, FILED)?.startsWith('-') === true,
+  matchOffset(FILED - 30_000, FILED),
 )
 check(
   'matchOffset: every offset after it carries a leading plus',
-  matchOffset(FILED + 30_000, span)?.startsWith('+') === true,
-  matchOffset(FILED + 30_000, span),
+  matchOffset(FILED + 30_000, FILED)?.startsWith('+') === true,
+  matchOffset(FILED + 30_000, FILED),
 )
 check(
   'matchOffset: zero is a plus, not a minus and not bare',
-  matchOffset(FILED, span) === '+0:00',
-  matchOffset(FILED, span),
+  matchOffset(FILED, FILED) === '+0:00',
+  matchOffset(FILED, FILED),
+)
+
+// ---------------------------------------------------------------------------
+
+console.log("7b2. the owner's own page, row by row")
+
+/*
+ * ═══ THE TIMELINE THE OWNER SCREENSHOTTED, REBUILT ═══
+ *
+ * A WARMUP-FILED CASE THAT RAN TO COMPLETION. The anticheat opened it while the
+ * match was still on the pad, an admin closed it fifty-five seconds later, the
+ * match entered play at `+1:11`, and it ended fifteen minutes after that. The
+ * game's close write backfilled `matchStartedAt`, so the row carries a start —
+ * a start that arrives AFTER most of its own timeline.
+ *
+ * THIRTEEN ROWS, EIGHT OF WHICH THE OLD RULE LEFT BLANK. Everything at or after
+ * `OWNER_STARTED` got a number and everything before it did not, which is what
+ * the owner was looking at when they said several were missing. The eight
+ * include the match's own anchor, the three strips that opened the case, the
+ * opening event — the origin itself, where `+0:00` is true by construction — and
+ * the close.
+ *
+ * ASSERTED AS ONE COLUMN RATHER THAN AS THIRTEEN CASES, because the ordering and
+ * the numbers are one fact: a mutation that shifted the ruler by a row would
+ * have to produce a whole plausible column to get past this.
+ */
+const OWNER_OPENED = NOW
+const OWNER_CREATED = OWNER_OPENED - 33_000
+/** The bus left the pad seventy-one seconds after the case was filed. */
+const OWNER_STARTED = OWNER_OPENED + 71_000
+const OWNER_ENDED = OWNER_OPENED + 901_000
+
+const ownerStored: MatchTimelineEntry[] = [
+  { at: OWNER_OPENED + 29_000, kind: 'weapon_strip', weapon: 'WEAPON_RAILGUN' },
+  { at: OWNER_ENDED, kind: 'match_end' },
+  { at: OWNER_CREATED, kind: 'match_created' },
+  { at: OWNER_OPENED - 20_000, kind: 'weapon_strip', weapon: 'WEAPON_RAILGUN' },
+  { at: OWNER_STARTED, kind: 'weapon_strip', weapon: '-1357824103' },
+  { at: OWNER_OPENED + 12_000, kind: 'weapon_strip', weapon: '-1357824103' },
+  { at: OWNER_OPENED + 64_000, kind: 'weapon_strip', weapon: 'WEAPON_RAILGUN' },
+  {
+    at: OWNER_OPENED + 900_000,
+    kind: 'kill',
+    killerLicense: 'license:ccc',
+    killerName: 'ChillyCat2121',
+    victimLicense: 'license:ccc',
+    victimName: 'ChillyCat2121',
+    cause: 'left',
+  },
+]
+
+const ownerEvents: ConsoleTimelineEvent[] = [
+  { at: OWNER_OPENED, kind: 'opened', byLicense: null, byName: 'Anticheat' },
+  { at: OWNER_OPENED + 40_000, kind: 'note', byLicense: null, byName: 'System', text: '3 refusals' },
+  { at: OWNER_OPENED + 55_000, kind: 'resolved', byLicense: 'license:xeon', byName: 'Xeon' },
+  { at: OWNER_OPENED + 71_000, kind: 'note', byLicense: null, byName: 'System', text: '4 refusals' },
+  { at: OWNER_OPENED + 73_000, kind: 'note', byLicense: null, byName: 'System', text: '5 refusals' },
+]
+
+const ownerRows = mergeTimeline(ownerEvents, ownerStored)
+const ownerColumn = ownerRows.map((r) => matchOffset(r.at, OWNER_OPENED) ?? '(blank)')
+
+check(
+  "the owner's thirteen rows, in order, with the column they now carry",
+  ownerColumn.join(' ') ===
+    '-0:33 -0:20 +0:00 +0:12 +0:29 +0:40 +0:55 +1:04 +1:11 +1:11 +1:13 +15:00 +15:01',
+  ownerColumn.join(' '),
+)
+
+/*
+ * THE EIGHT THAT WERE BLANK, NAMED BY THE RULE THAT BLANKED THEM. Anything
+ * restoring a lower bound of any kind fails here with a count.
+ */
+const ownerBefore = ownerRows.filter((r) => r.at < OWNER_STARTED)
+check(
+  'the eight rows before the match entered play all carry a number now',
+  ownerBefore.length === 8 &&
+    ownerBefore.every((r) => matchOffset(r.at, OWNER_OPENED) !== null),
+  ownerBefore.map((r) => matchOffset(r.at, OWNER_OPENED)),
+)
+
+/*
+ * THE OPENING IS THE ORIGIN, so `+0:00` on it is true by construction rather
+ * than by arithmetic — and it was one of the eight.
+ */
+check(
+  "the case's own opening reads +0:00 rather than nothing",
+  matchOffset(OWNER_OPENED, OWNER_OPENED) === '+0:00',
+)
+
+/*
+ * ═══ AND THE CLOSE CARRIES ONE, WHICH IS A DECISION AND NOT AN ACCIDENT ═══
+ *
+ * It was suppressed before — by the bound, whose stated reason was a case
+ * resolved days later. On this page it is fifty-five seconds after the report,
+ * and it is exactly the row an offset makes readable: an admin banned somebody
+ * inside a minute of the anticheat filing. The rule does not know or care which
+ * kind it is; it draws what is close enough to read, and a close the next
+ * morning is still blank — the case two blocks up.
+ */
+const ownerClose = ownerRows.find((r) => r.source === 'console' && r.event.kind === 'resolved')
+check(
+  'the close reads +0:55 rather than nothing',
+  ownerClose !== undefined && matchOffset(ownerClose.at, OWNER_OPENED) === '+0:55',
+  ownerClose === undefined ? 'missing' : matchOffset(ownerClose.at, OWNER_OPENED),
+)
+check(
+  'and the same close a day later still reads nothing',
+  matchOffset(OWNER_OPENED + HOURS(19), OWNER_OPENED) === null,
+)
+
+/*
+ * A CASE WITH NO MATCH AT ALL IS ON THE SAME RULER. Nothing about `MatchFields`
+ * is consulted, so a lobby report's three console rows are placed exactly like
+ * the thirteen above. This used to be the documented reason a whole shape had no
+ * offsets anywhere.
+ */
+const lobbyRows = mergeTimeline(
+  [
+    { at: NOW, kind: 'opened', byLicense: null, byName: 'Marla' },
+    { at: NOW + 133_000, kind: 'note', byLicense: null, byName: 'System', text: 'seen again' },
+    { at: NOW + 340_000, kind: 'resolved', byLicense: null, byName: 'Preview Admin' },
+  ],
+  null,
+)
+check(
+  'a report filed in the lobby is placed like every other case',
+  lobbyRows.map((r) => matchOffset(r.at, NOW)).join(' ') === '+0:00 +2:13 +5:40',
+  lobbyRows.map((r) => matchOffset(r.at, NOW)).join(' '),
 )
 
 // ---------------------------------------------------------------------------
@@ -1205,7 +1370,7 @@ check(
  */
 check(
   'the component counts from the incident, not from the match start',
-  /origin:\s*incident\.openedAt/.test(component?.text ?? ''),
+  /origin=\{incident\.openedAt\}/.test(component?.text ?? ''),
 )
 
 /*
@@ -1219,21 +1384,52 @@ check(
  */
 
 /*
- * THE FAR END OF THE RULER IS THE MATCH START AND NOT THE CREATION TIME, which
- * is the decision 7b argues and the one nothing else can see. `startedAt:
- * incident.matchStartedAt ?? incident.matchCreatedAt` is the obvious, plausible
- * "improvement": it would give a warmup case offsets, and it would give the
- * resolve event on a match that never ended a four-digit minute count. The
- * second grep is the one that matters — the component must not read the field
- * at all.
+ * ═══ AND THE RULER HAS NO SECOND END TO GET WRONG ═══
+ *
+ * WAS TWO GREPS PINNING `startedAt: incident.matchStartedAt` AND THE ABSENCE OF
+ * `matchCreatedAt`. That pair held the old shape in place: a window from the
+ * match start, deliberately not widened to the creation time. The owner's
+ * instruction retired the window, so what needs pinning is now the opposite —
+ * that no match attribute reaches the offset call at all.
+ *
+ * IT IS THE SAME MUTATION EITHER WAY. `startedAt`, `?? matchCreatedAt` and a
+ * `bound` rebuilt out of `matchEndedAt ?? matchEndsBy` are all plausible, all
+ * invisible to every case in section 7, and all of them put the owner's eight
+ * blank rows back. One grep over four names refuses the lot; 7b2 is what says
+ * why. `matchTimeline` and `matchId` are deliberately not in it — the component
+ * reads the list and the record, which is a different job.
+ */
+const WINDOW_FIELDS = /match(StartedAt|EndedAt|EndsBy|CreatedAt)/
+check(
+  'no match attribute takes any part in where the offsets count from',
+  !WINDOW_FIELDS.test(component?.text ?? ''),
+  (component?.text.match(new RegExp(WINDOW_FIELDS, 'g')) ?? []).join(' '),
+)
+
+/*
+ * ═══ AND BOTH HALVES OF THE LIST HAVE TO ASK FOR ONE ═══
+ *
+ * THREE MUTATIONS SURVIVED EVERYTHING ABOVE UNTIL THESE THREE LINES EXISTED,
+ * and all three are the gap this section is for: nothing here renders React, so
+ * a component that simply stopped drawing the column on the console rows — or on
+ * the match rows, or that handed `matchOffset` its two arguments the other way
+ * round and sign-flipped every number on the page — left `matchOffset` correct
+ * and every case in section 7 green.
+ *
+ * THE CONSOLE HALF IS THE ONE THAT MATTERS. It carries the opening, every note
+ * and the close, which are three of the rows the owner was counting.
  */
 check(
-  'the component measures the window from the match start',
-  /startedAt:\s*incident\.matchStartedAt\s*,/.test(component?.text ?? ''),
+  "the console's own rows ask for an offset",
+  /<Offset at=\{event\.at\} origin=\{origin\} \/>/.test(component?.text ?? ''),
 )
 check(
-  'and it does not quietly fall back on the creation time',
-  !/matchCreatedAt/.test(component?.text ?? ''),
+  "and the game's rows ask for one too",
+  /<Offset at=\{entry\.at\} origin=\{origin\} \/>/.test(component?.text ?? ''),
+)
+check(
+  'and the instant is measured against the origin, not the origin against the instant',
+  /matchOffset\(at, origin\)/.test(component?.text ?? ''),
 )
 
 /*
@@ -1437,16 +1633,17 @@ console.log(
     .join('  ')}`,
 )
 /*
- * A WARMUP CASE, LEFT TO RIGHT. No offsets on any of it, which is the point:
- * there is no start and no deadline, so there is no ruler. If a fallback to the
- * creation time ever lands, every dash here becomes a number and says so.
+ * A WARMUP CASE, LEFT TO RIGHT. EVERY ONE OF THESE USED TO BE A DASH — there was
+ * no start and no deadline, so there was no ruler and the whole shape went
+ * unplaced. The opening is the ruler now, so a case that never left the pad
+ * reads like any other. If a lower bound of any kind comes back, this line goes
+ * to dashes and says so.
  */
 console.log(
   `  warmup timeline   ${warmupMerged
     .map((r) => {
       const label = r.source === 'match' ? r.entry.kind : r.event.kind
-      const off = matchOffset(r.at, { origin: CREATED + 101_000, startedAt: null, bound: null })
-      return `${label}=${off ?? '—'}`
+      return `${label}=${matchOffset(r.at, CREATED + 101_000) ?? '—'}`
     })
     .join('  ')}`,
 )
@@ -1464,7 +1661,21 @@ console.log(
     ['a kill', FILED + 45_000],
     ['match end', CAP],
   ]
-    .map(([label, at]) => `${String(label)}=${matchOffset(at as number, span) ?? '—'}`)
+    .map(([label, at]) => `${String(label)}=${matchOffset(at as number, FILED) ?? '—'}`)
+    .join('  ')}`,
+)
+/*
+ * AND THE OWNER'S PAGE, WHICH IS THE ONE THIS CHANGE IS ABOUT. Read left to
+ * right: everything up to and including the close happened before the match
+ * entered play, and every one of those columns was empty.
+ */
+console.log(
+  `  warmup-filed case ${ownerRows
+    .map(
+      (r) =>
+        `${r.source === 'match' ? r.entry.kind : r.event.kind}` +
+        `=${matchOffset(r.at, OWNER_OPENED) ?? '—'}`,
+    )
     .join('  ')}`,
 )
 console.log(`  event shape       ${JSON.stringify(EVENTS_ARE_ASSIGNABLE)}`)
