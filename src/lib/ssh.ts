@@ -262,9 +262,13 @@ export interface HostStatus {
    *
    * ═══ AND WHY NOT THE GAME'S OWN STATE BAG, WHICH ALREADY HOLDS HALF OF IT ═══
    *
-   * `br_ddb/server/fingerprint.lua` publishes the manifest to
-   * `GlobalState.brDdbBundle` at boot. That is the manifest ONLY — it does not
-   * hash the bundle — so on its own it can repeat a claim and never check one.
+   * `br_ddb/server/fingerprint.lua` PUBLISHED the manifest to
+   * `GlobalState.brDdbBundle` at boot. That was the manifest ONLY — it did not
+   * hash the bundle — so on its own it could repeat a claim and never check one.
+   * The game repo DELETED that file for exactly this reason (gamemode `cadcebd`)
+   * rather than leave behind a third publisher that nothing read. This paragraph
+   * stays because the reasoning is why the hash comes from the shell — not
+   * because the file is still there to argue against.
    * Checking needs a sha256 of `dist/server.js`, the box has `sha256sum` (the
    * fingerprint script requires exactly that and no node, npm or jq), and a
    * shell is where that lives. So: manifest and hash together, from the shell,
