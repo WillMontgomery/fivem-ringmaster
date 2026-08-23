@@ -3,8 +3,10 @@
 import {
   ArrowUpCircle,
   Check,
+  Database,
   GitCommitHorizontal,
   HardDrive,
+  Package,
   Power,
   Wifi,
 } from 'lucide-react'
@@ -14,6 +16,7 @@ import { useEffect, useState } from 'react'
 import { HostCharts } from '@/components/HostCharts'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
+import { BUNDLE_LABEL, REACH_LABEL } from '@/lib/ddbHealth'
 import { commitUrl } from '@/lib/github'
 import {
   behindMainNow,
@@ -164,6 +167,39 @@ export function HostBoard({ initial }: { initial: View }) {
         216px at 1024. Two gives 331px at 1024, 459px at 1280 and 779px at 1920,
         and one gives 330px at 375: every card 88px tall, nothing wrapped,
         nothing clipped, at every width this console is opened at.
+
+        ═══ SIX CARDS NOW, AND THE TWO NEW ONES WERE RE-MEASURED ═══
+
+        DynamoDB and br_ddb bundle joined the row. Six still divides into two
+        columns exactly — three full rows, no stranded card — which is the
+        property this grid was chosen for and which four and six both have and
+        five would not.
+
+        MEASURED AT 375px, NOT ASSUMED — `/preview/host?ddb=disconnected` in a
+        375px viewport, reading every card's box and the true inline extent of
+        its text. All six come back 88px tall and 330px wide, with 294px of
+        content box inside each.
+
+        NOTHING WRAPS AND NOTHING IS CLOSE TO IT. The widest new value is
+        `Disconnected` at 141px and the widest new label is `BR_DDB BUNDLE` at
+        120px — the second of which is not even the widest label on the row,
+        since `FXSERVER UPTIME` is 130px. Every one of them has over 150px of
+        slack, and the label and the value are on separate lines so neither
+        constrains the other. The same pass re-measured the commit card's
+        unbreakable 257px, which is the figure recorded above: the method
+        agrees with the number this grid was originally chosen for.
+
+        THE 88px IS STRUCTURAL RATHER THAN LUCKY. These are the same `StatCard`
+        with the same one-line label and one-line value as the other four, so
+        the height cannot diverge without all six diverging together — which is
+        why the measurement above reports one distinct height for the row
+        rather than six numbers that happen to agree.
+
+        THE OWNER ASKED FOR THE DDB READING BESIDE THE FXSERVER ONE ("Please
+        have the DDB status inside the FXServer status box. They can live next
+        to each other"), which is why DynamoDB is second in DOM order rather
+        than appended: at `lg` it lands directly beside FXServer, and at 375px
+        it lands directly under it. Either way they are read together.
       */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <StatCard icon={Power} label="FXServer" tone={s?.running ? 'var(--live)' : 'var(--danger)'}>
@@ -176,9 +212,97 @@ export function HostBoard({ initial }: { initial: View }) {
           )}
         </StatCard>
 
+        {/*
+          ═══ FACT ONE: CAN br_ddb TALK TO DYNAMODB RIGHT NOW ═══
+
+          THE SAME VISUAL LANGUAGE AS `FXServer: Running` DIRECTLY BESIDE IT,
+          deliberately — live green, danger red, and an em-dash for silence —
+          because it is the same KIND of statement: a process-level yes or no
+          about the box, read at a glance, on a row of live readings.
+
+          THREE STATES AND THE THIRD IS NOT A FAILURE. `unknown` is a console
+          that has not been pushed to yet, a game build that predates the probe,
+          a br_ddb that never started, and a probe that has aged out. All four
+          render the same em-dash every other card here uses for "not told". A
+          red `Disconnected` on a console that simply has not looked would train
+          the owner to ignore the one that means it — which is the entire reason
+          `reachNow` returns three values and not a boolean.
+
+          THIS CARD IS THE QUIET HALF. It states the reading and does nothing
+          else; the chip, the banner and the fix popup that a real failure earns
+          live in the chrome (`DdbHealth`) so they are on every page rather than
+          only on the one you had to already suspect.
+        */}
+        <StatCard
+          icon={Database}
+          label="DynamoDB"
+          tone={
+            view.ddb.reach === 'connected'
+              ? 'var(--live)'
+              : view.ddb.reach === 'unreachable'
+                ? 'var(--danger)'
+                : undefined
+          }
+        >
+          <span
+            className={
+              view.ddb.reach === 'connected'
+                ? 'text-live'
+                : view.ddb.reach === 'unreachable'
+                  ? 'text-danger'
+                  : 'text-muted-foreground'
+            }
+          >
+            {REACH_LABEL[view.ddb.reach]}
+          </span>
+        </StatCard>
+
         <StatCard icon={Power} label="FXServer uptime">
           <span className="font-mono">
             {s?.running ? duration(s.uptimeSec) : '—'}
+          </span>
+        </StatCard>
+
+        {/*
+          ═══ FACT TWO, AND IT IS NOT THE SAME FACT ═══
+
+          A bundle that matches its manifest still cannot reach AWS, and a bundle
+          that does not match connects perfectly well. This card answers "is the
+          box running the br_ddb bundle its own manifest describes"; the one
+          above answers "does that bundle work". Merging them into a single
+          br_ddb light would leave the operator knowing something is wrong and
+          not which thing to go and fix.
+
+          `Matches`, NOT `Verified`, AND THE WORD IS LOAD-BEARING. The box has
+          the bundle and the manifest and NO SOURCE TREE, so what can be checked
+          there is one sha256 against the hash recorded beside it. That catches
+          an rsync that did not finish and a bundle patched by hand. It does not
+          prove the bundle was rebuilt from current source — that is
+          `tools/verify.sh`'s job before a commit lands — and it is not tamper
+          detection, because the manifest sits in the same directory as the
+          thing it describes. See lib/ddbHealth, which says so at length.
+        */}
+        <StatCard
+          icon={Package}
+          label="br_ddb bundle"
+          tone={
+            view.bundle === 'matched'
+              ? 'var(--live)'
+              : view.bundle === 'mismatched'
+                ? 'var(--danger)'
+                : undefined
+          }
+        >
+          <span
+            className={
+              view.bundle === 'matched'
+                ? 'text-live'
+                : view.bundle === 'mismatched'
+                  ? 'text-danger'
+                  : 'text-muted-foreground'
+            }
+          >
+            {BUNDLE_LABEL[view.bundle]}
           </span>
         </StatCard>
 

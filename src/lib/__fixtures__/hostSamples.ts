@@ -276,3 +276,97 @@ export const HOST_STATUS: Record<string, StatusFixture> = {
 
   none: { status: null, refUpdate: null },
 }
+
+/** The two br_ddb readings. */
+type DdbFixture = Pick<View, 'ddb' | 'bundle'>
+
+/**
+ * The br_ddb readings, on an axis of their own.
+ *
+ * ═══ A THIRD AXIS RATHER THAN MORE `HOST_STATUS` KEYS ═══
+ *
+ * These are INDEPENDENT of whether FXServer is behind, parked or level, and
+ * folding them into that record would have implied a coupling that does not
+ * exist — as well as multiplying six status keys by six readings. More
+ * importantly it would have made the two br_ddb facts look like one axis with
+ * the commit reading, which is the exact confusion the feature is built to
+ * avoid.
+ *
+ * BOTH FACTS ARE ON THIS ONE AXIS, AND THAT IS DELIBERATE TOO: the states worth
+ * reviewing are the COMBINATIONS. `both` is the only way to see the two-fault
+ * popup and the "br_ddb has two problems" heading, and `half` is the case that
+ * proves an unknown sitting next to a stated reading renders as silence rather
+ * than borrowing its neighbour's colour.
+ *
+ *   silent        neither fact told. The default, the cold console, and — until
+ *                 the game-side half lands — the ONLY state a real console can
+ *                 currently be in. Two em-dashes, no chip, no banner.
+ *   healthy       both stated good. Two green readings, chrome silent.
+ *   disconnected  br_ddb cannot reach DynamoDB, bundle fine.
+ *   stale-bundle  reaches DynamoDB fine, bundle is not the file its manifest
+ *                 describes. The case that proves one light cannot do both.
+ *   both          two faults at once, which the popup has to enumerate.
+ *   half          DynamoDB stated, bundle not told — a dispatcher that predates
+ *                 the bundle block. Green beside an em-dash, and NO alarm.
+ */
+export const HOST_DDB: Record<string, DdbFixture> = {
+  silent: { ddb: { reach: 'unknown', probe: null }, bundle: 'unknown' },
+
+  healthy: {
+    ddb: {
+      reach: 'connected',
+      probe: { ok: true, region: 'us-east-1', prefix: 'ringmaster-', ms: 14 },
+    },
+    bundle: 'matched',
+  },
+
+  disconnected: {
+    ddb: {
+      reach: 'unreachable',
+      probe: {
+        ok: false,
+        // A REAL AWS ERROR STRING, not "something went wrong". The popup renders
+        // this verbatim and the whole reason it is carried is that an
+        // AccessDenied and a timeout are two different afternoons — a fixture
+        // that says neither could not review that.
+        error:
+          'AccessDeniedException: User: arn:aws:sts::4815162342:assumed-role/fivem-box/i-0ab1 ' +
+          'is not authorized to perform: dynamodb:GetItem on resource: ringmaster-bans',
+        region: 'us-east-1',
+        prefix: 'ringmaster-',
+        ms: 231,
+      },
+    },
+    bundle: 'matched',
+  },
+
+  'stale-bundle': {
+    ddb: {
+      reach: 'connected',
+      probe: { ok: true, region: 'us-east-1', prefix: 'ringmaster-', ms: 12 },
+    },
+    bundle: 'mismatched',
+  },
+
+  both: {
+    ddb: {
+      reach: 'unreachable',
+      probe: {
+        ok: false,
+        error: 'TimeoutError: socket hang up after 5000ms',
+        region: 'us-east-1',
+        prefix: 'ringmaster-',
+        ms: 5_003,
+      },
+    },
+    bundle: 'mismatched',
+  },
+
+  half: {
+    ddb: {
+      reach: 'connected',
+      probe: { ok: true, region: 'us-east-1', prefix: 'ringmaster-', ms: 17 },
+    },
+    bundle: 'unknown',
+  },
+}

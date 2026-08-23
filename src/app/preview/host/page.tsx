@@ -2,7 +2,11 @@ import { notFound } from 'next/navigation'
 
 import { AppShell } from '@/components/AppShell'
 import { HostBoard } from '@/components/HostBoard'
-import { HOST_STATUS, HOST_WINDOWS } from '@/lib/__fixtures__/hostSamples'
+import {
+  HOST_DDB,
+  HOST_STATUS,
+  HOST_WINDOWS,
+} from '@/lib/__fixtures__/hostSamples'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 import { cn } from '@/lib/utils'
 import type { hostView } from '@/lib/telemetry'
@@ -55,7 +59,7 @@ import type { hostView } from '@/lib/telemetry'
 export default function PreviewHostPage({
   searchParams,
 }: {
-  searchParams: Promise<{ state?: string; status?: string }>
+  searchParams: Promise<{ state?: string; status?: string; ddb?: string }>
 }) {
   if (process.env.NODE_ENV === 'production') notFound()
   return <Preview searchParams={searchParams} />
@@ -64,12 +68,27 @@ export default function PreviewHostPage({
 async function Preview({
   searchParams,
 }: {
-  searchParams: Promise<{ state?: string; status?: string }>
+  searchParams: Promise<{ state?: string; status?: string; ddb?: string }>
 }) {
-  const { state, status } = await searchParams
+  const { state, status, ddb } = await searchParams
   const window = state && state in HOST_WINDOWS ? state : 'full'
   const reading = status && status in HOST_STATUS ? status : 'behind'
   const fixture = HOST_STATUS[reading]!
+
+  /**
+   * THE THIRD AXIS, AND IT DRIVES THE CHROME AS WELL AS THE CARDS.
+   *
+   * `silent` is the default because it is the state a real console is in until
+   * the game-side half of this lands — two em-dashes and no alarm — so the
+   * harness opens on the truth rather than on a rehearsal.
+   *
+   * The same fixture goes to `HostBoard` (the two quiet cards) and to
+   * `AppShell` (the chip, the banner and the popup), because those surfaces are
+   * two halves of one feature and reviewing them apart is how a red card ends
+   * up beside a calm header.
+   */
+  const ddbKey = ddb && ddb in HOST_DDB ? ddb : 'silent'
+  const ddbFixture = HOST_DDB[ddbKey]!
 
   const initial: ReturnType<typeof hostView> = {
     configured: true,
@@ -81,6 +100,8 @@ async function Preview({
     lastError: null,
     refUpdate: fixture.refUpdate,
     updateTarget: null,
+    ddb: ddbFixture.ddb,
+    bundle: ddbFixture.bundle,
   }
 
   return (
@@ -89,6 +110,7 @@ async function Preview({
       user={DEMO_USER}
       badges={DEMO_BADGES}
       feed={{ lastPushAt: Date.now() - 1_200, bootEpoch: null, now: Date.now() }}
+      ddb={{ ...ddbFixture.ddb, bundle: ddbFixture.bundle }}
     >
       <div>
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
@@ -99,13 +121,19 @@ async function Preview({
               param="status"
               keys={Object.keys(HOST_STATUS)}
               active={reading}
-              other={`state=${window}`}
+              other={`state=${window}&ddb=${ddbKey}`}
             />
             <Picker
               param="state"
               keys={Object.keys(HOST_WINDOWS)}
               active={window}
-              other={`status=${reading}`}
+              other={`status=${reading}&ddb=${ddbKey}`}
+            />
+            <Picker
+              param="ddb"
+              keys={Object.keys(HOST_DDB)}
+              active={ddbKey}
+              other={`status=${reading}&state=${window}`}
             />
           </div>
         </div>

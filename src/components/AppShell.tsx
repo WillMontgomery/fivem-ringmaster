@@ -13,6 +13,11 @@ import {
   Users,
 } from 'lucide-react'
 
+import {
+  DdbHealthBanner,
+  DdbHealthChip,
+  type DdbSeed,
+} from '@/components/DdbHealth'
 import { IdleGuard } from '@/components/IdleGuard'
 import { IncidentBadge, MaintenanceBadge } from '@/components/NavBadges'
 import { OffMainBanner } from '@/components/OffMainBanner'
@@ -262,6 +267,7 @@ export async function AppShell({
   badges,
   feed,
   hostRef,
+  ddb,
 }: {
   children: React.ReactNode
   active?: string
@@ -321,6 +327,21 @@ export async function AppShell({
    * which is a third state and behaves like main.
    */
   hostRef?: string | null
+  /**
+   * FOR THE DESIGN HARNESS ONLY: pretend `/api/host` answered with these two
+   * br_ddb readings.
+   *
+   * SAME CONTRACT AS `hostRef` AND FOR THE SAME REASON. Nothing in the app
+   * passes it; every real page leaves it undefined and the chip and banner poll
+   * `/api/host` themselves. It exists because the alarm states are otherwise
+   * unreviewable — reaching them means a game box whose IAM role is genuinely
+   * broken — and this console has already shipped two card defects that were
+   * invisible for exactly that reason (see HOST_STATUS).
+   *
+   * IT IS A SEED, NOT AN OVERRIDE. The moment a real poll answers, the poll
+   * wins; on the harness no poll ever succeeds, so the fixture stands.
+   */
+  ddb?: DdbSeed
 }) {
   const resolvedUser =
     user === undefined
@@ -865,6 +886,15 @@ export async function AppShell({
             ladder rather than a test any component makes for itself.
           */}
           <div className="flex items-center justify-end gap-2">
+            {/*
+              OUTSIDE `ServerChips`, AND OUTSIDE THE PRECEDENCE RULE INSIDE IT.
+              `chipCluster` exists to make sure only one of the deploy/feed/
+              update/maintenance chips speaks at a time; a critical br_ddb fault
+              is not one of those and must not be suppressible by a deploy in
+              flight. It sits first so the loudest thing in the header is also
+              the leftmost. Renders nothing unless something is stated broken.
+            */}
+            <DdbHealthChip seed={ddb} />
             <ServerChips
               live={chipFeed.live}
               initialBadge={b.maintenance ?? null}
@@ -875,6 +905,19 @@ export async function AppShell({
             <ThemeToggle />
           </div>
         </header>
+
+        {/*
+          ABOVE THE OFF-MAIN BANNER on the rare page load where both are up.
+          Being parked on a branch means the running code is unreviewed; br_ddb
+          being down means bans are not checked at connect and match results are
+          not saved. The second outranks the first, and the top strip is the one
+          that gets read.
+
+          IT IS NOT DISMISSIBLE AND HAS NO CLOSE CONTROL. It is a render of the
+          current reading, so it ends when the fault does and returns if the
+          fault does — see DdbHealth, which has no dismissed flag to go stale.
+        */}
+        <DdbHealthBanner seed={ddb} />
 
         {/*
           Directly under the header and above everything else on the page,
