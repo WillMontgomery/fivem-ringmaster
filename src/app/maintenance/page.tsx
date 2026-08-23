@@ -64,10 +64,18 @@ export default async function MaintenancePage() {
    * whichever ref the box is on. Null for longer still — it rides the same
    * two-minute `branches` cadence as `refUpdate` — and the panel simply omits
    * the arrow until it lands rather than guessing at either end.
+   *
+   * `runningSha` IS THE COMMIT THE BOX IS ON, off the same fifteen-second
+   * `status` read as `behindMain` and `deployedRef`. It arrives and goes stale
+   * on exactly their cadence, which is the point of taking it from here rather
+   * than off the maintenance row: the row's `deployLandedSha` is a record of one
+   * past deploy and nothing refreshes it. Null on the first render, like the
+   * rest, and the panel renders no commit until it lands.
    */
   const { status, refUpdate, updateTarget } = hostView()
   const deployedRef = status?.deployedRef ?? null
   const behindMain = maint.behindMainNow(status)
+  const runningSha = maint.runningShaNow(status)
 
   return (
     <AppShell
@@ -90,6 +98,7 @@ export default async function MaintenancePage() {
           refUpdate={refUpdate}
           behindMain={behindMain}
           updateTarget={updateTarget}
+          runningSha={runningSha}
           bootEpoch={view.bootEpoch}
           lastPushAt={view.lastPushAt}
         />
@@ -107,6 +116,7 @@ async function Body({
   refUpdate,
   behindMain,
   updateTarget,
+  runningSha,
   bootEpoch,
   lastPushAt,
 }: {
@@ -117,6 +127,7 @@ async function Body({
   refUpdate: ReturnType<typeof hostView>['refUpdate']
   behindMain: number | null
   updateTarget: ReturnType<typeof hostView>['updateTarget']
+  runningSha: string | null
   bootEpoch: string | null
   lastPushAt: number | null
 }) {
@@ -140,6 +151,7 @@ async function Body({
         initialRefUpdate={refUpdate}
         initialBehindMain={behindMain}
         initialUpdateTarget={updateTarget}
+        initialRunningSha={runningSha}
         /*
           THE LIVE FEED AS THE SERVER SEES IT, so the completion gate has an
           answer on first paint. Without it a reload straight after a

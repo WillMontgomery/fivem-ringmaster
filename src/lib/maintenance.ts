@@ -482,6 +482,53 @@ export function behindMainNow(
 }
 
 /**
+ * WHICH COMMIT THE BOX IS ON **NOW**, off the live `status` reading.
+ *
+ * IT IS NOT {@link MaintenanceWindow.deployLandedSha} AND MUST NOT BE CONFUSED
+ * WITH IT. That field is a RECORD — the console's reading at one instant, kept
+ * so the audit trail can answer "where did that deploy go". This is the CURRENT
+ * FACT, re-read every fifteen seconds. Rendering the record where a reader
+ * expects the fact is the owner's bug: the settled card printed a commit six
+ * behind the one the box was actually serving, under a green tick asserting the
+ * server was current, while the branch picker and the Host page — both reading
+ * live — named the right one on the same screen.
+ *
+ * WHY THAT HAPPENS IS TWO SEPARATE MECHANISMS AND EITHER ALONE IS ENOUGH.
+ * `deployLandedSha` is written once at confirmation and cleared only by
+ * `schedule()` and `markDeploying()`, so ANY movement of the box outside a
+ * console-scheduled window leaves it describing a server that has since moved
+ * on. And it can be wrong the moment it is written, because the confirmation
+ * rides the two-second live feed while `status` is on a fifteen-second poll —
+ * see `maintenanceDriver`, which now forces a fresh read rather than accepting
+ * that skew.
+ *
+ * `status.sha`, NOT THE `branches` READING, and that is what keeps two pages
+ * agreeing. `HostBoard` renders `status.sha`/`status.commit`; a maintenance page
+ * sourcing this from `updateTarget.fromSha` — a two-minute `branches` answer —
+ * would eventually print a different commit from the Host page for the same box,
+ * which is a milder version of exactly the complaint being fixed.
+ *
+ * THE PAIRING RULE IN lib/ssh IS NOT BROKEN BY THIS. `updateTargetFrom` insists
+ * `fromSha` be the host's own `deployedSha` rather than `status.sha` so that the
+ * two ENDS OF AN ARROW come out of one answer; it is a rule about pairing, and
+ * this value is paired with nothing. Standing alone, the freshest reading is the
+ * correct one.
+ *
+ * FULL 40-HEX OR NOTHING. `status.commit` is abbreviated for display and a
+ * prefix must never be handed to anything that compares commits (see
+ * `deployLanded`, which refuses abbreviations loudly for the same reason). A
+ * host too old to send `sha` returns null here, which every caller already
+ * renders as silence.
+ */
+export function runningShaNow(
+  status: { sha?: string | null } | null | undefined,
+): string | null {
+  if (!status) return null
+  const sha = status.sha
+  return typeof sha === 'string' && isFullSha(sha) ? sha : null
+}
+
+/**
  * THE TWO ANSWERS TO "IS THE BOX RUNNING THE CODE IT SHOULD BE", IN WORDS.
  *
  * WHY THEY ARE HERE AND NOT WHEREVER THEY ARE RENDERED. The owner asked once

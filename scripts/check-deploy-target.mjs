@@ -20,7 +20,7 @@
  *
  * Two resolutions, two commits, and only one of them was ever on the page.
  *
- * THE THREE PROPERTIES THIS FILE HOLDS:
+ * THE FOUR PROPERTIES THIS FILE HOLDS:
  *
  *   1. A DESTINATION READING NOTHING IS REFRESHING IS NOT SHOWN. `updateTargetNow`
  *      refuses one older than TARGET_MAX_AGE_MS — and the bound is derived from
@@ -32,7 +32,13 @@
  *      whether it is the one the page named. A branch that moves between resolve
  *      and deploy is the case that must not read as agreement.
  *
- *   3. THE CALL SITES DO IT. This repo has three times had a change pass every
+ *   3. "WHAT IS RUNNING" IS READ LIVE, NEVER REMEMBERED. `runningShaNow` answers
+ *      it off the fifteen-second `status` poll — the same field the Host page
+ *      renders — and the settled card asks it that way. The recorded landing is
+ *      a different question with a different answer and a different lifetime;
+ *      the two are not interchangeable and this file keeps both.
+ *
+ *   4. THE CALL SITES DO IT. This repo has three times had a change pass every
  *      check while a component wired a correct function up wrongly — see the
  *      note in check-deploy-phase.mjs, which was written after exactly that. So
  *      the panel, the route and the driver are read as text below.
@@ -51,6 +57,7 @@ import {
   REF_POLL_MS,
   TARGET_MAX_AGE_MS,
   deployLanded,
+  runningShaNow,
   updateTargetNow,
 } from '../src/lib/maintenance.ts'
 
@@ -324,7 +331,67 @@ for (const shown of [A, B, C, null, undefined, '']) {
 }
 
 // =====================================================================
-// PROPERTY 3 — THE CALL SITES ACTUALLY DO IT.
+// PROPERTY 3 — "WHAT IS RUNNING" IS READ LIVE, NEVER REMEMBERED.
+// =====================================================================
+//
+// THE REGRESSION THIS EXISTS FOR, IN THE OWNER'S SCREENSHOT. The maintenance
+// page carried three commit hashes for one question. The branch picker said
+// `60d07c46` and the Host page said `60d07c4`, both live and both right; the
+// green-tick card said `bff66a07`, six commits behind, and it was the only one
+// a reader looking at "the server is running the latest code" would see.
+//
+// IT WAS NOT A WRONG-ROW BUG. The maintenance table is a singleton — `current()`
+// is one `ddb.get` on a fixed key — so there was only ever one row to read. The
+// card was rendering `deployLandedSha`, and that field is a RECORD of one past
+// deploy: written once at confirmation, cleared only by `schedule()` and
+// `markDeploying()`, and therefore describing a server that has since moved
+// whenever anything moves the box outside a console-scheduled window.
+//
+// SO THE TWO ARE NOT INTERCHANGEABLE, and PROPERTY 2 above stays exactly as it
+// was to say so. `deployLanded` still has to answer "where did that deploy go"
+// correctly for the audit trail. What must never happen again is that answer
+// being rendered where the reader is asking "what is running now".
+
+/** [label, status, expected] */
+const runningCases = [
+  ['the host reported a full 40-hex sha', { sha: D }, D],
+  ['no host reading at all — the poller has not answered', null, null],
+  ['the field is absent (an older dispatcher)', {}, null],
+  ['undefined is not a commit', { sha: undefined }, null],
+  ['null is not a commit', { sha: null }, null],
+  ['no status object at all', undefined, null],
+  /**
+   * THE ABBREVIATION IS THE ROW THAT MATTERS. `status.commit` sits beside
+   * `status.sha` on the same payload and is what an eye reaches for; it is a
+   * PREFIX, and lib/github documents `shortSha` as never being for comparison.
+   * A caller that grabbed the wrong field must get silence, not a short link.
+   */
+  ['an abbreviated display sha is refused', { sha: D.slice(0, 8) }, null],
+  ['one hex short of a commit', { sha: D.slice(0, 39) }, null],
+  ['one hex long', { sha: `${D}a` }, null],
+  ['not hex at all', { sha: 'z'.repeat(40) }, null],
+  /**
+   * REFUSED THROUGH `isFullSha`, THE SAME PREDICATE THE PIN GATE USES, so there
+   * is one definition of "a commit this console will act on" rather than a
+   * display-only second opinion. The game box answers `rev-parse` in lower case;
+   * anything else did not come from there and reads as "not told".
+   */
+  ['upper case is not the shape the box produces', { sha: D.toUpperCase() }, null],
+  ['not a string', { sha: 12345 }, null],
+]
+
+for (const [label, status, expected] of runningCases) {
+  const got = runningShaNow(status)
+  if (got !== expected) {
+    fail(
+      `runningShaNow: ${label}\n        expected ${JSON.stringify(expected)}, ` +
+        `got ${JSON.stringify(got)}`,
+    )
+  }
+}
+
+// =====================================================================
+// PROPERTY 4 — THE CALL SITES ACTUALLY DO IT.
 // =====================================================================
 
 {
@@ -368,11 +435,61 @@ for (const shown of [A, B, C, null, undefined, '']) {
     fail('MaintenancePanel no longer names the target commit as a reading')
   }
 
-  /** And it reports where the deploy actually went, through the shared rule. */
-  if (!panel.includes('deployLanded(')) {
+  /**
+   * AND THE SETTLED CARD NAMES A COMMIT AT ALL. "The server is running the
+   * latest code" with nothing beside it is unfalsifiable, which is the owner's
+   * report read from the other end. The card owes the reader one commit.
+   */
+  if (!panel.includes('sha={runningSha}')) {
     fail(
-      'MaintenancePanel no longer reports the landed commit — the settled card claims the ' +
-        'server is current with nothing to check it against',
+      'MaintenancePanel no longer names the running commit on the settled card — the ' +
+        'card claims the server is current with nothing to check it against',
+    )
+  }
+
+  /**
+   * AND THAT COMMIT IS THE LIVE READING, REFRESHED BY THE POLL THAT REFRESHES
+   * EVERYTHING ELSE ON THE CARD. This is the assertion that used to pin the
+   * bug: it read `panel.includes('deployLanded(')`, i.e. it REQUIRED the card to
+   * render the recorded landing. `deployLandedSha` is written once at
+   * confirmation and never touched again until the next window, so the card it
+   * pinned went stale the moment anything moved the box — and the owner's page
+   * ended up showing a commit six behind the one the branch picker and the Host
+   * page were showing on the same screen.
+   *
+   * BOTH HALVES ARE ASSERTED BECAUSE EITHER ALONE PASSES THE BUG. A panel that
+   * sets state from a stale prop and never polls satisfies the render check; a
+   * panel that polls into a value nothing renders satisfies the poll check.
+   */
+  if (!panel.includes('setRunningSha(runningShaNow(hv.status))')) {
+    fail(
+      'MaintenancePanel does not refresh the running commit from the /api/host poll — ' +
+        'a commit read once and never again goes stale in place, which is the bug',
+    )
+  }
+
+  /**
+   * AND THE RECORDED LANDING IS NOT RENDERED AS A CURRENT FACT.
+   *
+   * READ AS CODE, NOT AS TEXT, and that is forced rather than fussy: the panel's
+   * own comment explains at length why it stopped rendering `deployLandedSha`,
+   * so an `includes` on the field name would match the explanation and fail on a
+   * correct file. These two match the expressions that actually read the row.
+   *
+   * `deployLanded` ITSELF IS NOT THE PROBLEM AND IS NOT BANNED — see PROPERTY 2,
+   * which still holds it to its own semantics. What is banned is this surface
+   * answering "what is running" with it.
+   */
+  if (/^\s*deployLanded,$/m.test(panel)) {
+    fail(
+      'MaintenancePanel imports deployLanded again — the recorded landing is a note ' +
+        'about one past deploy, not an answer about the running server',
+    )
+  }
+  if (/w\?\.deployLandedSha/.test(panel)) {
+    fail(
+      'MaintenancePanel reads deployLandedSha off the window row — that field is ' +
+        'written once and never refreshed, so the card it feeds goes stale in place',
     )
   }
 
@@ -481,7 +598,8 @@ if (failed > 0) {
 
 console.log(
   `check:deploytarget — ${targetCases.length} freshness/pairing cases, ` +
-    `${landedCases.length} displayed-vs-deployed cases and 3 properties, ` +
-    `and 11 call sites hold ` +
+    `${landedCases.length} displayed-vs-deployed cases, ` +
+    `${runningCases.length} running-commit cases and 4 properties, ` +
+    `and 14 call sites hold ` +
     `(poll ${REF_POLL_MS / 1000}s, bound ${TARGET_MAX_AGE_MS / 1000}s)`,
 )

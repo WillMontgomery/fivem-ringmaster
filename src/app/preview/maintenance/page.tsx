@@ -136,6 +136,16 @@ interface View {
    * no arrow: that is the honest first two minutes of a console's life.
    */
   updateTarget: UpdateTarget | null
+  /**
+   * The commit the host says it is running NOW. `null` is a host that has not
+   * answered, or a dispatcher too old to send a full sha.
+   *
+   * REQUIRED, NOT OPTIONAL, so that adding a fixture is a decision about this
+   * reading rather than an omission of it. It is `DEPLOYED_SHA` almost
+   * everywhere, which is the shared premise of this whole harness — the two
+   * states where it is not are the two that are worth looking at.
+   */
+  runningSha: string | null
   window: MaintenanceWindow | null
   players: number
 }
@@ -171,6 +181,22 @@ const TIP_SHA = '9c1e77a4b02d5f38e6ab41cc7d90e2f5138ba604'
  * console only ever had names for two of them.
  */
 const LANDED_SHA = 'b7d3410e2fa9c85d6017ee3bb2495c8ad0f61e73'
+/**
+ * A FOURTH COMMIT: WHERE THE BOX ACTUALLY IS, WHICH THE ROW NEVER HEARD ABOUT.
+ *
+ * `LANDED_SHA` above is what the console WROTE DOWN at confirmation. This is
+ * what the host is serving now — and they differ, because `deployLandedSha` is
+ * written once and nothing ever refreshes it: anything that moves the box
+ * afterwards (a deploy run on the game host, a restart, a switch) leaves the
+ * record describing a server that has moved on. The owner's console had these
+ * six commits apart, with the settled card printing the record under a green
+ * tick while the branch picker on the same screen printed the fact.
+ *
+ * SO `parked-landed` IS A STANDING REHEARSAL OF THAT DIVERGENCE. The row still
+ * carries `LANDED_SHA`; the card must show THIS one. If the two are ever the
+ * same string again, the fixture stops being able to catch the regression.
+ */
+const RUNNING_SHA = 'e5a8c02f7b13d4906ce28fa5b7013d64ac9f8e21'
 
 /**
  * A reading of the parked branch, as the telemetry poller would hold one.
@@ -239,6 +265,7 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: null,
     updateTarget: null,
+    runningSha: DEPLOYED_SHA,
     window: BASE,
     players: 7,
   },
@@ -255,6 +282,7 @@ const views: Record<string, View> = {
     refUpdate: refAt('dev', 3),
     behindMain: null,
     updateTarget: targetOn('dev'),
+    runningSha: DEPLOYED_SHA,
     window: BASE,
     players: 7,
   },
@@ -290,6 +318,7 @@ const views: Record<string, View> = {
     refUpdate: refAt('dev', 3, false, BLOCKED_BY),
     behindMain: null,
     updateTarget: targetOn('dev'),
+    runningSha: DEPLOYED_SHA,
     window: BASE,
     players: 7,
   },
@@ -314,6 +343,7 @@ const views: Record<string, View> = {
     // Level means the box IS the tip, so the pair collapses to one commit and
     // `updateTargetNow` withholds it. There is no card here to hang it on.
     updateTarget: { ...targetOn('dev'), toSha: DEPLOYED_SHA },
+    runningSha: DEPLOYED_SHA,
     window: BASE,
     players: 7,
   },
@@ -334,12 +364,27 @@ const views: Record<string, View> = {
    * outcome being reported honestly, not an alarm. `parked-level` above is the
    * same card with nothing recorded, which is every window scheduled before this
    * field existed and is the state that must still render.
+   *
+   * AND IT REHEARSES THE SECOND HALF TOO: THE RECORD HAS GONE STALE. The row
+   * still says `LANDED_SHA` and the box is on `RUNNING_SHA`, because
+   * `deployLandedSha` is written once at confirmation and nothing refreshes it —
+   * so the moment anything moves the box outside a scheduled window, the record
+   * and the fact part company. That is the state the owner screenshotted: the
+   * settled card naming a commit six behind the one the branch picker and the
+   * Host page were both naming on the same screen.
+   *
+   * WHAT TO CHECK, AND IT IS ONE STRING: the commit under the tick is
+   * `RUNNING_SHA` (`e5a8c02f`), never `LANDED_SHA` (`b7d3410e`). The footer below
+   * prints both, so they can be compared without opening this file. If they are
+   * ever the same commit again this fixture has stopped being able to catch the
+   * regression it exists for.
    */
   'parked-landed': {
     deployedRef: 'dev',
     refUpdate: refAt('dev', 0),
     behindMain: null,
     updateTarget: { ...targetOn('dev'), toSha: LANDED_SHA },
+    runningSha: RUNNING_SHA,
     window: {
       ...BASE,
       shownSha: TIP_SHA,
@@ -371,6 +416,7 @@ const views: Record<string, View> = {
      * have been overtaken. The arrow renders and says so in warn text.
      */
     updateTarget: targetOn('dev', true),
+    runningSha: DEPLOYED_SHA,
     window: BASE,
     players: 7,
   },
@@ -381,6 +427,7 @@ const views: Record<string, View> = {
     refUpdate: refAt('dev', 3),
     behindMain: null,
     updateTarget: targetOn('dev'),
+    runningSha: DEPLOYED_SHA,
     window: DRAINING,
     players: 3,
   },
@@ -391,6 +438,7 @@ const views: Record<string, View> = {
     refUpdate: refAt('dev', 3),
     behindMain: null,
     updateTarget: targetOn('dev'),
+    runningSha: DEPLOYED_SHA,
     window: {
       ...DRAINING,
       targetRef: 'feature/loot-v2',
@@ -412,6 +460,7 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: 3,
     updateTarget: targetOn('main'),
+    runningSha: DEPLOYED_SHA,
     window: {
       ...BASE,
       updateAvailable: 3,
@@ -432,6 +481,7 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: 3,
     updateTarget: null,
+    runningSha: DEPLOYED_SHA,
     window: {
       ...BASE,
       updateAvailable: 3,
@@ -446,6 +496,7 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: 0,
     updateTarget: null,
+    runningSha: DEPLOYED_SHA,
     window: BASE,
     players: 12,
   },
@@ -472,6 +523,9 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: null,
     updateTarget: null,
+    // No `status` at all yet, so there is no commit either — the same null as
+    // `behindMain` above and for the same reason. Nothing has been asked.
+    runningSha: null,
     window: null,
     players: 12,
   },
@@ -497,6 +551,7 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: 3,
     updateTarget: targetOn('main'),
+    runningSha: DEPLOYED_SHA,
     window: {
       ...BASE,
       state: 'deploying',
@@ -527,6 +582,7 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: 0,
     updateTarget: null,
+    runningSha: DEPLOYED_SHA,
     window: {
       ...BASE,
       completedAt: NOW - 45_000,
@@ -555,6 +611,7 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: 0,
     updateTarget: null,
+    runningSha: DEPLOYED_SHA,
     window: {
       ...BASE,
       completedAt: NOW - 11 * 60_000,
@@ -582,6 +639,7 @@ const views: Record<string, View> = {
     refUpdate: null,
     behindMain: 3,
     updateTarget: targetOn('main'),
+    runningSha: DEPLOYED_SHA,
     window: {
       ...BASE,
       updateAvailable: 3,
@@ -615,6 +673,13 @@ const views: Record<string, View> = {
      * reads.
      */
     updateTarget: null,
+    /**
+     * AND NO COMMIT EITHER, for the same age reason the ref is missing. `sha`
+     * and `deployedRef` are both fields a newer dispatcher grew; a box too old
+     * to name its branch sends neither, and `runningShaNow` returns null rather
+     * than reaching for the abbreviated `commit` beside it.
+     */
+    runningSha: null,
     window: {
       ...BASE,
       updateAvailable: 3,
@@ -717,6 +782,7 @@ async function Preview({
           initialRefUpdate={view.refUpdate}
           initialBehindMain={view.behindMain}
           initialUpdateTarget={view.updateTarget}
+          initialRunningSha={view.runningSha}
           frozen
         />
 
@@ -751,6 +817,20 @@ async function Preview({
                 view.updateTarget.stale ? ', from stale refs' : ''
               }`
             : '(not known)'}
+          {/*
+            THE LIVE COMMIT AND THE RECORDED ONE, SIDE BY SIDE AND NEVER MERGED.
+            They are two different facts — what the box is on now, and what one
+            past deploy was observed to land on — and the bug this harness
+            rehearses is the second being rendered where a reader was asking the
+            first. Printed apart here so `parked-landed` can be checked at a
+            glance: the card above must show the running one.
+          */}
+          , running{' '}
+          {view.runningSha ? view.runningSha.slice(0, 8) : '(not known)'},
+          recorded landing{' '}
+          {view.window?.deployLandedSha
+            ? view.window.deployLandedSha.slice(0, 8)
+            : '(not recorded)'}
           {deadline ? ', automatic deadline set' : ', no automatic deadline'}.
           Not reachable in production.
         </p>

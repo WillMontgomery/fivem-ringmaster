@@ -47,10 +47,10 @@ import { deployPhase, RESTART_GRACE_MS } from '@/lib/serverPhase'
 import {
   AUTO_AFTER_MS,
   behindMainNow,
-  deployLanded,
   nothingToDeploy,
   refBehindNow,
   refBlockedNow,
+  runningShaNow,
   updateTargetNow,
   UPDATE_AVAILABLE,
   type MaintenanceWindow,
@@ -225,6 +225,7 @@ export function MaintenancePanel({
   initialRefUpdate,
   initialBehindMain,
   initialUpdateTarget,
+  initialRunningSha,
   initialBootEpoch = null,
   initialLastPushAt = null,
   frozen = false,
@@ -277,6 +278,20 @@ export function MaintenancePanel({
    */
   initialUpdateTarget: UpdateTarget | null
   /**
+   * The commit the box is running RIGHT NOW, or null if it has not said.
+   *
+   * THE LIVE READING, NOT THE RECORDED ONE, and the distinction is this prop's
+   * entire reason for existing — see `runningShaNow`. The settled card used to
+   * print `deployLandedSha` off the window row, which is a note about one past
+   * deploy rather than an answer about the running server, and the two had
+   * visibly diverged by six commits on the owner's console.
+   *
+   * NULL RENDERS NOTHING, like every other reading here: a host that has not
+   * answered, or one too old to send a full sha, leaves the card saying what it
+   * always said and naming no commit.
+   */
+  initialRunningSha: string | null
+  /**
    * The live feed, as the SERVER render saw it, so the completion gate has an
    * answer on first paint instead of two seconds later.
    *
@@ -314,6 +329,7 @@ export function MaintenancePanel({
   const [refUpdate, setRefUpdate] = useState(initialRefUpdate)
   const [behindMain, setBehindMain] = useState(initialBehindMain)
   const [updateTarget, setUpdateTarget] = useState(initialUpdateTarget)
+  const [runningSha, setRunningSha] = useState(initialRunningSha)
 
   const [drainIn, setDrainIn] = useState('0')
   const [advanced, setAdvanced] = useState(false)
@@ -538,7 +554,17 @@ export function MaintenancePanel({
         const hres = await fetch('/api/host', { cache: 'no-store' })
         if (hres.ok) {
           const hv = (await hres.json()) as {
-            status?: { deployedRef?: string; behindMain?: number } | null
+            status?: {
+              deployedRef?: string
+              behindMain?: number
+              /**
+               * The full 40-hex commit. `status.commit` beside it is
+               * ABBREVIATED and is not read here: `runningShaNow` refuses
+               * anything that is not a whole sha, for the same reason
+               * `deployLanded` does.
+               */
+              sha?: string
+            } | null
             refUpdate?: RefUpdate | null
             updateTarget?: UpdateTarget | null
           }
@@ -559,6 +585,19 @@ export function MaintenancePanel({
            * request.
            */
           setBehindMain(behindMainNow(hv.status))
+          /**
+           * AND WHICH COMMIT IT IS ON, IN THE SAME BEAT AS THE DISTANCE. Both
+           * come off the one `status` reading, so the settled card below cannot
+           * name a commit from a different moment than the one the card's own
+           * "there is nothing to deploy" was decided from.
+           *
+           * THIS POLL IS THE FIX. `deployLandedSha` — what used to be rendered
+           * there — is written once and then never touched again until the next
+           * scheduled window, so a box moved by anything else (a manual deploy
+           * on the game host, a restart, a switch) left the card asserting a
+           * commit that had stopped being true and had nothing to correct it.
+           */
+          setRunningSha(runningShaNow(hv.status))
           setUpdateTarget(hv.updateTarget ?? null)
         }
       } catch {
@@ -633,29 +672,6 @@ export function MaintenancePanel({
    * poll now, so it has to come after it.
    */
   const target = updateTargetNow(deployedRef, updateTarget, phaseNow)
-
-  /**
-   * WHERE THE LAST DEPLOY ACTUALLY LANDED, off the window row.
-   *
-   * IT IS THE ONLY COMMIT ON THIS PAGE THAT WAS OBSERVED RATHER THAN PREDICTED.
-   * Everything else — the arrow, the pinned `targetSha`, the branch picker's
-   * tips — is a reading of what a tip was at some earlier moment. This is the
-   * host's own `sha` read after a heartbeat proved the new process was up, which
-   * is the one fact that answers the owner's question ("we actually end up on Z")
-   * instead of restating the claim that was wrong.
-   *
-   * `asShown` IS CARRIED BUT NOT RENDERED, and that is a decision rather than an
-   * oversight. Landing past the commit the page named is the NORMAL behaviour of
-   * a deploy that fetches and resets to the tip — it is what "get the server
-   * current" means — so drawing attention to the difference would turn correct
-   * behaviour into an alarm. What the page owed the reader was the commit, and
-   * that is what it now shows. The comparison lives on the row and in the audit
-   * detail, where somebody asking "why did it not go where it said" can read it.
-   */
-  const landed = deployLanded({
-    shownSha: w?.shownSha,
-    landedSha: w?.deployLandedSha,
-  })
 
   /**
    * The moment the excuse runs out, for the countdown below.
@@ -1884,29 +1900,48 @@ export function MaintenancePanel({
             {noDeploy.fix}
           </p>
           {/*
-            WHERE THE LAST DEPLOY ACTUALLY WENT.
+            WHICH COMMIT THE SERVER IS ON, AS OF THE LAST POLL.
 
-            THIS CARD MADE A CLAIM AND SHOWED NOTHING TO CHECK IT AGAINST, which
-            is the whole of the owner's report read from the other end: the page
-            said "going from X to Y", the box went to Z, and the screen it landed
-            on said "running the latest code" without naming a commit. Yes and
-            no are both unfalsifiable there.
+            WHY THIS COMMIT IS HERE AT ALL, and that half has not changed. This
+            card made a claim — "the server is running the latest code" — and
+            showed nothing to check it against, which is the owner's report read
+            from the other end: the page said "going from X to Y", the box went
+            to Z, and the screen it landed on named no commit. Yes and no are
+            both unfalsifiable there. The card owes the reader a commit.
 
-            NO NEW SENTENCE, AND DELIBERATELY SO. `landed` is a value the row now
-            carries — the host's own `sha`, observed after the restart — rendered
-            through the same `CommitLink` the arrow above uses. The sr-only label
-            is what the anchor needs to be readable at all (WCAG 2.5.3, same
-            reason as the pair); nothing else is added, because the sentence
-            above already says what happened and only lacked the commit.
+            IT IS THE LIVE READING NOW, AND IT USED TO BE THE RECORDED ONE. This
+            rendered `deployLanded(...).sha` — `deployLandedSha` off the window
+            row — which is a note about ONE PAST DEPLOY and not an answer about
+            the running server. The owner's console showed the difference: the
+            tick here named a commit six behind the one the branch picker and the
+            Host page were both naming on the same screen. Two mechanisms
+            produced that and either alone is enough — the field is written once
+            and never refreshed, so anything that moves the box outside a
+            scheduled window leaves it stale; and it could be written wrong to
+            begin with, off a `status` poll up to fifteen seconds behind the
+            confirmation. `runningShaNow` reads the same `status.sha` the Host
+            page renders, arriving on the same /api/host poll as the sentence
+            above it, so the two pages cannot name different commits and neither
+            can go stale in place.
 
-            ABSENT UNTIL THERE IS ONE. A console with no window row, a window
-            that predates this field, a deploy nobody has confirmed — all render
-            nothing, which is what every other reading on this page does when it
-            has not been told. `deployLanded` returns null for each.
+            THE RECORD IS NOT DELETED, IT IS JUST NOT A CURRENT FACT.
+            `deployLandedSha` and `deployLanded` still exist and still answer
+            "where did that deploy go" for the audit trail, which is the question
+            they were built for. What was wrong was rendering that answer where a
+            reader was asking a different one.
+
+            STILL NO NEW SENTENCE. One `CommitLink`, the same component the arrow
+            above uses; the sr-only label is what the anchor needs to be readable
+            at all (WCAG 2.5.3, same reason as the pair) and it matches the words
+            already on the pair's left-hand side, which is the same fact.
+
+            ABSENT UNTIL THERE IS ONE. A console whose poller has not answered,
+            or a dispatcher too old to send a full sha, renders nothing — what
+            every other reading on this page does when it has not been told.
           */}
-          {landed && (
+          {runningSha && (
             <p className="mt-3 text-xs text-muted-foreground">
-              <CommitLink sha={landed.sha} label="Deployed" />
+              <CommitLink sha={runningSha} label="Running now" />
             </p>
           )}
         </Card>
