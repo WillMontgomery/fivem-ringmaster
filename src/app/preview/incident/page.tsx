@@ -51,6 +51,10 @@ import { cn } from '@/lib/utils'
  *              the case the ban came from, the second says "on-demand" because
  *              there is none. Their note is a PLACEHOLDER awaiting the owner's
  *              wording, and this is the only place it can be read.
+ *              `no-close-row` is a closed case whose events do not say so — a
+ *              shape nothing produces, kept reviewable because the verdict now
+ *              rides on that row. Flip it against `banned-perm`, which is the
+ *              same case with its row intact; the two must read alike.
  *
  *   ?subject=  the two facts that decide which verdicts are offered, in all four
  *              combinations —
@@ -285,6 +289,37 @@ const STATE_CASES = {
    * for the field, standing on one page.
    */
   legacy: closed('Banned for 7 days', null),
+
+  /*
+   * ═══ A CLOSED CASE WHOSE EVENTS DO NOT SAY SO ═══
+   *
+   * NOTHING PRODUCES THIS SHAPE. `incidents.resolve` appends the closing event
+   * in the same conditional update that sets the state, `open` appends one when
+   * it opens straight to resolved, and `closed()` above is written as one
+   * function precisely so a fixture cannot drift. It cannot be dated either: if
+   * a deploy older than the closing-event writer ever closed a case, that row is
+   * still in the table and nothing in this console can tell.
+   *
+   * IT IS HERE FOR THE REASON `auto-linked` AND `auto-on-demand` ARE. Since the
+   * verdict folded onto the timeline's closing row (owner, 2026-08-22), a
+   * resolved case with no closing row would lose its verdict, its resolution
+   * text, its closing time and its closing admin from the page at once —
+   * silently, with no gap where they used to be. `withClosure` in
+   * `lib/matchTimeline` rebuilds the row from the incident's own closure
+   * attributes, and this is the only place that rebuild can be looked at.
+   *
+   * FLIP IT AGAINST `banned-perm`, WHICH IS THE SAME CASE WITH ITS ROW INTACT.
+   * The two must render the same closing row — same words, same chip, same time,
+   * same admin. That they do is what says the guard is a guard rather than a
+   * second way of drawing a close.
+   */
+  'no-close-row': {
+    ...closed('Aimbot through walls in match 412 — clip in #reports', {
+      action: 'ban',
+      expiresAt: null,
+    }),
+    events: BASE_INCIDENT.events,
+  },
 
   /*
    * ═══ CLOSED BY A PERMANENT BAN ISSUED SOMEWHERE ELSE ═══

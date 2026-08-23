@@ -19,6 +19,8 @@ import {
   TimelineMeta,
   TimelineTitle,
 } from '@/components/ui/timeline'
+import { verdictTone } from '@/lib/incidentChip'
+import type { ClosedByBan, IncidentVerdict, VerdictAction } from '@/lib/incidents'
 import { labelFor } from '@/lib/labels'
 import { profileHref } from '@/lib/profileLink'
 import {
@@ -27,12 +29,15 @@ import {
   MATCH_PROGRESS_LABEL,
   isBracket,
   isCaseBracket,
+  isResolution,
   killDiscrepancy,
   killLine,
   matchOffset,
   matchProgress,
   mergeTimeline,
   weaponTone,
+  withClosure,
+  type CaseClosure,
   type ConsoleTimelineEvent,
   type MatchFields,
   type MatchTimelineEntry,
@@ -81,12 +86,36 @@ import { cn } from '@/lib/utils'
  * `check:timeline` walks the source and fails, by path, if a second reader of
  * it appears — because the second reader is where the comparison gets written
  * the obvious wrong way and every legacy row turns red at once.
+ *
+ * ═══ AND THE VERDICT IS ON THIS LIST NOW, NOT IN A CARD UNDER IT ═══
+ *
+ * The owner, 2026-08-22: "we still have the 'verdict' section displaying on the
+ * incidents page? That's not supposed to have it's own section on a resolved
+ * incident as we already agreed to." The card said four things and three of them
+ * were already on the closing row of this list — `incidents.resolve` writes one
+ * string into both `resolution` and the closing event's `text` in a single
+ * update, and `resolvedAt`/`resolvedByName` are the same instant and the same
+ * name that row's meta line prints. The two that were NOT duplicated are the
+ * verdict chip and the `closedByBan` provenance, and they are the two things
+ * that moved.
+ *
+ * WHICH ROW IS THE CLOSING ONE IS `isResolution`'s DECISION, not a comparison
+ * here — the same rule the marker tone already follows one predicate up, and in
+ * this case a rule `check:timeline` enforces by refusing the literal outright.
+ *
+ * AND A RESOLVED CASE WITH NO CLOSING ROW STILL GETS ONE. `withClosure` builds
+ * it from the row's own closure attributes when the events list has none, so the
+ * fold cannot turn a shape nobody has seen into a page with no verdict on it at
+ * all. It says why, at length, and says plainly that it is a guard rather than a
+ * response to a shape anything here produces.
  */
 export function IncidentTimeline({
   incident,
   now,
+  verdictLabel,
 }: {
-  incident: MatchFields & {
+  incident: MatchFields &
+    CaseClosure & {
     /**
      * WHERE THE NAMES ON THIS LIST LEAD BACK TO. Every kill links both parties
      * to their profile, and each of those links carries this so the breadcrumb
@@ -102,6 +131,19 @@ export function IncidentTimeline({
      */
     openedAt: number
     events: ConsoleTimelineEvent[]
+    /**
+     * WHAT WAS DECIDED, WHICH IS NOW A ROW ON THIS LIST. Optional because
+     * history is: every case closed before the field existed, and every one the
+     * system auto-resolved, carries none — and that ABSENCE is its own reading
+     * rather than a "no action". See {@link Verdict}.
+     */
+    verdict?: IncidentVerdict | null
+    /**
+     * WHY IT CLOSED WHEN NOBODY DECIDED ANYTHING ON IT. The other half of what
+     * the deleted card held that this list did not. Carried as a structured
+     * field, never found in the resolution text — see the note at its markup.
+     */
+    closedByBan?: ClosedByBan | null
   }
   /**
    * PASSED IN, NEVER READ FROM THE CLOCK HERE — the same rule `ago()` states in
@@ -114,8 +156,28 @@ export function IncidentTimeline({
    * reviewable at all.
    */
   now: number
+  /**
+   * The English for a verdict, handed down from the server like
+   * `categoryLabel` and `kindLabel` are on the page above.
+   *
+   * A PROP RATHER THAN AN IMPORT, and that is the same rule `incidentChip`
+   * states: `VERDICT_LABEL` lives in `lib/incidents`, which reaches DynamoDB, so
+   * a client component cannot import the value — only the type, which erases.
+   * There is still exactly one place the English is written down.
+   */
+  verdictLabel: Record<VerdictAction, string>
 }) {
-  const rows = mergeTimeline(incident.events, incident.matchTimeline)
+  /*
+    THE CLOSING ROW IS GUARANTEED BEFORE THE MERGE, not conjured during it.
+    `withClosure` is a no-op on every shape this repository produces; it exists
+    so that a resolved case whose events somehow lack a closing entry does not
+    lose its verdict, its resolution text, its closing time and its closing
+    admin all at once now that the card those lived in is gone.
+  */
+  const rows = mergeTimeline(
+    withClosure(incident.events, incident),
+    incident.matchTimeline,
+  )
   const progress = matchProgress(incident, now)
   const progressLabel = MATCH_PROGRESS_LABEL[progress]
   const dropped = killDiscrepancy(incident)
@@ -158,6 +220,15 @@ export function IncidentTimeline({
                 key={`c-${row.index}`}
                 event={row.event}
                 origin={incident.openedAt}
+                /*
+                  THE VERDICT RIDES ON THE ROW THAT CLOSED THE CASE AND ON NO
+                  OTHER. Null everywhere else, which is what stops the plausible
+                  mutation — a chip on every console row, so that the opening
+                  and every note claim a decision that had not been taken yet.
+                  `check:timeline` pins this expression for that reason.
+                */
+                closure={isResolution(row.event) ? incident : null}
+                verdictLabel={verdictLabel}
               />
             ) : (
               <MatchRow
@@ -177,10 +248,21 @@ export function IncidentTimeline({
 function ConsoleRow({
   event,
   origin,
+  closure,
+  verdictLabel,
 }: {
   event: ConsoleTimelineEvent
   /** The instant every offset on this list counts from. See `matchOffset`. */
   origin: number
+  /**
+   * The case's outcome, on the ONE row that closed it, and null on every other.
+   * The caller decides which row that is, from `isResolution`.
+   */
+  closure: {
+    verdict?: IncidentVerdict | null
+    closedByBan?: ClosedByBan | null
+  } | null
+  verdictLabel: Record<VerdictAction, string>
 }) {
   return (
     <TimelineItem>
@@ -200,13 +282,140 @@ function ConsoleRow({
           {event.text ? (
             <span className="text-muted-foreground"> — {event.text}</span>
           ) : null}
+          {closure && (
+            <Verdict verdict={closure.verdict} verdictLabel={verdictLabel} />
+          )}
         </TimelineTitle>
+        {/*
+          WHERE THE BAN WAS ACTUALLY DECIDED, when it was not decided here.
+
+          THE LINK IS BUILT FROM A STRUCTURED FIELD, NOT FOUND IN THE TEXT. The
+          resolution beside it is free text an admin never typed on this case,
+          and an incident id interpolated into a sentence would be an id in a
+          value that gets copied around — see the note on AUTO_CLOSE_RESOLUTION
+          in `lib/incidents`. The id lives in `closedByBan`, which is what this
+          reads.
+
+          AND WHEN THERE IS NO CASE TO POINT AT, IT SAYS SO IN THE OWNER'S OWN
+          WORDS — "banned on-demand" — rather than rendering a dead anchor or an
+          "n/a". A ban issued from the profile page is not a ban whose incident
+          is missing; it is a ban that was never an incident verdict.
+
+          ITS OWN LINE RATHER THAN THE TITLE'S, because it is a sentence and the
+          title is a label. It sits above the meta line so the row reads as what
+          happened, why it happened, then when and by whom.
+        */}
+        {closure?.closedByBan && (
+          <p className="text-sm text-muted-foreground">
+            The ban that closed this was issued{' '}
+            {closure.closedByBan.fromIncidentId ? (
+              <>
+                on another{' '}
+                <Link
+                  href={`/incidents/${closure.closedByBan.fromIncidentId}`}
+                  className="underline underline-offset-2 transition-colors hover:text-foreground"
+                >
+                  incident
+                </Link>
+              </>
+            ) : (
+              'on-demand'
+            )}
+            .
+          </p>
+        )}
         <TimelineMeta>
           <LocalTime ms={event.at} /> · {event.byName}
           <Offset at={event.at} origin={origin} />
         </TimelineMeta>
       </TimelineContent>
     </TimelineItem>
+  )
+}
+
+/**
+ * What the chip wears. Everything but the colour, which is `verdictTone`'s.
+ *
+ * `ml-1.5 align-[0.05em]` IS WHAT THE MOVE COST IT AND THE WHOLE OF WHAT IT
+ * COST. The chip sat in a `flex … gap-2` row beside a heading and now sits
+ * inline after a sentence, so it needs its own gap and its own baseline nudge —
+ * the same two the headshot badge on the kill rows already carries, for the same
+ * reason. Nothing else about it changed.
+ *
+ * NO TINT IS SPELLED HERE. The background comes from `verdictTone`, whose two
+ * alphas are already in the CEF override block at the end of `globals.css`;
+ * `check:cef` is what fails if a fresh one appears.
+ */
+const VERDICT_CHIP =
+  'ml-1.5 border-0 align-[0.05em] text-xs uppercase tracking-wider ring-1 ring-inset'
+
+/**
+ * The verdict on a closed case, as a chip on the row that closed it.
+ *
+ * ═══ IT USED TO BE A CARD OF ITS OWN AND THE OWNER CUT IT ═══
+ *
+ * 2026-08-22: "we still have the 'verdict' section displaying on the incidents
+ * page? That's not supposed to have it's own section on a resolved incident as
+ * we already agreed to." Three of the four things that card said were already on
+ * this row — the text, the instant and the admin — because `incidents.resolve`
+ * writes them into the event and onto the row in a single update. This chip and
+ * the provenance sentence above are what was actually only in the card.
+ *
+ * ABSENT IS ITS OWN CHIP AND NOT "NO ACTION". Every incident resolved before the
+ * verdict field existed, and every one the system auto-resolved, carries no
+ * verdict — and rendering those as "No action" would be the console inventing a
+ * decision nobody made, which is the precise failure the field was added to end.
+ * It says what it knows: closed, and no verdict was recorded.
+ *
+ * ═══ AND IT IS THE ONLY PLACE THAT DISTINCTION IS STATED IN WORDS ═══
+ *
+ * `incidentChips` deliberately gives a queue row NO second chip when there is no
+ * verdict, because a recorded `none` and a never-recorded verdict are different
+ * states and a two-chip row cannot carry the difference. Its comment names this
+ * chip as where the difference is said instead. That pointer moved here with the
+ * chip; if this ever stops rendering, that comment is the one to fix in the same
+ * change, because the console would otherwise lose the distinction entirely.
+ *
+ * ITS OWN WORDING, THE SHARED COLOUR. This is not the row chip: it is the only
+ * one that shows a ban's expiry. What it must NOT have its own opinion about is
+ * which outcomes are loud — that rule is `verdictTone`, shared with the queue and
+ * the profile, because a page where "banned" is red in a list and grey on the
+ * case itself is a page that has two views about what a ban is.
+ *
+ * ONE WORD IS SAID TWICE ON THIS ROW AND IT IS DELIBERATELY LEFT ALONE. The
+ * no-verdict chip reads "RESOLVED · NO VERDICT RECORDED" directly after a title
+ * that already says the case was resolved — wording chosen for a chip that sat
+ * beside a heading. Rewording a verdict label is the owner's call and was not
+ * asked for, so it is reported rather than improved.
+ */
+function Verdict({
+  verdict,
+  verdictLabel,
+}: {
+  verdict?: IncidentVerdict | null
+  verdictLabel: Record<VerdictAction, string>
+}) {
+  if (!verdict) {
+    return (
+      <Badge className={cn(VERDICT_CHIP, verdictTone(null))}>
+        resolved · no verdict recorded
+      </Badge>
+    )
+  }
+
+  return (
+    <Badge className={cn(VERDICT_CHIP, verdictTone(verdict.action))}>
+      {labelFor(verdictLabel, verdict.action)}
+      {verdict.action === 'ban' ? (
+        verdict.expiresAt === null ? (
+          <span className="ml-1 normal-case">— permanent</span>
+        ) : (
+          <span className="ml-1 normal-case">
+            — until <LocalTime ms={verdict.expiresAt} />
+          </span>
+        )
+      ) : null}
+    </Badge>
   )
 }
 

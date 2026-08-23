@@ -110,6 +110,59 @@
  *   the match rows lose theirs                    1 case,  section 8
  *   the two arguments are swapped at the call     1 case,  section 8
  *
+ * AND AGAIN FOR THE VERDICT FOLD (owner, 2026-08-22 — the verdict "isn't
+ * supposed to have it's own section on a resolved incident"). 33 mutants
+ * applied, 32 caught, 1 survived. Observed, not expected:
+ *
+ *   the verdict chip is deleted outright            1 case,  section 8
+ *   the chip is drawn on every console row          2 cases, section 8
+ *   the chip lands on both ends of the case         2 cases, section 8
+ *   the chip spells its own tint                    1 case,  section 8
+ *   the absent-verdict chip is dropped              2 cases, section 8
+ *   the absent-verdict chip reads "no action"       1 case,  section 8
+ *   the permanent branch is deleted                 1 case,  section 8
+ *   the expiry span stops naming the instant        1 case,  section 8
+ *   the expiry is read before the action            1 case,  section 8
+ *   the label is the raw id rather than the map     1 case,  section 8
+ *   the closedByBan sentence is dropped             4 typecheck errors
+ *   the provenance link is dug out of the text      1 case,  section 8
+ *   the on-demand wording becomes an "n/a"          1 case,  section 8
+ *   the component stops calling the guard           1 case,  section 8
+ *   `isResolution` picks the opening instead       26 cases, sections 4e/4f
+ *   `isResolution` widens to every case bracket    28 cases, sections 4e/4f
+ *   `isResolution` becomes "not a note"            31 cases, sections 4e/4f
+ *   `withClosure` becomes a no-op                   9 cases, section 4f
+ *   `withClosure` stops checking the state          2 cases, section 4f
+ *   `withClosure` stops checking for an existing   26 cases, sections 4e/4f
+ *   `withClosure` falls back on the epoch           1 case,  section 4f
+ *   `withClosure` leaves an absent closer blank     1 case,  section 4f
+ *   `withClosure` writes an empty resolution        1 case,  section 4f
+ *   `withClosure` invents a kind of its own         8 cases, section 4f
+ *   `verdictTone` paints every verdict quiet        4 cases, section 4e
+ *   `verdictTone` paints every verdict loud         3 cases, section 4e
+ *   `verdictTone` paints a never-recorded one loud  2 cases, section 4e
+ *   the fold lands AND the card stays               2 cases, section 8
+ *   the label map stops being handed down           1 case,  section 8
+ *
+ * THREE MORE SURVIVED THE FIRST RUN AND THEY ARE ALL THE SAME BLIND SPOT, which
+ * is the one the fold ITSELF opened. The resolution text, the closing instant
+ * and the closing admin were each rendered TWICE until the card went. Dropping
+ * `{event.text}`, dropping `{event.byName}` and dropping the `<LocalTime>` from
+ * the row each left every case in 4e green — because 4e proves the ROW CARRIES
+ * all three and nothing here can see whether the markup draws them. Two greps at
+ * the end of section 8 close it, and the second run caught all three.
+ *
+ *   the row stops rendering the resolution text     1 case,  section 8
+ *   the meta line stops naming who closed it        1 case,  section 8
+ *   the meta line stops printing the instant        1 case,  section 8
+ *
+ * ONE SURVIVOR IS LEFT ON PURPOSE AND IT IS WORTH NAMING. Moving the chip out of
+ * the title onto a line of its own passes everything. It is a layout choice
+ * rather than a lost fact — the chip is still drawn, still on the closing row,
+ * still with the right words and colour — and a grep that pinned the chip's
+ * exact position in the markup would fail on any reflow of the row. Deliberately
+ * not pinned.
+ *
  * FOUR OF THOSE FIFTEEN SURVIVED THE FIRST RUN, and each is a different kind of
  * blind spot worth naming. `origin ?? 0` survived because the reach catches an
  * epoch-sized number anyway — it is invisible on every realistic instant and
@@ -155,7 +208,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { IncidentEvent } from './incidents'
+import { verdictTone } from './incidentChip'
+import type { Incident, IncidentEvent, VerdictAction } from './incidents'
 import { humanLabel, labelFor } from './labels'
 import {
   CONSOLE_EVENT_LABEL,
@@ -165,6 +219,7 @@ import {
   indefiniteArticle,
   isBracket,
   isCaseBracket,
+  isResolution,
   killDiscrepancy,
   killLine,
   matchOffset,
@@ -173,6 +228,8 @@ import {
   mergeTimeline,
   weaponPart,
   weaponTone,
+  withClosure,
+  type CaseClosure,
   type ConsoleTimelineEvent,
   type MatchFields,
   type MatchTimelineEntry,
@@ -741,6 +798,375 @@ check(
   'the case brackets are not the match brackets',
   !isCaseBracket({ at: NOW, kind: 'match_start', byLicense: null, byName: 'x' }) &&
     !isBracket({ at: NOW, kind: 'opened' }),
+)
+
+// ---------------------------------------------------------------------------
+// 4e. THE ROW THE VERDICT LANDS ON, now that the verdict has no card.
+// ---------------------------------------------------------------------------
+
+console.log('4e. the closing row, and everything the deleted card used to say')
+
+/**
+ * THE CLOSURE FIELD NAMES, PINNED BY THE COMPILER — the same trick
+ * {@link EVENTS_ARE_ASSIGNABLE} plays on the event shape one screen up.
+ * `CaseClosure` restates four attributes of `Incident` so that `matchTimeline`
+ * can keep its no-runtime-imports property; rename or retype any of the four on
+ * `Incident` and this assignment stops compiling rather than leaving
+ * `withClosure` reading a field that is no longer there.
+ */
+const CLOSURE_IS_ASSIGNABLE: CaseClosure = {
+  state: 'resolved',
+  resolvedAt: NOW,
+  resolvedByName: 'Preview Admin',
+  resolution: 'Watched two matches from spectate — nothing unusual',
+} satisfies Pick<Incident, 'state' | 'resolvedAt' | 'resolvedByName' | 'resolution'>
+
+/*
+ * ═══ WHICH ROW IS THE CLOSING ONE ═══
+ *
+ * A SET OF EXACTLY ONE, AND THE OPENING IS NOT IN IT. `isCaseBracket` answers
+ * true for both ends of the case because both ends get a red dot; this answers
+ * true for one, because only one of them was decided. A predicate that drifted
+ * into `isCaseBracket`'s membership would put a verdict chip on the row that
+ * says the case was FILED — the console announcing a decision at the moment the
+ * report arrived, which is the one sentence this page must never render.
+ */
+const resolutionCases: Array<[string, boolean]> = [
+  ['resolved', true],
+  ['opened', false],
+  ['note', false],
+  ['', false],
+  // An open set: a kind from a newer console is not the thing that closed this.
+  ['reopened', false],
+  ['closed', false],
+]
+
+for (const [kind, expected] of resolutionCases) {
+  const got = isResolution({ at: NOW, kind, byLicense: null, byName: 'System' })
+  check(
+    `isResolution(${JSON.stringify(kind)}) === ${expected}`,
+    got === expected,
+    got,
+  )
+}
+
+check(
+  'the closing row is a case bracket, and a strict subset of them',
+  resolutionCases.every(
+    ([kind]) =>
+      !isResolution({ at: NOW, kind, byLicense: null, byName: 'x' }) ||
+      isCaseBracket({ at: NOW, kind, byLicense: null, byName: 'x' }),
+  ) && isCaseBracket({ at: NOW, kind: 'opened', byLicense: null, byName: 'x' }) &&
+    !isResolution({ at: NOW, kind: 'opened', byLicense: null, byName: 'x' }),
+)
+
+/**
+ * A CASE CLOSED THE WAY `incidents.resolve` CLOSES ONE, which is the shape the
+ * whole fold rests on: ONE string is written into `resolution` AND into the
+ * closing event's `text`, in a single update, with one `at` and one name. The
+ * preview harness's `closed()` is written the same way for the same reason.
+ */
+const CLOSED_AT = NOW + 30 * MIN
+function closedCase(
+  resolution: string,
+  over: Partial<CaseClosure> = {},
+): CaseClosure & { events: ConsoleTimelineEvent[] } {
+  return {
+    state: 'resolved',
+    resolvedAt: CLOSED_AT,
+    resolvedByName: 'Preview Admin',
+    resolution,
+    events: [
+      { at: NOW, kind: 'opened', byLicense: 'license:rep', byName: 'Marla' },
+      { at: NOW + MIN, kind: 'note', byLicense: null, byName: 'System', text: 'Refusals doubled to 8 across 2 matches.' },
+      {
+        at: CLOSED_AT,
+        kind: 'resolved',
+        byLicense: 'license:admin',
+        byName: 'Preview Admin',
+        text: resolution,
+      },
+    ],
+    ...over,
+  }
+}
+
+/** The one row on the list that closed the case, or null if there is not exactly one. */
+function closingRow(
+  c: CaseClosure & { events: ConsoleTimelineEvent[] },
+): ConsoleTimelineEvent | null {
+  const found = withClosure(c.events, c).filter((e) => isResolution(e))
+  return found.length === 1 ? (found[0] ?? null) : null
+}
+
+/*
+ * ═══ THE FOUR STATES THAT HAD TO SURVIVE THE FOLD ═══
+ *
+ * The card carried four things. Three of them — the text, the instant and the
+ * admin — were already on this row, which is WHY the owner was reading them
+ * twice and why the card went. These cases are what says so out loud: for every
+ * verdict state, the closing row still carries all three, so deleting the card
+ * deleted a duplicate rather than a fact.
+ *
+ * THE FOURTH IS THE VERDICT ITSELF and it is the one thing that actually moved.
+ * Its COLOUR is asserted here, from the shared `verdictTone` the queue and the
+ * profile also read; its WORDS are a chip in JSX, which nothing in this file can
+ * render, so section 8 greps them instead.
+ */
+const VERDICT_FIXTURE: Record<VerdictAction, string> = {
+  ban: 'Banned',
+  kick: 'Kicked',
+  none: 'No action',
+}
+
+const foldCases: Array<{
+  name: string
+  incident: CaseClosure & { events: ConsoleTimelineEvent[] }
+  action: VerdictAction | null
+  loud: boolean
+}> = [
+  {
+    name: 'ban with an expiry',
+    incident: closedCase('Repeated griefing — 7 days'),
+    action: 'ban',
+    loud: true,
+  },
+  {
+    name: 'permanent ban',
+    incident: closedCase('Aimbot through walls in match 412 — clip in #reports'),
+    action: 'ban',
+    loud: true,
+  },
+  {
+    name: 'no action',
+    incident: closedCase('Watched two matches from spectate — nothing unusual'),
+    action: 'none',
+    loud: false,
+  },
+  {
+    name: 'legacy row, no verdict recorded',
+    incident: closedCase('Banned for 7 days'),
+    action: null,
+    loud: false,
+  },
+  {
+    name: 'closed by a permanent ban issued elsewhere',
+    incident: closedCase('Closed automatically by a permanent ban.'),
+    action: 'ban',
+    loud: true,
+  },
+]
+
+for (const { name, incident, action, loud } of foldCases) {
+  const row = closingRow(incident)
+  check(`${name}: there is exactly one closing row`, row !== null, row)
+  check(
+    `${name}: the card's text is on it`,
+    row?.text === incident.resolution,
+    [row?.text, incident.resolution],
+  )
+  check(
+    `${name}: the card's instant is on it`,
+    row?.at === incident.resolvedAt,
+    [row?.at, incident.resolvedAt],
+  )
+  check(
+    `${name}: the card's author is on it`,
+    row?.byName === incident.resolvedByName,
+    [row?.byName, incident.resolvedByName],
+  )
+  /*
+   * THE ROW IS ALSO STILL AN EDGE, which is not incidental: the chip now sits
+   * on a row whose marker is the danger dot, and a fold that quietly changed
+   * the kind would take the red dot with it.
+   */
+  check(
+    `${name}: it is still drawn as an edge of the record`,
+    row !== null && isCaseBracket(row),
+  )
+  /*
+   * AND THE COLOUR IS THE SHARED ONE. `verdictTone` is what the queue and the
+   * profile read; a chip that painted a `none` or an absent verdict in the loud
+   * colour would teach admins that deciding nothing is a failure — see #28.
+   */
+  const tone = verdictTone(action)
+  check(
+    `${name}: the chip takes the ${loud ? 'action' : 'quiet'} tone`,
+    loud ? tone.includes('text-danger') : tone.includes('text-muted-foreground'),
+    tone,
+  )
+  if (action !== null) {
+    check(
+      `${name}: the chip's word comes from the map, not from the id`,
+      labelFor(VERDICT_FIXTURE, action) === VERDICT_FIXTURE[action],
+      labelFor(VERDICT_FIXTURE, action),
+    )
+  }
+}
+
+/*
+ * THE TWO TONES ARE DIFFERENT TONES, which is the assertion that stops the pair
+ * above passing against a `verdictTone` that returned one string for everything.
+ */
+check(
+  'verdictTone: an action and a decision do not wear the same colour',
+  verdictTone('ban') !== verdictTone('none') &&
+    verdictTone('kick') === verdictTone('ban') &&
+    verdictTone(null) === verdictTone('none'),
+  [verdictTone('ban'), verdictTone('kick'), verdictTone('none'), verdictTone(null)],
+)
+
+// ---------------------------------------------------------------------------
+// 4f. THE SHAPE WITH NO CLOSING ROW — a guard, not a fix for a known bug.
+// ---------------------------------------------------------------------------
+
+console.log('4f. a resolved case whose events forgot to say so')
+
+/*
+ * ═══ WHAT THIS IS AND IS NOT ═══
+ *
+ * NOTHING IN THIS REPOSITORY PRODUCES THE SHAPE. `incidents.resolve` appends the
+ * closing event in the same conditional update that sets the state, `open`
+ * appends one when it opens straight to resolved, and the preview harness builds
+ * its closed fixtures through one function so they cannot drift. It could not be
+ * dated either — if a deploy older than the closing-event writer ever closed a
+ * case, that row is still in the table and nothing here can tell.
+ *
+ * IT IS BUILT BECAUSE OF WHAT THE FOLD COSTS IF IT EXISTS. With the verdict on
+ * the closing row, a resolved case with no closing row loses its verdict, its
+ * resolution text, its closing time and its closing admin from the page at once,
+ * silently, with no gap where they used to be. The guard is a dozen lines and is
+ * a no-op on every shape above.
+ */
+const forgetful = closedCase('Banned for 7 days')
+const noClosingRow = {
+  ...forgetful,
+  events: forgetful.events.filter((e) => !isResolution(e)),
+}
+
+check(
+  'the shape this guards is genuinely missing its row',
+  noClosingRow.events.filter((e) => isResolution(e)).length === 0,
+)
+
+const rebuilt = withClosure(noClosingRow.events, noClosingRow)
+check(
+  'withClosure: the case gets a closing row back',
+  rebuilt.filter((e) => isResolution(e)).length === 1,
+  rebuilt.map((e) => e.kind),
+)
+const synth = rebuilt.find((e) => isResolution(e))
+check(
+  'withClosure: it carries the stored resolution as its text',
+  synth?.text === 'Banned for 7 days',
+  synth?.text,
+)
+check(
+  'withClosure: it carries the stored instant',
+  synth?.at === CLOSED_AT,
+  synth?.at,
+)
+check(
+  'withClosure: it carries the admin who closed it',
+  synth?.byName === 'Preview Admin',
+  synth?.byName,
+)
+/*
+ * IT IS THE EXISTING KIND, WHICH IS THE WHOLE OF THE "NO NEW TEXT" RULE. The row
+ * reads "Incident resolved" because `CONSOLE_EVENT_LABEL` says so, exactly like
+ * a real one; a synthesised kind would fall through `labelFor` to a humanised id
+ * and put a word on the page that nobody wrote.
+ */
+check(
+  'withClosure: the row wears the existing label, not an invented one',
+  labelFor(CONSOLE_EVENT_LABEL, synth?.kind) === CONSOLE_EVENT_LABEL.resolved,
+  labelFor(CONSOLE_EVENT_LABEL, synth?.kind),
+)
+check(
+  'withClosure: and the existing red dot with it',
+  synth !== undefined && isCaseBracket(synth),
+)
+
+/*
+ * AND IT DOES NOTHING AT ALL THE REST OF THE TIME. Three no-ops, because a guard
+ * that fires on an ordinary row would be duplicating the close on every page in
+ * the console — the louder failure of the two, and the one a reader would blame
+ * on this function.
+ */
+check(
+  'withClosure: a case that already has its row is untouched',
+  withClosure(forgetful.events, forgetful) !== forgetful.events &&
+    JSON.stringify(withClosure(forgetful.events, forgetful)) ===
+      JSON.stringify(forgetful.events),
+  withClosure(forgetful.events, forgetful).map((e) => e.kind),
+)
+check(
+  'withClosure: a pending case is not closed by it',
+  JSON.stringify(
+    withClosure(noClosingRow.events, { ...noClosingRow, state: 'pending_review' }),
+  ) === JSON.stringify(noClosingRow.events),
+  withClosure(noClosingRow.events, { ...noClosingRow, state: 'pending_review' }).map(
+    (e) => e.kind,
+  ),
+)
+check(
+  'withClosure: an empty list on a pending case stays empty',
+  withClosure(undefined, { state: 'pending_review' }).length === 0,
+)
+
+/*
+ * THE DEGENERATE CORNERS, which exist because the shape itself is hypothetical
+ * and its corners are therefore no less likely than its middle.
+ *
+ * AN ABSENT INSTANT SINKS AND SAYS NOTHING. `mergeTimeline` sorts a row it
+ * cannot place to the end, `LocalTime` draws an em dash for one it cannot
+ * format, and `matchOffset` declines to number it. All three are existing
+ * behaviour reached by an existing route, which is the point: no new rendering
+ * decision was added for this.
+ */
+const undated = withClosure([], { state: 'resolved', resolution: 'Something was decided' })
+check(
+  'withClosure: a closure with no instant still produces the row',
+  undated.length === 1 && isResolution(undated[0] as ConsoleTimelineEvent),
+)
+check(
+  'withClosure: and that row carries no offset rather than a wrong one',
+  matchOffset(undated[0]?.at, NOW) === null,
+  matchOffset(undated[0]?.at, NOW),
+)
+check(
+  'withClosure: and it sinks to the end of the merge rather than to the epoch',
+  mergeTimeline(
+    withClosure(
+      [{ at: NOW, kind: 'opened', byLicense: null, byName: 'Marla' }],
+      { state: 'resolved', resolution: 'Something was decided' },
+    ),
+    [{ at: NOW + MIN, kind: 'match_end' }],
+  )
+    .map((r) => (r.source === 'match' ? r.entry.kind : r.event.kind))
+    .join(' -> ') === 'opened -> match_end -> resolved',
+)
+/*
+ * AN ABSENT NAME TAKES THE CONSOLE'S EXISTING WORD FOR AN ACTOR-LESS EVENT.
+ * `byName` is required on an event and `System` is what `lib/incidents` already
+ * writes on every event it appends without a human — not a sentence this fold
+ * invented.
+ */
+const nameless = withClosure([], { state: 'resolved', resolvedAt: CLOSED_AT })
+check(
+  'withClosure: an absent closer is the System, in the word already used for one',
+  nameless[0]?.byName === 'System',
+  nameless[0]?.byName,
+)
+check(
+  'withClosure: an absent resolution leaves the row with no text at all',
+  nameless[0]?.text === undefined,
+  nameless[0]?.text,
+)
+check(
+  'withClosure: whitespace is not a resolution either',
+  withClosure([], { state: 'resolved', resolvedAt: CLOSED_AT, resolution: '   ' })[0]
+    ?.text === undefined,
 )
 
 // ---------------------------------------------------------------------------
@@ -1513,6 +1939,179 @@ check(
 )
 
 /*
+ * ═══ THE VERDICT, WHICH IS ON THIS LIST NOW AND NOT IN A CARD UNDER IT ═══
+ *
+ * The owner, 2026-08-22: the verdict "isn't supposed to have it's own section on
+ * a resolved incident". Section 4e proves the three duplicated facts survive the
+ * fold and 4f proves the row always exists; NEITHER CAN SEE A CHIP, because
+ * nothing here renders React. Every case in 4e passes with the chip deleted
+ * outright, which is the definition of a test that has pinned nothing — so the
+ * chip, its two ban spans, the absent-verdict wording and the provenance link
+ * each get a grep, and each grep is written to fail on one mutation rather than
+ * on any edit.
+ */
+check(
+  'the closing row is chosen by `isResolution`, not by a comparison',
+  component?.text.includes('isResolution(') === true,
+)
+check(
+  'the verdict rides on that row and on no other',
+  /closure=\{isResolution\(row\.event\) \? incident : null\}/.test(
+    component?.text ?? '',
+  ),
+)
+check(
+  'the chip is drawn only where the caller passed a closure',
+  /\{closure && \(\s*<Verdict verdict=\{closure\.verdict\} verdictLabel=\{verdictLabel\} \/>/.test(
+    component?.text ?? '',
+  ),
+)
+/*
+ * THE COLOUR IS THE SHARED ONE. A chip that spelled its own tint would be the
+ * page holding a second opinion about what a ban is — #28's original failure,
+ * and the thing `verdictTone` exists to stop. Both readings are named: the
+ * recorded verdict's action, and the absent verdict's null.
+ */
+check(
+  'the chip takes its colour from `verdictTone`, not from a literal',
+  /verdictTone\(verdict\.action\)/.test(component?.text ?? '') &&
+    /verdictTone\(null\)/.test(component?.text ?? ''),
+)
+check(
+  'and the word from the map it is handed, not from the id',
+  /labelFor\(verdictLabel, verdict\.action\)/.test(component?.text ?? ''),
+)
+/*
+ * THE FOUR STATES, AS THE PAGE ACTUALLY WORDS THEM. `expiresAt === null` MEANS
+ * PERMANENT and is the same value that means "not applicable" on the other two
+ * verdicts, which is why the action is read first — reversing those two nests
+ * puts "— permanent" on every kick.
+ */
+check(
+  'a permanent ban still says so',
+  /expiresAt === null \? \(\s*<span className="ml-1 normal-case">— permanent<\/span>/.test(
+    component?.text ?? '',
+  ),
+)
+check(
+  'a ban with an expiry still says until when',
+  /— until <LocalTime ms=\{verdict\.expiresAt\} \/>/.test(component?.text ?? ''),
+)
+check(
+  'the expiry is reached through the action, not through `expiresAt` alone',
+  /verdict\.action === 'ban' \?/.test(component?.text ?? ''),
+)
+/*
+ * AND THE ROW WITH NO VERDICT KEEPS ITS SENTENCE, VERBATIM. `lib/incidentChip`
+ * names this chip as the ONLY place the console states the difference between a
+ * recorded verdict of `none` and no verdict at all — deleting it does not
+ * degrade the page, it deletes a distinction, which is why the string is pinned
+ * character for character rather than by shape.
+ */
+check(
+  'the absent verdict still reads "resolved · no verdict recorded"',
+  component?.text.includes('resolved · no verdict recorded') === true,
+)
+/*
+ * THE PROVENANCE IS THE OTHER THING THAT MOVED, and its link is built from the
+ * structured field rather than found in the resolution text — an id
+ * interpolated into free text is an id in a value that gets copied around.
+ */
+check(
+  'the provenance sentence came with it',
+  component?.text.includes('The ban that closed this was issued') === true,
+)
+check(
+  'and its link is built from `closedByBan`, not from the resolution text',
+  /href=\{`\/incidents\/\$\{closure\.closedByBan\.fromIncidentId\}`\}/.test(
+    component?.text ?? '',
+  ),
+)
+check(
+  "and the case with nothing to point at still says the owner's word",
+  /'on-demand'/.test(component?.text ?? ''),
+)
+
+/*
+ * ═══ AND THE CARD IS ACTUALLY GONE ═══
+ *
+ * THE ONE MUTATION EVERY CHECK ABOVE WOULD WAVE THROUGH: fold the verdict onto
+ * the row AND leave the card where it was. The page would then say the same
+ * things three times instead of twice, every case in 4e would pass, every grep
+ * above would pass, and the owner's complaint would be worse rather than fixed.
+ * These three name what the card was made of.
+ */
+const detail = sources.find((s) => s.path === 'src/components/IncidentDetail.tsx')
+check('the incident page is where this thinks it is', detail !== undefined)
+check(
+  'the verdict has no section of its own on the incident page',
+  !/<h2[^>]*>Verdict<\/h2>/.test(detail?.text ?? ''),
+)
+check(
+  'and the page no longer repeats the resolution the closing row carries',
+  !/\{incident\.resolution\}/.test(detail?.text ?? '') &&
+    !/\{incident\.resolvedByName\}/.test(detail?.text ?? ''),
+)
+check(
+  'and the provenance sentence is not spelled in two places',
+  !detail?.text.includes('The ban that closed this was issued'),
+)
+/*
+ * THE LABEL MAP REACHES THE TIMELINE, which is what makes the chip's word the
+ * one `VERDICT_LABEL` says. A client component cannot import it — `lib/incidents`
+ * reaches DynamoDB — so it travels as a prop, and a fold that forgot to pass it
+ * would be a type error today and a silently humanised id the moment the prop
+ * gained a default.
+ */
+check(
+  'the timeline is handed the verdict labels by the page above it',
+  /<IncidentTimeline[\s\S]{0,200}verdictLabel=\{verdictLabel\}/.test(
+    detail?.text ?? '',
+  ),
+)
+
+/*
+ * THE CLOSING ROW IS GUARANTEED BEFORE THE MERGE, not conjured during it.
+ * Section 4f pins `withClosure` itself; this pins that the component calls it —
+ * a mutation that reverted the call to `incident.events` leaves every case in 4f
+ * green and puts the fold's whole failure mode back.
+ */
+check(
+  'the component merges the events the closure guard hands it',
+  /mergeTimeline\(\s*withClosure\(incident\.events, incident\),/.test(
+    component?.text ?? '',
+  ),
+)
+
+/*
+ * ═══ AND THE THREE FACTS THAT USED TO BE SAID TWICE ═══
+ *
+ * THIS IS THE GAP THE FOLD ITSELF OPENED, AND THREE MUTANTS WALKED STRAIGHT
+ * THROUGH IT. The resolution text, the closing instant and the closing admin
+ * were each rendered in TWO places — this row and the card — right up until the
+ * card went. They are rendered in ONE place now, so a component that stops
+ * drawing any of them no longer loses a duplicate: it deletes the fact from the
+ * console. Dropping `{event.text}`, dropping `{event.byName}` and dropping the
+ * `<LocalTime>` each left every case in 4e green, because 4e can prove the ROW
+ * CARRIES all three and cannot see whether the markup draws them.
+ *
+ * THE COST OF THE FOLD IS THEREFORE TWO GREPS. That is a fair price and it is
+ * worth naming as a price: this file gained a reason to fail on a formatting
+ * edit to the row, which it did not have while the card was there to say the
+ * same things a second time.
+ */
+check(
+  'the row still draws the text the card used to repeat',
+  /\{event\.text \? \(\s*<span className="text-muted-foreground"> — \{event\.text\}<\/span>/.test(
+    component?.text ?? '',
+  ),
+)
+check(
+  'and the meta line still names both the instant and the admin',
+  /<LocalTime ms=\{event\.at\} \/> · \{event\.byName\}/.test(component?.text ?? ''),
+)
+
+/*
  * AND THE TONE HAS TO EXIST WHERE THE PRIMITIVE DEFINES IT. `TimelineMarker`'s
  * variants are a `cva` object; a tone the component names and the primitive
  * does not have compiles (cva types it as the union, so this would in fact be a
@@ -1679,6 +2278,33 @@ console.log(
     .join('  ')}`,
 )
 console.log(`  event shape       ${JSON.stringify(EVENTS_ARE_ASSIGNABLE)}`)
+console.log(`  closure shape     ${JSON.stringify(CLOSURE_IS_ASSIGNABLE)}`)
+/*
+ * THE CLOSING ROW AS THE PAGE BUILDS IT, in both the ordinary shape and the one
+ * `withClosure` guards against, side by side. Printed rather than only asserted
+ * for the reason the two lines above are: the fold's entire claim is that these
+ * two read alike, and a change to either should show up in a diff of this output
+ * as different words rather than as nothing.
+ */
+for (const [label, c] of [
+  ['as resolve wrote it', closedCase('Banned for 7 days')],
+  ['rebuilt by the guard', noClosingRow],
+] as const) {
+  const row = closingRow(c)
+  console.log(
+    `  closing row       ${label.padEnd(20)} ${labelFor(CONSOLE_EVENT_LABEL, row?.kind)} — ${row?.text ?? '(none)'}  ·  ${row?.byName ?? '(none)'}  ·  ${matchOffset(row?.at, NOW) ?? '—'}`,
+  )
+}
+/*
+ * AND THE COLOUR EACH VERDICT WEARS. Two of the four are loud and two are quiet;
+ * if that ever becomes four of four, the console is telling admins that deciding
+ * nothing is a failure, which is #28 all over again.
+ */
+console.log(
+  `  verdict tones     ${(['ban', 'kick', 'none'] as const)
+    .map((a) => `${a}=${verdictTone(a).includes('text-danger') ? 'loud' : 'quiet'}`)
+    .join('  ')}  none-recorded=${verdictTone(null).includes('text-danger') ? 'loud' : 'quiet'}`,
+)
 
 console.log()
 if (failed > 0) {

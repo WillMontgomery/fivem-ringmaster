@@ -268,9 +268,117 @@ export function isCaseBracket(e: ConsoleTimelineEvent): boolean {
   return e.kind === 'opened' || e.kind === 'resolved'
 }
 
+/**
+ * THE ONE ROW THAT CLOSED THE CASE. The closing half of {@link isCaseBracket},
+ * on its own, because one thing now hangs off that row and nothing hangs off
+ * the opening one.
+ *
+ * ═══ WHAT IT DECIDES: WHERE THE VERDICT IS SAID ═══
+ *
+ * The verdict had a card of its own under the timeline and the owner cut it
+ * (2026-08-22: "we still have the 'verdict' section displaying on the incidents
+ * page? That's not supposed to have it's own section on a resolved incident").
+ * It was three quarters duplication and one quarter fact: `incidents.resolve`
+ * writes ONE string into both `resolution` and the closing event's `text` in a
+ * single update, and `resolvedAt`/`resolvedByName` are the same instant and the
+ * same name the row's meta line already prints. What the card held and the row
+ * did not is the verdict chip and the `closedByBan` provenance, so those two
+ * fold onto this row and the card goes.
+ *
+ * A FUNCTION HERE RATHER THAN `event.kind === '…'` IN THE JSX, and in this case
+ * that is not only the house rule — `check:timeline` FAILS if the literal
+ * appears in `IncidentTimeline.tsx` at all, which is section 8's answer to a
+ * component quietly growing a second opinion about which rows are which.
+ *
+ * IT IS DELIBERATELY NARROWER THAN `isCaseBracket` AND MUST STAY SO. A verdict
+ * chip on the OPENING row would say a case was decided at the moment it was
+ * filed, which is the one sentence this console must never render — so the two
+ * predicates are separate, and the check asserts the opening is not in this set.
+ */
+export function isResolution(e: ConsoleTimelineEvent): boolean {
+  return e.kind === 'resolved'
+}
+
 // ---------------------------------------------------------------------------
 // Merging the two lists
 // ---------------------------------------------------------------------------
+
+/**
+ * The closure attributes on an incident row.
+ *
+ * RESTATED STRUCTURALLY, like {@link ConsoleTimelineEvent} and
+ * {@link MatchRecordRow} above and for the same reason: `Incident` lives in
+ * `lib/incidents`, which reaches DynamoDB, and this module imports nothing.
+ * `Incident` satisfies this; the check asserts the assignability the way it
+ * already does for the event.
+ *
+ * `state` IS A `string` RATHER THAN THE UNION for the same reason `kind` is on
+ * the two event shapes: the row is unvalidated, `ddb.get` casts, and a union
+ * here would be a claim about data this module cannot enforce.
+ */
+export interface CaseClosure {
+  state?: string | null
+  resolvedAt?: number | null
+  resolvedByName?: string | null
+  resolution?: string | null
+}
+
+/**
+ * The console's events, with the row that closed the case GUARANTEED to be
+ * among them.
+ *
+ * ═══ THE SHAPE THIS EXISTS FOR, AND THE HONEST STATUS OF IT ═══
+ *
+ * A row whose `state` is `resolved` and whose `events` contain no closing entry.
+ * NOTHING IN THIS REPOSITORY PRODUCES ONE TODAY — `incidents.resolve` appends
+ * the event in the same conditional update that sets the state, `incidents.open`
+ * appends it when it opens straight to resolved, and the preview harness's
+ * `closed()` is written as one function precisely so a fixture cannot drift into
+ * a shape the real write never produces. It could not be dated either: if a
+ * deploy older than the closing-event writer ever closed a case, its row is
+ * still in the table and nothing here can tell.
+ *
+ * SO WHY BUILD IT. Because of what the fold above costs if that shape exists.
+ * With the verdict living on the closing row, a resolved case with no closing
+ * row is a case whose verdict, resolution text, closing time and closing admin
+ * are ALL absent from the page — silently, with no gap where they used to be.
+ * That is a moderation record quietly losing the only statement of what was
+ * decided, which is the failure this console keeps finding rather than an
+ * exotic one. The guard costs a dozen lines and is invisible when unneeded.
+ *
+ * IT SYNTHESISES NOTHING IT WAS NOT GIVEN. The kind is the existing `resolved`,
+ * so the label comes from {@link CONSOLE_EVENT_LABEL} like every other row; the
+ * text is the stored `resolution` and is omitted when there is none; the instant
+ * is `resolvedAt` and is NaN when the row has none, which sinks it to the end of
+ * the sort and renders as the em dash `LocalTime` already draws for an instant
+ * it cannot format. There is no new sentence anywhere in here.
+ *
+ * `System` IS THE ONE SUBSTITUTION AND IT IS NOT NEW WORDING. `byName` is
+ * required on an event, and `System` is already what `lib/incidents` writes on
+ * every event it appends without a human — the same word the page's "Reported
+ * by" field renders for a case nobody filed.
+ *
+ * IT APPENDS RATHER THAN INSERTS. {@link mergeTimeline} sorts, and it is the
+ * only thing that may — rule 1.
+ */
+export function withClosure(
+  events: readonly ConsoleTimelineEvent[] | null | undefined,
+  closure: CaseClosure,
+): ConsoleTimelineEvent[] {
+  const list = [...(events ?? [])]
+  if (closure.state !== 'resolved') return list
+  if (list.some((e) => e != null && isResolution(e))) return list
+
+  const said = text(closure.resolution)
+  list.push({
+    at: num(closure.resolvedAt) ?? Number.NaN,
+    kind: 'resolved',
+    byLicense: null,
+    byName: text(closure.resolvedByName) ?? 'System',
+    ...(said === null ? {} : { text: said }),
+  })
+  return list
+}
 
 export type TimelineRow =
   | { at: number; source: 'console'; index: number; event: ConsoleTimelineEvent }

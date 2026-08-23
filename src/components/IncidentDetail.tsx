@@ -12,7 +12,6 @@ import { IncidentArtifacts } from '@/components/IncidentArtifacts'
 import { IncidentMatchRecord } from '@/components/IncidentMatchRecord'
 import { IncidentTimeline } from '@/components/IncidentTimeline'
 import { KickDialog } from '@/components/KickDialog'
-import { LocalTime } from '@/components/LocalTime'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -20,7 +19,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { postJson } from '@/lib/api'
 import type { Artifact } from '@/lib/artifacts'
-import { incidentHeadline, verdictTone } from '@/lib/incidentChip'
+import { incidentHeadline } from '@/lib/incidentChip'
 import { labelFor } from '@/lib/labels'
 import type {
   Incident,
@@ -44,9 +43,30 @@ import { cn } from '@/lib/utils'
  *                timeline please?" (2026-08-22). It was below it.
  *   timeline     "Directly under the 'player report' section should be the
  *                timeline section" — which it was, until the line above moved
- *                one short panel in between
- *   verdict      only once it is closed
+ *                one short panel in between. THE VERDICT IS PART OF IT NOW.
  *   artifacts    last. It was second.
+ *
+ * ═══ THE VERDICT HAS NO SECTION OF ITS OWN ANY MORE (owner, 2026-08-22) ═══
+ *
+ * "are you aware we still have the 'verdict' section displaying on the incidents
+ * page? That's not supposed to have it's own section on a resolved incident as
+ * we already agreed to." There was a card between the timeline and the artifacts
+ * holding a heading, a chip, the resolution text, the ban provenance and a line
+ * naming who closed the case and when.
+ *
+ * THREE OF THOSE FIVE WERE ALREADY ON THE TIMELINE'S CLOSING ROW, which is why
+ * the owner was reading the same words twice: `incidents.resolve` writes one
+ * string into both `resolution` and the closing event's `text` in a single
+ * update, and `resolvedAt`/`resolvedByName` are the same instant and the same
+ * name that row's meta line prints. The card was the duplicate, not the row.
+ *
+ * SO THE OTHER TWO FOLDED ONTO THAT ROW RATHER THAN BEING DELETED WITH IT. The
+ * verdict chip and the `closedByBan` sentence are the only things the card held
+ * that the row did not, and both live in `IncidentTimeline` now — which is also
+ * where the argument for each of them moved. NOTHING IS LOST, and that is the
+ * test this had to pass: `lib/incidentChip` names that chip as the only place
+ * the console states the difference between a recorded verdict of `none` and no
+ * verdict at all, and its comment now points at the row.
  *
  * THE TIMELINE IS THE RECORD. State says where it ended up; the timeline says
  * who looked and what they concluded, which is the thing that matters when the
@@ -469,63 +489,11 @@ export function IncidentDetail({
         then the pictures — rather than the pictures before the account of what
         they are pictures of.
       */}
-      <IncidentTimeline incident={incident} now={now} />
-
-      {!pending && (
-        <Card className="surface-edge gap-0 px-5 py-4">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-sm font-medium">Verdict</h2>
-            <Verdict incident={incident} verdictLabel={verdictLabel} />
-          </div>
-          {incident.resolution && (
-            <p className="mt-2 text-sm text-muted-foreground">
-              {incident.resolution}
-            </p>
-          )}
-          {/*
-            WHERE THE BAN WAS ACTUALLY DECIDED, when it was not decided here.
-
-            THE LINK IS BUILT FROM A STRUCTURED FIELD, NOT FOUND IN THE TEXT. The
-            resolution above is free text an admin never typed on this case, and
-            an incident id interpolated into a sentence would be an id in a value
-            that gets copied around — see the note on AUTO_CLOSE_RESOLUTION. The
-            id lives in `closedByBan`, which is what this reads.
-
-            AND WHEN THERE IS NO CASE TO POINT AT, IT SAYS SO IN THE OWNER'S OWN
-            WORDS — "banned on-demand" — rather than rendering a dead anchor or
-            an "n/a". A ban issued from the profile page is not a ban whose
-            incident is missing; it is a ban that was never an incident verdict.
-          */}
-          {incident.closedByBan && (
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              The ban that closed this was issued{' '}
-              {incident.closedByBan.fromIncidentId ? (
-                <>
-                  on another{' '}
-                  <Link
-                    href={`/incidents/${incident.closedByBan.fromIncidentId}`}
-                    className="underline underline-offset-2 transition-colors hover:text-foreground"
-                  >
-                    incident
-                  </Link>
-                </>
-              ) : (
-                'on-demand'
-              )}
-              .
-            </p>
-          )}
-          <p className="mt-1 text-xs text-muted-foreground/70">
-            {incident.resolvedByName}
-            {incident.resolvedAt ? (
-              <>
-                {' · '}
-                <LocalTime ms={incident.resolvedAt} />
-              </>
-            ) : null}
-          </p>
-        </Card>
-      )}
+      <IncidentTimeline
+        incident={incident}
+        now={now}
+        verdictLabel={verdictLabel}
+      />
 
       {/*
         ARTIFACTS, AND THEY ARE LAST NOW (owner, playtest). This was a
@@ -644,65 +612,5 @@ export function IncidentDetail({
         }
       />
     </div>
-  )
-}
-
-/**
- * The verdict on a closed incident, as a chip.
- *
- * ABSENT IS ITS OWN CHIP AND NOT "NO ACTION". Every incident resolved before
- * this field existed, and every one the system auto-resolved, carries no verdict
- * — and rendering those as "No action" would be the console inventing a decision
- * nobody made, which is the precise failure the field was added to end. It says
- * what it knows: closed, and no verdict was recorded.
- *
- * ITS OWN WORDING, THE SHARED COLOUR. This chip is not the row chip: it is
- * title case because it sits beside the heading "Verdict" rather than after the
- * word "resolved", and it is the only one that shows a ban's expiry. What it
- * must NOT have its own opinion about is which outcomes are loud — that rule is
- * `verdictTone`, shared with the queue and the profile, because a page where
- * "banned" is red in a list and grey on the case itself is a page that has two
- * views about what a ban is.
- */
-function Verdict({
-  incident,
-  verdictLabel,
-}: {
-  incident: Incident
-  verdictLabel: Record<VerdictAction, string>
-}) {
-  const v = incident.verdict
-
-  if (!v) {
-    return (
-      <Badge
-        className={cn(
-          'border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
-          verdictTone(null),
-        )}
-      >
-        resolved · no verdict recorded
-      </Badge>
-    )
-  }
-
-  return (
-    <Badge
-      className={cn(
-        'border-0 text-xs uppercase tracking-wider ring-1 ring-inset',
-        verdictTone(v.action),
-      )}
-    >
-      {labelFor(verdictLabel, v.action)}
-      {v.action === 'ban' ? (
-        v.expiresAt === null ? (
-          <span className="ml-1 normal-case">— permanent</span>
-        ) : (
-          <span className="ml-1 normal-case">
-            — until <LocalTime ms={v.expiresAt} />
-          </span>
-        )
-      ) : null}
-    </Badge>
   )
 }

@@ -5,11 +5,16 @@ import { labelFor } from './labels'
  * How an incident's outcome is said on a row, in one place (#28).
  *
  * THREE SURFACES RENDER THIS AND THERE IS ONE OF IT. The incident queue's rows,
- * the profile's incident rows and the incident page's verdict card all have to
- * agree about which word a closed case gets and what colour it is — and the way
- * that goes wrong is not a crash. It is one list quietly reading "resolved"
- * where another reads "resolved · banned" about the same row, and nobody
- * noticing which is telling the truth.
+ * the profile's incident rows and the verdict chip on the closing row of the
+ * incident page's timeline all have to agree about which word a closed case gets
+ * and what colour it is — and the way that goes wrong is not a crash. It is one
+ * list quietly reading "resolved" where another reads "resolved · banned" about
+ * the same row, and nobody noticing which is telling the truth.
+ *
+ * THAT THIRD SURFACE WAS A CARD OF ITS OWN UNTIL 2026-08-22, when the owner cut
+ * it as a duplicate of the timeline row beside it. The chip did not go with it —
+ * it folded onto that row, which is the whole reason the rest of this file's
+ * reasoning still holds. See `IncidentTimeline`'s `Verdict`.
  *
  * IT IMPORTS NOTHING THAT REACHES A SERVER, deliberately, the same property
  * `serverPhase` keeps: `lib/incidents` owns the labels but also reaches
@@ -80,8 +85,15 @@ export interface RowChip {
  * before the field existed, and anything the system auto-resolved, carries
  * nothing — and "no verdict recorded" is a DIFFERENT state from a recorded
  * verdict of `none`. Neither gets a red chip, because neither is an action; the
- * distinction between them is not something a two-chip row can carry, and the
- * incident page's Verdict card is where it is stated in words.
+ * distinction between them is not something a two-chip row can carry.
+ *
+ * WHERE IT IS STATED IN WORDS INSTEAD: the verdict chip on the closing row of
+ * the incident page's timeline — `Verdict` in `IncidentTimeline`, which renders
+ * "resolved · no verdict recorded" for the absent case and the verdict's own
+ * label for a recorded one. IT MOVED THERE ON 2026-08-22 with the card it used
+ * to sit in, and this sentence is the pointer that has to move with it: delete
+ * that chip without replacing this line and the console has nowhere left that
+ * tells a recorded `none` apart from a verdict nobody ever wrote.
  */
 export function incidentChips(
   i: { state: IncidentState; verdict?: IncidentVerdict | null },
