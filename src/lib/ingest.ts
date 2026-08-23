@@ -178,6 +178,56 @@ export const snapshotEnvelope = z.object({
       })
       .optional()
       .nullable(),
+
+    /**
+     * Whether br_ddb can talk to DynamoDB, as the game server last measured it.
+     *
+     * ═══ WHY THIS COMES OVER THE PUSH AND NOT OVER SSH ═══
+     *
+     * This is the one of the two br_ddb facts that CANNOT be read off the box's
+     * filesystem. `br:ddb:selftest` is a real GetItem issued by the running
+     * resource with its own configured region, prefix and credentials, and only
+     * something inside FXServer can ask it. A shell probe from the dispatcher
+     * would answer a different question — whether the machine has a route —
+     * which is one of three causes and reports "connected" for the other two.
+     *
+     * So the transport is the one the game already owns: br_ringmaster resends
+     * its last selftest verdict on the snapshot it is already pushing. The
+     * console's SSH capability boundary is untouched, because nothing was asked
+     * of it.
+     *
+     * OPTIONAL AND NULLABLE, for the reason `anticheat` above is: br_ddb may
+     * not be started, br_ringmaster runs without it by design, and an older
+     * game build sends nothing. A required field would fail the whole envelope,
+     * which the outbox reads as a nack and retries forever — taking the player
+     * list down to report a database. All three absences present as absent, and
+     * `reachNow` in lib/ddbHealth reads that as "not told", never as a fault.
+     *
+     * `at` IS ON THE GAME CLOCK like every other timestamp here, because the
+     * probe is cached rather than re-run per push and its age is the whole
+     * question. `realTime(env.server, at)` converts it.
+     *
+     * NOT YET SENT BY ANY DEPLOYED GAME BUILD — the br_ringmaster half is a
+     * proposal. Shipping the schema first is free: an optional field nobody
+     * sends changes no envelope's validity.
+     */
+    ddb: z
+      .object({
+        /** The GetItem succeeded. Credentials, route, region and IAM all work. */
+        ok: z.boolean(),
+        /** When the probe ran, on the game clock. */
+        at: z.number().int().nonnegative(),
+        /**
+         * The failure in the game's own words. Rendered in the fix popup, so it
+         * is bounded here rather than trusted — it reaches a browser.
+         */
+        error: z.string().max(512).nullish(),
+        region: z.string().max(64).nullish(),
+        prefix: z.string().max(128).nullish(),
+        ms: z.number().nonnegative().nullish(),
+      })
+      .optional()
+      .nullable(),
     players: z.array(playerRow).max(2048),
   }),
 })

@@ -292,6 +292,37 @@ export function applyEvents(env: EventsEnvelope, now: number): number {
  * showing a five-minute-old player list as though it were live is worse than
  * one showing nothing.
  */
+/**
+ * The last DynamoDB probe the game reported, dated against real time.
+ *
+ * ═══ WHY IT IS ITS OWN ACCESSOR AND NOT A FIELD ON `liveView` ═══
+ *
+ * Its reader is the HOST page, which polls `/api/host` and never touches
+ * `/api/state`. Hanging it off `liveView` would put a fact the Host page needs
+ * behind a second poll of a payload carrying up to 2048 player rows, purely
+ * because of where it happened to arrive. `hostView()` calls this instead, so
+ * the Host page gets both br_ddb facts from the one request it already makes.
+ *
+ * IT CONVERTS THE CLOCK HERE, and this is the only place that can. `at` is a
+ * `GetGameTimer()` reading and is meaningless without the `wallMs`/`gameMs`
+ * pair sampled in the SAME envelope. Handing the raw value upwards would invite
+ * a caller to date it against "the latest clock" from somewhere else, which
+ * mis-dates it by exactly one server restart.
+ *
+ * NULL COVERS EVERY ABSENCE and the caller must not distinguish them: no
+ * snapshot yet, a game build that predates the block, br_ddb not started. All
+ * three are "we have not been told", which `reachNow` renders as silence.
+ */
+export function ddbProbe(): {
+  probe: NonNullable<SnapshotEnvelope['snapshot']['ddb']>
+  atMs: number
+} | null {
+  const snap = state.snapshot
+  const ddb = snap?.snapshot.ddb
+  if (!snap || !ddb) return null
+  return { probe: ddb, atMs: realTime(snap.server, ddb.at) }
+}
+
 export function liveView(now: number) {
   const snap = state.snapshot
 

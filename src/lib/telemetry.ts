@@ -1,4 +1,6 @@
+import { bundleNow, reachNow, type DdbProbe } from './ddbHealth'
 import { REF_POLL_MS } from './maintenance'
+import { ddbProbe } from './state'
 import {
   isParkedOffMain,
   listBranches,
@@ -409,5 +411,52 @@ export function hostView() {
      * which is none.
      */
     updateTarget: state.updateTarget,
+
+    /**
+     * ═══ THE TWO br_ddb FACTS, RESOLVED HERE AND NOWHERE ELSE ═══
+     *
+     * TWO SOURCES, JOINED IN THIS OBJECT AND KEPT APART INSIDE IT. `reach`
+     * comes from the last snapshot the game PUSHED — only something inside
+     * FXServer can ask br_ddb whether its GetItem actually works. `bundle`
+     * comes from the `status` verb, which reads the box's disk. Both are
+     * in-memory reads in this process, so joining them costs nothing and saves
+     * the Host page a second poll against a payload sized for 2048 players.
+     *
+     * RESOLVED TO A WORD HERE RATHER THAN SHIPPED RAW, and the reason is a
+     * clock. `reachNow` has to date the probe against the present, and the
+     * present read during a CLIENT render is not the one the server rendered
+     * against — which is a hydration mismatch on a chip whose whole job is to
+     * be trustworthy at a glance. Resolving on the server means no surface in
+     * this feature ever calls `Date.now()` during render; the readings simply
+     * refresh on the poll the Host page and the header already run.
+     *
+     * `probe` TRAVELS ALONGSIDE, NOT INSTEAD. The fix popup names the region,
+     * the prefix and the game's own error text, and none of that survives
+     * reduction to three words.
+     */
+    ddb: (() => {
+      const p = ddbProbe()
+      /**
+       * `at` IS DELIBERATELY NOT FORWARDED. It is a `GetGameTimer()` reading,
+       * it has already done its one job here — deciding whether the verdict is
+       * current — and it is meaningless in a browser without the clock pair
+       * from the envelope it arrived in. Passing it on would put a number in
+       * the payload that any reader could only misuse.
+       */
+      const probe: DdbProbe | null = p
+        ? {
+            ok: p.probe.ok,
+            error: p.probe.error ?? null,
+            region: p.probe.region ?? null,
+            prefix: p.probe.prefix ?? null,
+            ms: p.probe.ms ?? null,
+          }
+        : null
+      return {
+        reach: reachNow(probe, p?.atMs ?? null, Date.now()),
+        probe,
+      }
+    })(),
+    bundle: bundleNow(state.status?.bundle),
   }
 }

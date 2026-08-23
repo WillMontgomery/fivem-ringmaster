@@ -246,6 +246,49 @@ export interface HostStatus {
   pinnedBy?: string
   /** When the pin was written, epoch ms. */
   pinnedAt?: number
+
+  /**
+   * The br_ddb bundle and the manifest sitting beside it, both read off disk.
+   *
+   * ═══ WHY THIS RIDES `status` AND NOT A NEW VERB ═══
+   *
+   * The console's capability boundary is the VERB SET, and the game repo's
+   * `tools/verify.sh` pins it by name — kick/spectate/deploy/branches/switchref
+   * plus three reads, with no raw stop/restart and no config writes. A ninth
+   * verb would move that boundary for a fact that is two file reads on a box
+   * `do_status` is already reading files on. Widening a read-only verb's
+   * RESPONSE moves nothing: the same call, the same permissions, the same
+   * six-second budget, one more object on the line it already prints.
+   *
+   * ═══ AND WHY NOT THE GAME'S OWN STATE BAG, WHICH ALREADY HOLDS HALF OF IT ═══
+   *
+   * `br_ddb/server/fingerprint.lua` publishes the manifest to
+   * `GlobalState.brDdbBundle` at boot. That is the manifest ONLY — it does not
+   * hash the bundle — so on its own it can repeat a claim and never check one.
+   * Checking needs a sha256 of `dist/server.js`, the box has `sha256sum` (the
+   * fingerprint script requires exactly that and no node, npm or jq), and a
+   * shell is where that lives. So: manifest and hash together, from the shell,
+   * on the verb that already reads the box's files.
+   *
+   * OPTIONAL, AND ABSENT IS `unknown` — see `bundleNow` in lib/ddbHealth, which
+   * is the only thing allowed to interpret it. A dispatcher too old to send it,
+   * a game build with no `fingerprint.json`, and a box whose hash tool is
+   * missing are three different absences and not one of them is a fault.
+   *
+   * NOT YET SENT BY ANY DEPLOYED DISPATCHER. The game-side half is a proposal,
+   * not a landed change; every reader of this field handles its absence as the
+   * normal case, which is also what makes it safe to ship the console half now.
+   */
+  bundle?: {
+    manifest?: {
+      scheme?: string | null
+      source?: string | null
+      bundle?: string | null
+      bundleBytes?: number | null
+      files?: number | null
+    } | null
+    onDisk?: string | null
+  } | null
 }
 
 /**
