@@ -2,7 +2,12 @@ import * as audit from './audit'
 import * as maint from './maintenance'
 import { heartbeatIsFresh } from './serverPhase'
 import { isOnMain, isParkedOffMain, runVerb, sshConfigured, switchRef } from './ssh'
-import { ensurePolling, hostView, refreshDeployedRef } from './telemetry'
+import {
+  ensurePolling,
+  hostView,
+  refreshDeployedRef,
+  refreshStatus,
+} from './telemetry'
 import { liveView } from './state'
 
 /**
@@ -215,19 +220,49 @@ export async function tick(): Promise<void> {
            * reset and restart, so by now the host's own `sha` is the code that
            * is running.
            *
-           * IT IS THE HOST'S READING, WITH ITS OWN SKEW, AND THAT IS ACCEPTED.
-           * `status` is polled every fifteen seconds while the confirmation
-           * rides the two-second live feed, so this can be up to one status poll
-           * behind — which on this path means the value is either the landed
-           * commit or the one before it. Undefined rather than wrong is not
-           * available here without a second SSH round trip in the middle of a
-           * restart; what IS guaranteed is that nothing is invented, because a
-           * console with no host reading writes null and the field reads as
-           * "not recorded".
+           * ═══ AND IT IS ASKED FOR HERE, NOT TAKEN FROM THE POLLER ═══
+           *
+           * THIS USED TO ACCEPT THE POLLER'S SKEW AND SAY SO. `status` is read
+           * every fifteen seconds while this confirmation rides the two-second
+           * live feed, so `hostView().status` at this instant can predate the
+           * restart — and the comment that stood here conceded the consequence
+           * in as many words: "the value is either the landed commit or the one
+           * before it". The one before it is the commit the server was LEAVING.
+           * A field whose whole job is to answer "where did the deploy go" must
+           * not be able to name the place it came from, and the wider the deploy
+           * jumps the more misleading that answer is — the owner's went six
+           * commits, so "the one before it" was six behind the truth.
+           *
+           * SO THE SECOND ROUND TRIP IS SPENT. It is the same shape and the same
+           * argument as `refreshDeployedRef` above: a reading stops being
+           * decoration at the moment somebody writes it down, and this is a
+           * handful of times a week, not per poll or per page. `status` is the
+           * cheap verb — files and a `rev-list` against refs already on disk —
+           * and `runVerb` bounds it at six seconds, so the worst case is that a
+           * confirmation lands six seconds later than it would have.
+           *
+           * IT CANNOT BREAK THE RESTART PATH, and that is why it is ordered
+           * here. The window is ALREADY confirmed by this point — `back` was
+           * decided from the live feed, above, and nothing below re-reads the
+           * host to decide anything. This call only supplies the value being
+           * recorded, so a slow or failed read delays and blanks the RECORD
+           * without touching whether the deploy is treated as complete.
+           *
+           * A READ THAT DID NOT LAND WRITES NULL, WHICH IS THE HONEST ANSWER.
+           * `refreshStatus` returns the fresh reading or null, precisely so this
+           * can tell "the box answered" from "we kept what we had" — `hostView()`
+           * cannot, because on failure it hands back the pre-restart commit,
+           * which is the exact value being fixed. Null reads as "not recorded",
+           * and not recorded is a fact; the previous commit is not.
+           *
+           * THROUGH `runningShaNow`, SO THE RECORD AND THE PAGE AGREE ON WHAT
+           * COUNTS AS A COMMIT. Full 40-hex or nothing — a dispatcher too old to
+           * send `sha` records null here rather than putting the abbreviated
+           * `commit` somewhere that will later be compared.
            */
           await maint.markDeployConfirmed(
             feed.lastPushAt ?? now,
-            hostView().status?.sha ?? null,
+            maint.runningShaNow(await refreshStatus()),
           )
           w = remember(await maint.current())
         } catch (e) {

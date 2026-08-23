@@ -247,6 +247,56 @@ export async function refreshDeployedRef(): Promise<void> {
   await pollDeployedRef(status, true)
 }
 
+/**
+ * Ask the box WHICH COMMIT IT IS ON, right now, past the fifteen-second timer.
+ *
+ * ═══ THE ONE MOMENT THE POLL'S SKEW IS NOT ACCEPTABLE ═══
+ *
+ * `deployLandedSha` is the console's answer to "where did that deploy actually
+ * go", and it goes into the audit trail. It is written the instant a heartbeat
+ * proves the restarted process is up — which rides the two-second live feed,
+ * while `status` is re-read every fifteen. So the reading in memory at that
+ * instant could be from BEFORE the restart, and the field's own comment used to
+ * concede exactly that: "the value is either the landed commit or the one before
+ * it". The one before it is the commit the server was LEAVING. A record that may
+ * name the wrong end of the move it exists to describe is not a record.
+ *
+ * SO THE DRIVER FORCES A READ THERE, and this is it. Same shape as
+ * `refreshDeployedRef` above and called from the same class of moment: not on a
+ * timer, but at the instant a value stops being decoration and becomes something
+ * written down.
+ *
+ * NO BUSY GUARD, UNLIKE `refreshDeployedRef`, AND THE ASYMMETRY IS THE COST.
+ * That one guards because `branches` runs a real `git fetch --prune` against
+ * GitHub inside the box's four-second budget, and two of those racing is what it
+ * cannot absorb. `status` reads files and runs `rev-list` against refs already on
+ * disk — `poll()` fetches it alongside `telemetry` every tick precisely because
+ * it is that cheap — so one extra call per DEPLOY needs no scheduling around.
+ *
+ * IT RETURNS THE READING RATHER THAN LEAVING THE CALLER TO GO AND LOOK, because
+ * the caller has to be able to tell a fresh answer from a kept one. `hostView()`
+ * cannot express that difference: on a failed read it hands back the previous
+ * `status`, which here is the pre-restart commit — the exact value being fixed.
+ * Null means THIS read did not land, and the driver writes "not recorded" rather
+ * than a commit it cannot stand behind.
+ *
+ * A FAILURE STILL KEEPS THE LAST READING IN STATE, same as a failed poll. The
+ * graph and the header must not blank because one SSH round trip during a
+ * restart timed out; it is only the audit write that treats "we could not ask"
+ * as an answer of its own.
+ */
+export async function refreshStatus(): Promise<HostStatus | null> {
+  if (!sshConfigured()) return null
+  try {
+    const status = await runVerb<HostStatus>('status')
+    state.status = status
+    state.statusAt = Date.now()
+    return status
+  } catch {
+    return null
+  }
+}
+
 async function poll(): Promise<void> {
   if (!sshConfigured()) return
 

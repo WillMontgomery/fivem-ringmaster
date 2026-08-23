@@ -194,6 +194,24 @@ export interface MaintenanceWindow {
    * IT IS THE HOST'S ANSWER AND NOTHING DERIVED HERE. Null when the console had
    * no host reading at that moment, which reads as "not recorded" — never as a
    * commit, and never as agreement with whatever was on the page.
+   *
+   * AND THE ANSWER IS ASKED FOR AT THE MOMENT IT IS WRITTEN. This used to be
+   * whatever the fifteen-second `status` poll happened to be holding, while the
+   * confirmation that triggers the write rides the two-second live feed — so the
+   * value could be from before the restart, and the driver's comment conceded it
+   * outright: "either the landed commit or the one before it". The one before it
+   * is the commit the server was LEAVING, which is the opposite of what this
+   * field means, and it is exactly what a reader saw when the settled card was
+   * still rendering this. `maintenanceDriver` now forces a `status` read
+   * immediately before writing, and records null when that read does not land.
+   *
+   * SO A VALUE HERE IS ONE THE CONSOLE STOOD BEHIND AT THE TIME. It is still a
+   * record and NOT a live reading: nothing refreshes it, and anything that moves
+   * the box afterwards — a deploy run on the game host, a restart, a switch —
+   * leaves it describing a server that has moved on. That is correct for an
+   * audit trail and wrong for a page. "What is the box running" is
+   * {@link runningShaNow}, off the live `status`, and the two are not
+   * interchangeable.
    */
   deployLandedSha?: string | null
 

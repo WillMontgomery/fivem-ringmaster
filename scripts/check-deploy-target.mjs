@@ -542,6 +542,37 @@ for (const [label, status, expected] of runningCases) {
   }
 
   /**
+   * AND THE COMMIT IT RECORDS IS ASKED FOR AT THAT MOMENT, NOT REMEMBERED.
+   *
+   * THE WRITE-TIME HALF OF THE OWNER'S BUG. The confirmation rides the
+   * two-second live feed; `status` is polled every fifteen. Reading
+   * `hostView().status` here therefore hands over a commit that may predate the
+   * restart — the one the server was LEAVING — which the driver's own comment
+   * used to concede in as many words. A record able to name the wrong end of the
+   * move it describes is worse than no record, because it is indistinguishable
+   * from a right one.
+   *
+   * THE READ IS INSIDE THE CALL, WHICH IS WHY THIS IS ONE ASSERTION AND NOT AN
+   * ORDERING PAIR. `refreshStatus()` returning the reading — rather than
+   * updating state for a separate `hostView()` to go and find — is what makes a
+   * failed read distinguishable from a kept one, so "did it land" can be
+   * recorded as null instead of as the previous commit.
+   */
+  if (!/markDeployConfirmed\([^)]*refreshStatus\(\)/s.test(driver)) {
+    fail(
+      'the driver records the landed commit from a reading it did not just take — ' +
+        'the poller can be a full interval behind the restart, so the field can name ' +
+        'the commit the server was leaving',
+    )
+  }
+  if (/markDeployConfirmed\([^)]*hostView\(\)/s.test(driver)) {
+    fail(
+      'the driver records the landed commit off hostView() — on a failed read that ' +
+        'hands back the pre-restart commit, which is the value being fixed',
+    )
+  }
+
+  /**
    * ONE CADENCE, ONE CONSTANT. The freshness bound is a multiple of the poll
    * interval, so a second definition of that interval is how somebody re-tunes
    * the poller and leaves the gate calibrated for a cadence that no longer
@@ -600,6 +631,6 @@ console.log(
   `check:deploytarget — ${targetCases.length} freshness/pairing cases, ` +
     `${landedCases.length} displayed-vs-deployed cases, ` +
     `${runningCases.length} running-commit cases and 4 properties, ` +
-    `and 14 call sites hold ` +
+    `and 16 call sites hold ` +
     `(poll ${REF_POLL_MS / 1000}s, bound ${TARGET_MAX_AGE_MS / 1000}s)`,
 )
