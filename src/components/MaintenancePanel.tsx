@@ -47,6 +47,7 @@ import { deployPhase, RESTART_GRACE_MS } from '@/lib/serverPhase'
 import {
   AUTO_AFTER_MS,
   behindMainNow,
+  branchRefusal,
   nothingToDeploy,
   refBehindNow,
   refBlockedNow,
@@ -691,7 +692,27 @@ export function MaintenancePanel({
    * ON DEMAND, NEVER POLLED. Every other host read in this console is on a
    * timer; this one costs a real `git fetch --prune` against GitHub on the game
    * box, and the answer changes when somebody pushes rather than every fifteen
-   * seconds. Opening the picker asks once; the refresh button asks again.
+   * seconds. The refresh button asks; OPENING THE PICKER ASKS TOO, every time
+   * and not only the first.
+   *
+   * WHY THAT SECOND CLAUSE IS THE WHOLE POINT. The open handler used to fire
+   * this only while `branches === null`, so the list was read once per page
+   * session and the picker showed that one reading for as long as the tab
+   * stayed open. `blockedBy` is the reading on this page that is SUPPOSED to
+   * stop being true — a merge to main resolves it — and the owner hit exactly
+   * that: he landed the PR that unblocked `dev` and the picker went on printing
+   * "changes tools/dispatch.sh — deploy it through main and PR review",
+   * reopened and reopened, with no way to notice. `do_branches` on the box is
+   * also what runs the `fetch --prune`, so a console that never re-asks leaves
+   * the box's own `origin/main` unrefreshed and the refusal is stale at both
+   * ends.
+   *
+   * ON OPEN IS NOT A POLL, and that distinction is the budget. The fetch is
+   * bounded at both ends — the box gives up and answers `stale`, and this end
+   * gives up on the six-second SSH wall — and it is now spent once per
+   * deliberate act by a human, which is exactly what Refresh has always cost. A
+   * timer would spend it forever on a page left open, which is what the
+   * `process` scope on the route exists to prevent.
    */
   const loadBranches = async () => {
     setLoadingBranches(true)
@@ -718,15 +739,66 @@ export function MaintenancePanel({
       if (!res.ok || d.ok === false) {
         throw new Error(d.error ?? `Request failed (${res.status}).`)
       }
-      setBranches(d.branches ?? [])
+      const list = d.branches ?? []
+      setBranches(list)
       setBranchesStale(Boolean(d.stale))
       setBranchesFromSha(
         typeof d.deployedSha === 'string' && d.deployedSha ? d.deployedSha : null,
       )
       if (typeof d.deployedRef === 'string') setDeployedRef(d.deployedRef)
+      /**
+       * AND THE PICK FOLLOWS THE LIST IT CAME OUT OF.
+       *
+       * `picked` outlives the picker being closed, so a reload can land under a
+       * selection made against the previous reading — and it is the SAME row
+       * only by name. Two ways that goes wrong and both are silent: the sha
+       * travels with the pick, so an un-repointed one schedules a commit that
+       * has since been superseded, pinned, against a row on screen naming a
+       * different one; and `api/maintenance` deliberately does not re-check a
+       * switch's eligibility because "the picker has already gated on that
+       * branch's own `eligible`" — a promise that only holds while the pick and
+       * the list are the same answer.
+       *
+       * SO IT IS RE-POINTED, OR DROPPED. Re-pointed at the fresh row when that
+       * row is still choosable, dropped when it is not there at all or
+       * `branchRefusal` now names a reason — which is the same function the row
+       * itself is disabled by, so the footer button and the row it refers to
+       * cannot come apart. The owner's case is the happy direction of this:
+       * `dev` unblocked by a merge comes back choosable and the pick survives.
+       */
+      const ref = typeof d.deployedRef === 'string' ? d.deployedRef : deployedRef
+      setPicked((p) => {
+        if (!p) return null
+        const fresh = list.find((b) => b.name === p.name)
+        return fresh && branchRefusal(fresh, ref) === null ? fresh : null
+      })
     } catch (e) {
-      setBranches(null)
-      setBranchesFromSha(null)
+      /**
+       * A FAILED RE-READ DOES NOT TAKE THE LIST AWAY.
+       *
+       * This used to null `branches` and `branchesFromSha` on any error, which
+       * was harmless while the only load was the first one — there was nothing
+       * to lose — and is wrong now that opening the picker re-asks. A cold load
+       * still ends with nothing, because nothing is what it started with; a
+       * RELOAD that cannot reach the host would otherwise delete the rows an
+       * operator was reading mid-read, on the strength of a failure that says
+       * nothing about whether those rows were right.
+       *
+       * NOT SILENTLY, AND NOT DRESSED UP AS FRESH EITHER. The error is rendered
+       * above the list in the danger register, so what is on screen is a list
+       * with a stated failure over it rather than a list presented as current.
+       *
+       * `branchesStale` IS DELIBERATELY NOT SET HERE. That flag is the game
+       * host's own admission that it answered from refs on disk, and the banner
+       * it draws says exactly that. A console-side fetch failure is a different
+       * fact, and borrowing the host's sentence for it would state a cause
+       * nobody established. The two readings keep their own words.
+       *
+       * `branchesFromSha` STAYS WITH THE LIST because it is part of the same
+       * answer: it names the commit those `+`/`−` were counted from. Keeping
+       * the rows while dropping what they are measured against would leave
+       * every number on screen unlabelled.
+       */
       setBranchError(e instanceof Error ? e.message : 'Could not read the branches.')
     } finally {
       setLoadingBranches(false)
@@ -1953,7 +2025,14 @@ export function MaintenancePanel({
           open={branchesOpen}
           onOpenChange={(v) => {
             setBranchesOpen(v)
-            if (v && branches === null && !loadingBranches) void loadBranches()
+            /**
+             * EVERY OPEN, NOT ONLY THE FIRST. The `branches === null` that used
+             * to stand here made the list a once-per-page-session reading; see
+             * `loadBranches` for what that did to a refusal the operator had
+             * just resolved. The only guard left is against asking twice at
+             * once.
+             */
+            if (v && !loadingBranches) void loadBranches()
           }}
           branches={branches}
           stale={branchesStale}
@@ -2267,8 +2346,15 @@ function BranchPicker({
                  * Only a branch that is both running and identical to what is
                  * deployed is disabled, because that deploy would restart every
                  * match to change nothing.
+                 *
+                 * THE RULE MOVED TO lib/maintenance AND DID NOT CHANGE. It is
+                 * read three times now — here, by the sentence under the row,
+                 * and by the reconciliation that drops a pick this list has
+                 * invalidated — and a pick surviving a refusal the row is
+                 * showing is precisely the disagreement that would put a live
+                 * button over a refused deploy.
                  */
-                const noChange = isCurrent && b.ahead === 0 && b.behind === 0
+                const refusal = branchRefusal(b, deployedRef)
                 const isPicked = picked?.name === b.name
                 return (
                   /*
@@ -2299,7 +2385,7 @@ function BranchPicker({
                   <li key={b.name} className="relative">
                     <button
                       type="button"
-                      disabled={!b.eligible || noChange}
+                      disabled={refusal !== null}
                       aria-pressed={isPicked}
                       onClick={() => onPick(b)}
                       className={cn(
@@ -2307,7 +2393,7 @@ function BranchPicker({
                         isPicked
                           ? 'border-primary/50 bg-primary/10'
                           : 'border-border bg-card/40',
-                        b.eligible && !noChange
+                        refusal === null
                           ? 'hover:border-primary/40 hover:bg-primary/5'
                           : 'cursor-not-allowed opacity-60',
                       )}
@@ -2378,12 +2464,12 @@ function BranchPicker({
                         branch is refused and what to do about it, where a
                         greyed-out row with no text reads as a bug.
                       */}
-                      {!b.eligible && b.blockedBy && (
+                      {refusal === 'blocked' && b.blockedBy && (
                         <p className="mt-1 text-xs text-warn">
                           Cannot be deployed — {b.blockedBy}
                         </p>
                       )}
-                      {noChange && b.eligible && (
+                      {refusal === 'no-change' && (
                         <p className="mt-1 text-xs text-muted-foreground">
                           Already running, at this exact commit — there is
                           nothing to deploy.

@@ -3,7 +3,7 @@ import { ddb, tables } from './dynamo'
 // at module scope, and the two rules below are read by MaintenancePanel, which
 // is a client component. `import type` is erased outright, so nothing from the
 // SSH channel reaches a browser bundle.
-import type { RefUpdate, UpdateTarget } from './ssh'
+import type { HostBranch, RefUpdate, UpdateTarget } from './ssh'
 
 /**
  * Scheduled maintenance.
@@ -449,6 +449,51 @@ export function refBlockedNow(
   if (!refUpdate || refUpdate.ref !== deployedRef) return null
   if (refUpdate.eligible !== false) return null
   return refUpdate.blockedBy ?? ''
+}
+
+/** Why a row in the branch picker cannot be chosen. */
+export type BranchRefusal =
+  /** The box would refuse this ref; `blockedBy` carries the sentence. */
+  | 'blocked'
+  /** It is already deployed, at this exact commit. */
+  | 'no-change'
+
+/**
+ * WHY THE PICKER WILL NOT LET THIS ROW BE CHOSEN, or null for "it will".
+ *
+ * THE SAME QUESTION `refBlockedNow` ASKS, POINTED AT THE OTHER LIST. That one
+ * reads the single ref the box is parked ON, out of a polled `refUpdate`; this
+ * one reads a row of the branch list, which is a different reading with a
+ * different lifetime. What they share is the polarity: a stated refusal only,
+ * and an empty `blockedBy` is still a refusal.
+ *
+ * IT EXISTS BECAUSE THE LIST NOW MOVES UNDER A PICK. The picker re-reads the
+ * host every time it opens, so the row an operator chose can come back changed
+ * — newly blocked, or newly identical to what is deployed — while `picked`
+ * still holds the object they clicked. `api/maintenance` states outright that a
+ * SWITCH is "gated on that branch's own `eligible`" by the picker and does not
+ * re-check it, so a pick left behind by a reload is a deploy the console has
+ * approved and only `switchref` on the box would refuse — hours later, into a
+ * systemd log, having already ended every match to get there.
+ *
+ * ONE FUNCTION, THREE READERS: the row's `disabled`, the sentence under it, and
+ * the reconciliation that drops a pick a reload has invalidated. Written as two
+ * expressions those would eventually disagree, and the direction they disagree
+ * in is a live button over a refused deploy.
+ *
+ * BLOCKED WINS OVER NO-CHANGE, which is the order the rows already read in: a
+ * branch the box refuses is refused whether or not it happens to be the one
+ * running.
+ */
+export function branchRefusal(
+  b: Pick<HostBranch, 'name' | 'ahead' | 'behind' | 'eligible'>,
+  deployedRef: string | null | undefined,
+): BranchRefusal | null {
+  if (!b.eligible) return 'blocked'
+  if (b.name === deployedRef && b.ahead === 0 && b.behind === 0) {
+    return 'no-change'
+  }
+  return null
 }
 
 /**
