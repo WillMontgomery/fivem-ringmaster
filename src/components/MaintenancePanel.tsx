@@ -47,6 +47,7 @@ import { deployPhase, RESTART_GRACE_MS } from '@/lib/serverPhase'
 import {
   AUTO_AFTER_MS,
   behindMainNow,
+  deployLanded,
   nothingToDeploy,
   refBehindNow,
   refBlockedNow,
@@ -162,7 +163,29 @@ function CommitPair({ target }: { target: UpdateTarget }) {
     <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
       <CommitLink sha={target.fromSha} label="Running now" />
       <ArrowRight className="size-3.5 shrink-0" aria-hidden />
-      <CommitLink sha={target.toSha} label="Deploying to" />
+      {/*
+        "NEWEST COMMIT", NOT "DEPLOYING TO", AND THE CORRECTION IS THE BUG.
+
+        The owner: "it's misleading to say we're going from X to Y but we
+        actually end up on Z, which is the latest." This label was the promise.
+        `tools/deploy.sh` resolves the destination ITSELF — its own `git fetch`
+        and `reset --hard origin/$BRANCH` — at the moment the deploy runs, which
+        for a `when-empty` window is however long the drain took. So the console
+        never had the authority to name the commit a deploy would land on, and
+        this said it would.
+
+        THE SAME PAGE ALREADY HAD THE RIGHT WORDS. The live-window card says an
+        update goes "to its newest commit when the deploy runs", and its comment
+        spells out why it shows no sha there: "An update takes the tip at deploy
+        time; only a switch is pinned." Two cards on one page disagreed about
+        what an update deploys, and this was the one that was wrong.
+
+        THE SHA STAYS, BECAUSE IT IS STILL THE ANSWER TO THE QUESTION BEING
+        ASKED. "What am I about to ship" is read from the diff link beside it,
+        and the newest commit the box knows about is the honest left-hand side of
+        that diff. What changed is that it no longer claims to be a destination.
+      */}
+      <CommitLink sha={target.toSha} label="Newest commit" />
       <span>
         on <code className="font-mono text-foreground">{target.ref}</code>
       </span>
@@ -363,18 +386,6 @@ export function MaintenancePanel({
    * the same way since it was built.
    */
   const refBlocked = refBlockedNow(deployedRef, refUpdate)
-
-  /**
-   * The two commits a deploy would move between, on whichever ref the box is
-   * on, or null for "we cannot say".
-   *
-   * PAIRED IN lib/maintenance, NOT HERE, for exactly the reason `refBehind` is:
-   * a reading taken for another branch is not a reading, and an arrow whose two
-   * ends are the same commit is not an update. Both rules are stated once, in
-   * `updateTargetNow`, so the sentence in this card and the arrow under it
-   * cannot come to different conclusions about the same poll.
-   */
-  const target = updateTargetNow(deployedRef, updateTarget)
 
   /**
    * Is there a KNOWN update against main? Not "is main's card showing".
@@ -593,6 +604,57 @@ export function MaintenancePanel({
     bootEpoch: polled?.view.bootEpoch ?? initialBootEpoch,
     lastPushAt: polled?.view.lastPushAt ?? initialLastPushAt,
     now: phaseNow,
+  })
+
+  /**
+   * The two commits a deploy would move between, on whichever ref the box is
+   * on, or null for "we cannot say".
+   *
+   * PAIRED IN lib/maintenance, NOT HERE, for exactly the reason `refBehind` is:
+   * a reading taken for another branch is not a reading, and an arrow whose two
+   * ends are the same commit is not an update. Both rules are stated once, in
+   * `updateTargetNow`, so the sentence in this card and the arrow under it
+   * cannot come to different conclusions about the same poll.
+   *
+   * ═══ `phaseNow`, AND IT HAS TO BE THE SERVER'S CLOCK ═══
+   *
+   * `updateTargetNow` now also refuses a reading it is too late to stand behind,
+   * and it measures that against `updateTarget.at` — a timestamp stamped on the
+   * SERVER when the `branches` answer arrived. Comparing it to this component's
+   * `now`, which is `Date.now()` in a browser, would make the arrow disappear on
+   * any machine whose clock runs a few minutes fast: an operator's laptop
+   * deciding the console's reading is stale on the strength of its own clock.
+   * `phaseNow` is the live poll's `now`, which is the same server that stamped
+   * `at`, so the subtraction is between two readings of one clock. It falls back
+   * to the local `now` only in the frozen preview harness, where there is no poll
+   * and no host either.
+   *
+   * WHICH IS ALSO WHY THIS MOVED DOWN THE FILE, past `polled`. It reads the live
+   * poll now, so it has to come after it.
+   */
+  const target = updateTargetNow(deployedRef, updateTarget, phaseNow)
+
+  /**
+   * WHERE THE LAST DEPLOY ACTUALLY LANDED, off the window row.
+   *
+   * IT IS THE ONLY COMMIT ON THIS PAGE THAT WAS OBSERVED RATHER THAN PREDICTED.
+   * Everything else — the arrow, the pinned `targetSha`, the branch picker's
+   * tips — is a reading of what a tip was at some earlier moment. This is the
+   * host's own `sha` read after a heartbeat proved the new process was up, which
+   * is the one fact that answers the owner's question ("we actually end up on Z")
+   * instead of restating the claim that was wrong.
+   *
+   * `asShown` IS CARRIED BUT NOT RENDERED, and that is a decision rather than an
+   * oversight. Landing past the commit the page named is the NORMAL behaviour of
+   * a deploy that fetches and resets to the tip — it is what "get the server
+   * current" means — so drawing attention to the difference would turn correct
+   * behaviour into an alarm. What the page owed the reader was the commit, and
+   * that is what it now shows. The comparison lives on the row and in the audit
+   * detail, where somebody asking "why did it not go where it said" can read it.
+   */
+  const landed = deployLanded({
+    shownSha: w?.shownSha,
+    landedSha: w?.deployLandedSha,
   })
 
   /**
@@ -1821,6 +1883,32 @@ export function MaintenancePanel({
           <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             {noDeploy.fix}
           </p>
+          {/*
+            WHERE THE LAST DEPLOY ACTUALLY WENT.
+
+            THIS CARD MADE A CLAIM AND SHOWED NOTHING TO CHECK IT AGAINST, which
+            is the whole of the owner's report read from the other end: the page
+            said "going from X to Y", the box went to Z, and the screen it landed
+            on said "running the latest code" without naming a commit. Yes and
+            no are both unfalsifiable there.
+
+            NO NEW SENTENCE, AND DELIBERATELY SO. `landed` is a value the row now
+            carries — the host's own `sha`, observed after the restart — rendered
+            through the same `CommitLink` the arrow above uses. The sr-only label
+            is what the anchor needs to be readable at all (WCAG 2.5.3, same
+            reason as the pair); nothing else is added, because the sentence
+            above already says what happened and only lacked the commit.
+
+            ABSENT UNTIL THERE IS ONE. A console with no window row, a window
+            that predates this field, a deploy nobody has confirmed — all render
+            nothing, which is what every other reading on this page does when it
+            has not been told. `deployLanded` returns null for each.
+          */}
+          {landed && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              <CommitLink sha={landed.sha} label="Deployed" />
+            </p>
+          )}
         </Card>
         )
       )}

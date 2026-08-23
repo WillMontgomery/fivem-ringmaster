@@ -1,3 +1,4 @@
+import { REF_POLL_MS } from './maintenance'
 import {
   isParkedOffMain,
   listBranches,
@@ -70,6 +71,17 @@ const POLL_MS = 15_000
 /**
  * How often the parked branch's own tip is re-read. NOT the poll interval.
  *
+ * ═══ THE NUMBER ITSELF NOW LIVES IN lib/maintenance ═══
+ *
+ * `updateTargetNow` refuses a destination reading that is too old to stand
+ * behind, and it expresses "too old" as a multiple of THIS interval — so the two
+ * have to be one constant or the freshness gate ends up calibrated for a cadence
+ * that no longer exists. lib/maintenance is where it can be imported from both
+ * sides: this module reaches `node:child_process` through lib/ssh and can never
+ * be imported by a client component, and the gate is read by one.
+ *
+ * The reasoning below is why the number is what it is, and is unchanged.
+ *
  * TWO MINUTES IS A COST DECISION, and the cost is on the game box rather than
  * here. `status` and `telemetry` read files and run `rev-list` against refs
  * already on disk; `branches` runs a real `git fetch --prune origin` against
@@ -88,7 +100,7 @@ const POLL_MS = 15_000
  * rather than by how many browser tabs are open, which is the exact reason
  * `/api/host/branches` is `process`-scoped.
  */
-const REF_POLL_MS = 120_000
+export { REF_POLL_MS }
 
 function create(): TelState {
   return {
@@ -158,12 +170,20 @@ function rateBetween(prev: HostTelemetry | undefined, cur: HostTelemetry): {
  * two cadences they would eventually render "3 new commits" beside an arrow
  * pointing at a tip from before those commits existed.
  */
-async function pollDeployedRef(status: HostStatus): Promise<void> {
+async function pollDeployedRef(
+  status: HostStatus,
+  /**
+   * Skip the interval, not the concurrency guard. See `refreshDeployedRef`.
+   */
+  force = false,
+): Promise<void> {
   if (state.refBusy) return
 
   const key = `${status.deployedRef ?? ''}@${status.sha ?? ''}`
   const now = Date.now()
-  if (key === state.refKey && now - state.refPolledAt < REF_POLL_MS) return
+  if (!force && key === state.refKey && now - state.refPolledAt < REF_POLL_MS) {
+    return
+  }
 
   state.refKey = key
   state.refPolledAt = now
@@ -177,6 +197,54 @@ async function pollDeployedRef(status: HostStatus): Promise<void> {
   } finally {
     state.refBusy = false
   }
+}
+
+/**
+ * Re-resolve the destination NOW, past the throttle, because somebody is acting.
+ *
+ * ═══ WHY A TIMER ALONE WAS NOT ENOUGH ═══
+ *
+ * The owner: "`latest` is confirmed deployed, but the hash on the maintenance
+ * page isn't the latest hash. So it's misleading to say we're going from X to Y
+ * but we actually end up on Z, which is the latest."
+ *
+ * The destination on that page is `updateTarget.toSha`, refreshed on the
+ * two-minute cadence above; `tools/deploy.sh` resolves the destination itself,
+ * from its own unbounded `git fetch`, at the instant it runs. The timer is the
+ * right shape for a value nobody is looking at — it is bounded by wall clock
+ * rather than by how many tabs are open, which is the whole reason `branches` is
+ * not polled from the page. It is the wrong shape for the two instants when the
+ * value stops being decoration and becomes a claim somebody is about to act on.
+ *
+ * SO THE TIMER STAYS AND THIS IS ADDED BESIDE IT, called only from those two
+ * instants — `POST /api/maintenance`, where a human has pressed the button, and
+ * the driver immediately before it fires the deploy. Both are human-scale events
+ * that happen a handful of times a week, so this adds a `branches` call per
+ * DEPLOY rather than per poll, per tab or per page load. Putting it anywhere
+ * that is polled would undo the cost decision the interval exists to make.
+ *
+ * `refBusy` IS STILL RESPECTED AND `force` DOES NOT MEAN "TWICE AT ONCE". What
+ * is being skipped is the interval, not the one-at-a-time rule: `branches` runs
+ * a real `git fetch --prune` on the game box, and two of them racing is the
+ * thing the box's four-second budget cannot absorb. A call that arrives while
+ * one is already in flight returns immediately and gets that one's answer, which
+ * is by definition current enough.
+ *
+ * IT CANNOT HANG THE CALLER. `listBranches` goes through `runVerb`, which is
+ * bounded at six seconds by `execFile`'s own timeout, so the worst this adds to
+ * a button press is that. A failure keeps the last reading, exactly as the timer
+ * does — a route that could not re-resolve must not be a route that refuses.
+ *
+ * NO-OP WITH NO HOST READING. Without a `status` there is no key to throttle on
+ * and no ref to resolve; the poller's first answer is what starts this working,
+ * and until then the console says nothing rather than guessing, which is the
+ * rule everywhere else on this page.
+ */
+export async function refreshDeployedRef(): Promise<void> {
+  if (!sshConfigured()) return
+  const status = state.status
+  if (!status) return
+  await pollDeployedRef(status, true)
 }
 
 async function poll(): Promise<void> {

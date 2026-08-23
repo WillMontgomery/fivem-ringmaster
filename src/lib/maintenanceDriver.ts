@@ -2,7 +2,7 @@ import * as audit from './audit'
 import * as maint from './maintenance'
 import { heartbeatIsFresh } from './serverPhase'
 import { isOnMain, isParkedOffMain, runVerb, sshConfigured, switchRef } from './ssh'
-import { ensurePolling, hostView } from './telemetry'
+import { ensurePolling, hostView, refreshDeployedRef } from './telemetry'
 import { liveView } from './state'
 
 /**
@@ -203,7 +203,32 @@ export async function tick(): Promise<void> {
       })
       if (back) {
         try {
-          await maint.markDeployConfirmed(feed.lastPushAt ?? now)
+          /**
+           * AND WHERE IT ACTUALLY LANDED, RECORDED IN THE SAME WRITE.
+           *
+           * THIS IS THE MOMENT THE ANSWER EXISTS AND NOT BEFORE. `do_deploy`
+           * returns as soon as it has detached `systemctl start royale-deploy`,
+           * so at `markComplete` the clone has not been reset yet and
+           * `status.sha` is still the OLD commit — recording it there would
+           * write down the commit the server was leaving. A heartbeat from a new
+           * process is proof `deploy.sh` has been all the way through fetch,
+           * reset and restart, so by now the host's own `sha` is the code that
+           * is running.
+           *
+           * IT IS THE HOST'S READING, WITH ITS OWN SKEW, AND THAT IS ACCEPTED.
+           * `status` is polled every fifteen seconds while the confirmation
+           * rides the two-second live feed, so this can be up to one status poll
+           * behind — which on this path means the value is either the landed
+           * commit or the one before it. Undefined rather than wrong is not
+           * available here without a second SSH round trip in the middle of a
+           * restart; what IS guaranteed is that nothing is invented, because a
+           * console with no host reading writes null and the field reads as
+           * "not recorded".
+           */
+          await maint.markDeployConfirmed(
+            feed.lastPushAt ?? now,
+            hostView().status?.sha ?? null,
+          )
           w = remember(await maint.current())
         } catch (e) {
           // Loud rather than swallowed: a confirmation that silently fails to
@@ -414,6 +439,31 @@ export async function tick(): Promise<void> {
      */
     await refresh()
 
+    /**
+     * WHAT THE TIP IS **NOW**, one moment before the deploy resolves it itself.
+     *
+     * A WINDOW IS SCHEDULED AND THEN WAITS. `when-empty` fires when the last
+     * player leaves, which is minutes to hours after somebody read the arrow on
+     * the maintenance page — and `tools/deploy.sh` does its own unbounded
+     * `git fetch` and `reset --hard origin/$BRANCH` when it runs, so the commit
+     * it lands on is the tip at THIS instant and not the one that was on screen.
+     * The console had no reading of its own from this moment: `updateTarget` is
+     * on a two-minute throttle that nothing was hurrying.
+     *
+     * SO THE LOG GETS BOTH ENDS. `shownSha` on the row is what the page claimed
+     * when the button was pressed; `deployingTo` below is what the console could
+     * see at the moment it fired; `deployLandedSha`, written at confirmation, is
+     * where the box actually went. An operator asking "why did it not go where
+     * it said" can now read the answer instead of inferring it.
+     *
+     * BOUNDED AND NEVER FATAL. `refreshDeployedRef` is one `branches` call
+     * through `runVerb`'s six-second wall and swallows its own failures, so the
+     * worst case is that this adds six seconds to a restart of an already-empty
+     * server and the log records the previous reading.
+     */
+    await refreshDeployedRef()
+    const firing = hostView().updateTarget
+
     const actor = {
       license: w.createdBy,
       name: w.createdByName,
@@ -447,6 +497,24 @@ export async function tick(): Promise<void> {
           : isParkedOffMain(status)
             ? (status?.deployedRef ?? null)
             : null,
+        /**
+         * The commit the page named when this window was scheduled, carried onto
+         * the DEPLOY row as well as the schedule row. The two rows are minutes
+         * or hours apart and are read separately; a claim that only appears on
+         * the earlier one cannot be compared against the outcome on the later
+         * one without a join nobody performs.
+         */
+        shownSha: w.shownSha ?? null,
+        /**
+         * And the tip as of this instant, re-resolved just above — through
+         * `updateTargetNow` so this records what the console would legitimately
+         * SHOW, never a raw snapshot field the pairing rules would have refused.
+         * Null on a pinned switch, where `targetSha` above is the real answer
+         * and the box enforces it.
+         */
+        deployingTo: w.targetRef
+          ? null
+          : (maint.updateTargetNow(status?.deployedRef, firing)?.toSha ?? null),
       },
     })
 

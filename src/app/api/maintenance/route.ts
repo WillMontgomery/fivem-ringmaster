@@ -8,7 +8,7 @@ import { ensureDriver, tick } from '@/lib/maintenanceDriver'
 import { readPrefs } from '@/lib/prefs'
 import { isParkedOffMain } from '@/lib/ssh'
 import { liveView } from '@/lib/state'
-import { hostView } from '@/lib/telemetry'
+import { hostView, refreshDeployedRef } from '@/lib/telemetry'
 import { formatInstant } from '@/lib/time'
 
 /**
@@ -127,7 +127,31 @@ export async function POST(req: Request): Promise<Response> {
      * stated a ref — the page and this route read the same snapshot, so the
      * offer and the acceptance cannot disagree.
      */
-    const { status: hostStatus, refUpdate } = hostView()
+    /**
+     * RE-RESOLVE THE DESTINATION BEFORE ANY OF IT IS READ.
+     *
+     * THE OWNER'S REPORT, AND THE ONE MOMENT IT COULD HAVE BEEN CAUGHT: "it's
+     * misleading to say we're going from X to Y but we actually end up on Z,
+     * which is the latest." Everything below — the gates, the note, and the
+     * commit written onto the row as `shownSha` — reads the telemetry poller's
+     * snapshot, whose `updateTarget` is refreshed on a two-minute throttle. A
+     * button press is the instant that reading stops being decoration and starts
+     * being a claim, so it is the instant to pay a `branches` call for.
+     *
+     * ONCE PER PRESS, WHICH IS NOT A POLL. `/api/host` is read by every open tab
+     * every five seconds and makes no SSH call of its own precisely so the game
+     * box does not pay for browser tabs. This is a human scheduling a restart, a
+     * handful of times a week, and it costs one bounded round trip.
+     *
+     * FAILURE IS NOT A REFUSAL. `refreshDeployedRef` swallows its own errors and
+     * keeps the last reading, so a game box that cannot be reached leaves this
+     * route exactly as strict as it was rather than turning "we could not check"
+     * into "you may not deploy" — which is WillMontgomery/fivem-br-gamemode#146's
+     * shape and the failure every gate below is written to avoid.
+     */
+    await refreshDeployedRef()
+
+    const { status: hostStatus, refUpdate, updateTarget } = hostView()
     const parked = isParkedOffMain(hostStatus)
 
     /**
@@ -311,6 +335,28 @@ export async function POST(req: Request): Promise<Response> {
         ? input.note
         : 'a server update'
 
+    /**
+     * THE COMMIT THE PAGE WAS NAMING WHEN THIS REQUEST WAS MADE.
+     *
+     * THROUGH `updateTargetNow`, NOT OFF THE SNAPSHOT DIRECTLY, and that is the
+     * same rule every other reading in this route follows: the page renders what
+     * that function returns, so recording anything else would write down a claim
+     * the operator was never shown. It withholds a pair belonging to another
+     * branch, a pair pointing at itself, and — since the fix this change is part
+     * of — a reading too old to stand behind. Each of those is a state in which
+     * the card showed NO arrow, and null here says exactly that.
+     *
+     * NULL FOR A SWITCH, DELIBERATELY. A request carrying `targetRef` is pinned:
+     * `targetSha` is a promise the game box ENFORCES — `switchref` refuses if the
+     * branch has moved, and `deploy.sh` refuses again — so it is a stronger
+     * record than a reading, and it is already on the row. Writing a second,
+     * weaker commit beside it would invite a comparison against the wrong one.
+     */
+    const shownSha = input.targetRef
+      ? null
+      : (maint.updateTargetNow(hostStatus?.deployedRef, updateTarget)?.toSha ??
+        null)
+
     const w = await audit.audited(
       {
         action: 'maintenance.schedule',
@@ -356,6 +402,19 @@ export async function POST(req: Request): Promise<Response> {
            */
           refreshingRef:
             !input.targetRef && parked ? (hostStatus?.deployedRef ?? null) : null,
+          /**
+           * AND THE COMMIT THE PAGE NAMED WHEN THIS BUTTON WAS PRESSED — the
+           * other half of the sentence the log could never finish. `refreshingRef`
+           * above says which branch; this says which commit the operator was
+           * looking at while deciding, so "what did the console promise" is
+           * answerable from the row rather than from somebody's memory of a card
+           * that was replaced the moment they clicked.
+           *
+           * IT IS A CLAIM, NOT A TARGET. Nothing deploys it. See
+           * `MaintenanceWindow.shownSha` for why that distinction is the whole
+           * point of recording it at all.
+           */
+          shownSha,
         },
       },
       () =>
@@ -368,6 +427,7 @@ export async function POST(req: Request): Promise<Response> {
           deployAt: input.deployAt ?? null,
           targetRef: input.targetRef ?? null,
           targetSha: input.targetSha ?? null,
+          shownSha,
         }),
     )
 

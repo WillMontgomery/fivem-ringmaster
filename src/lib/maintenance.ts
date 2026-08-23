@@ -168,6 +168,108 @@ export interface MaintenanceWindow {
    * row wholesale.
    */
   deployConfirmedAt?: number | null
+
+  /**
+   * The commit the game box was actually on once this deploy had landed.
+   *
+   * WHY THE ROW HAS TO ANSWER "WHERE DID IT ACTUALLY GO", AND DID NOT. The
+   * owner: "`latest` is confirmed deployed, but the hash on the maintenance page
+   * isn't the latest hash. So it's misleading to say we're going from X to Y but
+   * we actually end up on Z, which is the latest." Every destination this
+   * console has ever shown was a reading taken BEFORE the deploy ran — the
+   * `branches` verb's view of a tip, on a two-minute throttle — and
+   * `tools/deploy.sh` resolves the destination again, from its own unbounded
+   * `git fetch`, at the moment it runs. So the page named a commit, the box went
+   * somewhere else, and nothing recorded the difference or could be asked about
+   * it afterwards.
+   *
+   * WRITTEN AT CONFIRMATION, NOT AT `markComplete`, and that ordering is forced
+   * rather than chosen. `do_deploy` returns `{"ok":true,"started":true}` the
+   * instant it has detached `systemctl start royale-deploy`: the fetch, the
+   * reset and the restart have not happened yet, so at `markComplete` there is
+   * no landing to record and `status.sha` is still the OLD commit. By the time a
+   * heartbeat arrives from a new process the clone has been reset and the host's
+   * own `sha` is the commit that is running.
+   *
+   * IT IS THE HOST'S ANSWER AND NOTHING DERIVED HERE. Null when the console had
+   * no host reading at that moment, which reads as "not recorded" — never as a
+   * commit, and never as agreement with whatever was on the page.
+   */
+  deployLandedSha?: string | null
+
+  /**
+   * The destination this console NAMED when the window was scheduled.
+   *
+   * RECORDED AT SCHEDULING TIME, WHICH IS THE MOMENT THAT WAS MISLEADING. The
+   * arrow on the maintenance page — `Running now X → Deploying to Y` — is read
+   * once, by the person pressing the button, and then the card is replaced by
+   * the live window and the commit is never mentioned again. The deploy fires
+   * when the server empties, which is minutes to hours later. Writing Y down
+   * here is what lets the console compare its own claim against
+   * {@link deployLandedSha} afterwards instead of quietly forgetting it.
+   *
+   * NOT AT `markDeploying`, AND THE DIFFERENCE IS THE ENTIRE POINT. By the time
+   * the deploy fires the poller's reading is at most one throttle old, so a
+   * comparison taken there would almost always agree and would hide precisely
+   * the gap the owner hit. The claim that has to be kept is the one that was on
+   * the screen.
+   *
+   * NULL FOR A WINDOW WITH NO ARROW ON THE PAGE — an automatic 72-hour window
+   * that nobody was looking at, a console whose `branches` reading had not
+   * landed, a switch (where {@link targetSha} is the pinned commit and is the
+   * stronger promise). Null means "nothing was claimed", which is not the same
+   * as "the claim was kept".
+   */
+  shownSha?: string | null
+}
+
+/**
+ * WHAT THE DEPLOY ACTUALLY DID, MEASURED AGAINST WHAT THE CONSOLE SAID IT WOULD.
+ *
+ * THIS IS THE OWNER'S BUG TURNED INTO A VALUE. "It's misleading to say we're
+ * going from X to Y but we actually end up on Z, which is the latest." Before
+ * this, nothing in the console held both halves of that sentence at once: Y was
+ * a reading on a two-minute throttle that vanished with the card, and Z was
+ * never written down at all. Now the row carries both and this decides what they
+ * mean together.
+ *
+ * `asShown: false` IS NOT A FAILURE, AND MUST NOT BE RENDERED AS ONE. Landing
+ * past the commit that was on the page is the NORMAL and DESIRED behaviour of
+ * `tools/deploy.sh`, which fetches and hard-resets to the tip of the ref at the
+ * moment it runs — that is what "get the server current" means and it is why the
+ * owner deploys at all. What was wrong was never where the deploy went; it was
+ * that the page named a different commit and then never mentioned it again. So
+ * this reports a fact, and the surface that renders it shows the commit that is
+ * running rather than an alarm about the one that is not.
+ *
+ * NULL WHEN THERE IS NOTHING OBSERVED. No landed commit means the deploy has not
+ * been confirmed yet, or the console had no host reading when it was — and a
+ * console that did not see where the server went says nothing, exactly as every
+ * other reading on this page does. `shownSha` alone is a claim with no outcome,
+ * which is the state every window is in until its deploy comes back.
+ *
+ * SHAS ARE COMPARED IN FULL AND CASE-FOLDED. Both ends come from the game box —
+ * `status.sha` from `rev-parse HEAD` and the tip from `for-each-ref` — so they
+ * are already 40-hex and already lower case; folding is here so that a future
+ * caller handing over an abbreviation or an upper-case sha gets a wrong answer
+ * loudly (length mismatch) rather than quietly (case mismatch). Never
+ * `startsWith`: a prefix comparison would call an eight-character display sha
+ * equal to the full commit it was cut from, which is the one comparison
+ * `shortSha` in lib/github is documented as never being for.
+ */
+export function deployLanded(input: {
+  shownSha?: string | null
+  landedSha?: string | null
+}): { sha: string; asShown: boolean } | null {
+  const landed = typeof input.landedSha === 'string' ? input.landedSha : ''
+  if (!landed) return null
+  const shown = typeof input.shownSha === 'string' ? input.shownSha : ''
+  return {
+    sha: landed,
+    // No claim was made, so nothing was broken: a window with no arrow on the
+    // page reports its landing as being as shown rather than as a surprise.
+    asShown: !shown || shown.toLowerCase() === landed.toLowerCase(),
+  }
 }
 
 /**
@@ -443,18 +545,98 @@ export const UP_TO_DATE = 'Up to date'
  * really was the tip when the box last managed a fetch — it may simply have been
  * overtaken. Withholding it would leave the operator with no commit to read at
  * all; showing it and saying it may have moved on leaves them better off.
+ *
+ * ═══ AND IT IS NOW REFUSED WHEN IT IS TOO OLD TO STAND BEHIND ═══
+ *
+ * THE OWNER'S REPORT: "`latest` is confirmed deployed, but the hash on the
+ * maintenance page isn't the latest hash. So it's misleading to say we're going
+ * from X to Y but we actually end up on Z, which is the latest."
+ *
+ * `toSha` IS A READING, NOT A PROMISE, and every consumer treated it as a
+ * standing fact. It is resolved on the game box from `refs/remotes/origin/<ref>`,
+ * handed over by the `branches` verb, and held in the telemetry poller behind a
+ * {@link REF_POLL_MS} throttle. `tools/deploy.sh` then resolves the destination
+ * AGAIN, from its own unbounded `git fetch`, at the moment the deploy fires —
+ * which for a `when-empty` window is however long the drain took. Two moments,
+ * two commits, and only one of them was ever on the page.
+ *
+ * `at` EXISTED ON THIS OBJECT FROM THE DAY IT WAS WRITTEN AND NOTHING READ IT.
+ * That is the whole gap: the reading carried the one field that could say how
+ * far it could be trusted, and no caller asked. This is the caller.
+ *
+ * THE BOUND IS DERIVED FROM THE CADENCE, NOT PICKED. {@link TARGET_MAX_AGE_MS}
+ * is a multiple of the interval that produces these readings, so it cannot drift
+ * away from it by somebody re-tuning one of the two — which is exactly how a
+ * freshness gate ends up either flickering on every ordinary poll or never
+ * firing at all. What it catches is a poller that has STOPPED answering: an SSH
+ * channel that has gone away, a game box that cannot finish a fetch, a console
+ * that has been asleep. In those cases the arrow disappears rather than standing
+ * there naming a commit from an hour ago, which is the state the owner read as
+ * "the hash isn't the latest hash".
+ *
+ * IT DOES NOT — AND CANNOT — MAKE THE ARROW A PROMISE. An update deploys the tip
+ * at deploy time; that is `deploy.sh`'s contract and this console does not get a
+ * vote. What the freshness rule buys is that the commit named is one the console
+ * has looked at recently enough to still be talking about the same branch state.
+ * Closing the rest of the gap is `refreshDeployedRef` (lib/telemetry), which
+ * re-resolves at the two moments an operator acts, and `deployLandedSha`, which
+ * records where the deploy ACTUALLY went so the page can stop guessing.
+ *
+ * `now` DEFAULTS RATHER THAN BEING REQUIRED because two call sites are inside a
+ * client component, where `Date.now()` is the BROWSER's clock and `at` was
+ * stamped on the server. The panel passes the server's own `now` (it already
+ * holds one, off the live poll) precisely so a machine with a skewed clock
+ * cannot blank the arrow; the default is for the server-side callers, where the
+ * two clocks are the same clock.
  */
 export function updateTargetNow(
   deployedRef: string | null | undefined,
   updateTarget: UpdateTarget | null | undefined,
+  now: number = Date.now(),
 ): UpdateTarget | null {
   if (!updateTarget) return null
   // A host that has not named its ref cannot have a reading paired to it.
   if (typeof deployedRef !== 'string') return null
   if (updateTarget.ref !== deployedRef) return null
   if (updateTarget.fromSha === updateTarget.toSha) return null
+  /**
+   * `> `, NOT `>=`, and only ever a POSITIVE age. A reading stamped in the
+   * future is a clock disagreement, not a stale reading, and blanking the arrow
+   * over one would be this gate inventing a failure of its own.
+   */
+  if (now - updateTarget.at > TARGET_MAX_AGE_MS) return null
   return updateTarget
 }
+
+/**
+ * How often the game box is asked to re-resolve the tip of the ref it is on.
+ *
+ * IT LIVES HERE, NOT IN lib/telemetry, SO THE TWO CANNOT DRIFT. The poller owns
+ * the timer and {@link updateTargetNow} owns the rule about how old a reading
+ * may be, and the rule is expressed as a multiple of the timer. Two constants in
+ * two files is how somebody halves the cadence for a good reason and leaves a
+ * freshness gate calibrated for the old one — a gate that then either never
+ * fires or fires on every ordinary poll. lib/telemetry imports this.
+ *
+ * WHY TWO MINUTES IS THE NUMBER is a cost decision recorded in lib/telemetry,
+ * where the poller is: `branches` is the only read in this console that makes
+ * the game box open a real connection to GitHub.
+ */
+export const REF_POLL_MS = 120_000
+
+/**
+ * How old a destination reading may be before the console stops naming it.
+ *
+ * TWO INTERVALS PLUS A MARGIN, AND EACH TERM IS DOING A JOB. An ordinary
+ * reading is between zero and one {@link REF_POLL_MS} old by construction, so a
+ * bound of one interval would blank the arrow for a slice of every single cycle.
+ * Two intervals means a reading is only refused once the poller has MISSED a
+ * turn, which is a real fault rather than ordinary phase. The extra half covers
+ * the round trip the reading still has to make — the box's own six-second SSH
+ * budget, `/api/host`, and the panel's five-second poll — so a healthy console
+ * never trips it.
+ */
+export const TARGET_MAX_AGE_MS = REF_POLL_MS * 2.5
 
 /** Why a deploy cannot be asked for, in the three registers it gets read in. */
 export interface NothingToDeploy {
@@ -684,6 +866,12 @@ export async function schedule(input: {
   /** Both or neither. See {@link MaintenanceWindow.targetRef}. */
   targetRef?: string | null
   targetSha?: string | null
+  /**
+   * The destination the page named when this was pressed. See
+   * {@link MaintenanceWindow.shownSha} — it is a record of a claim, never an
+   * instruction, and nothing downstream deploys it.
+   */
+  shownSha?: string | null
 }): Promise<MaintenanceWindow> {
   const existing = await current()
 
@@ -753,6 +941,21 @@ export async function schedule(input: {
     deployError: null,
     deployBootEpoch: null,
     deployConfirmedAt: null,
+    /**
+     * FOURTH MEMBER OF THE SAME SET, and it has to be here for the same reason
+     * the three above are: this is a full `put`, so a field not repeated is
+     * destroyed — but a field CARRIED would be worse. "Where the last deploy
+     * landed" under a window that has not deployed anything yet is the precise
+     * shape of the mistake this whole change is about.
+     */
+    deployLandedSha: null,
+
+    /**
+     * AND THIS ONE IS THE CLAIM, WRITTEN AT THE MOMENT IT IS MADE. Not carried
+     * forward for the same reason `targetRef` is not: it belongs to the window
+     * whose card the operator was reading.
+     */
+    shownSha: input.shownSha ?? null,
   }
 
   await ddb.put({ TableName: tables.maintenance, Item: w })
@@ -846,6 +1049,10 @@ export async function markDeploying(input?: {
     'deployBootEpoch = :be',
     'deployConfirmedAt = :null',
     'deployError = :null',
+    // Same set, same reason: a landing recorded for the PREVIOUS deploy would
+    // sit on this row through the whole of this one, naming a commit that has
+    // nothing to do with what is about to happen.
+    'deployLandedSha = :null',
   ]
 
   const values: Record<string, unknown> = {
@@ -893,19 +1100,36 @@ export async function markDeploying(input?: {
  * `deployConfirmedAt = :null` is in the condition beside `attribute_not_exists`
  * because `schedule` writes the field as an explicit null rather than omitting
  * it, and a NULL attribute exists.
+ *
+ * THE LANDED COMMIT RIDES THE SAME WRITE, and this is the moment it becomes
+ * knowable. A heartbeat from a new process is proof that `deploy.sh` has been
+ * all the way through fetch, reset and restart, so the host's `sha` has stopped
+ * being the old commit and started being the one that is running. Recorded in
+ * the same conditional write as the confirmation so the two can never disagree
+ * about which deploy they describe — see {@link MaintenanceWindow.deployLandedSha}.
  */
-export async function markDeployConfirmed(at: number): Promise<void> {
+export async function markDeployConfirmed(
+  at: number,
+  /**
+   * The host's own `sha` as the console last read it. Null or absent writes
+   * null, which reads as "not recorded"; it must never be filled in with a
+   * guess, because the entire value of this field is that it is the one commit
+   * on the row that was observed rather than predicted.
+   */
+  landedSha?: string | null,
+): Promise<void> {
   await ddb.update({
     TableName: tables.maintenance,
     Key: { id: CURRENT },
     ConditionExpression:
       '#s = :complete AND (attribute_not_exists(deployConfirmedAt) OR deployConfirmedAt = :null)',
-    UpdateExpression: 'SET deployConfirmedAt = :t',
+    UpdateExpression: 'SET deployConfirmedAt = :t, deployLandedSha = :ls',
     ExpressionAttributeNames: { '#s': 'state' },
     ExpressionAttributeValues: {
       ':complete': 'complete',
       ':null': null,
       ':t': at,
+      ':ls': landedSha ?? null,
     },
   })
 }

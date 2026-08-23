@@ -160,6 +160,17 @@ interface View {
  */
 const DEPLOYED_SHA = '4f2b9c1de8a7365019bd4ac2e5f80917bb3c6d24'
 const TIP_SHA = '9c1e77a4b02d5f38e6ab41cc7d90e2f5138ba604'
+/**
+ * A THIRD COMMIT, WHICH IS THE WHOLE OF THE OWNER'S REPORT IN ONE CONSTANT.
+ *
+ * "It's misleading to say we're going from X to Y but we actually end up on Z,
+ * which is the latest." `DEPLOYED_SHA` is X, `TIP_SHA` is Y — the commit the
+ * card named when the button was pressed — and this is Z, pushed while the
+ * server was draining and picked up by `deploy.sh`'s own fetch when the deploy
+ * finally ran. Three constants because there were always three commits; the
+ * console only ever had names for two of them.
+ */
+const LANDED_SHA = 'b7d3410e2fa9c85d6017ee3bb2495c8ad0f61e73'
 
 /**
  * A reading of the parked branch, as the telemetry poller would hold one.
@@ -304,6 +315,38 @@ const views: Record<string, View> = {
     // `updateTargetNow` withholds it. There is no card here to hang it on.
     updateTarget: { ...targetOn('dev'), toSha: DEPLOYED_SHA },
     window: BASE,
+    players: 7,
+  },
+
+  /**
+   * THE SAME SETTLED CARD, AFTER A DEPLOY THAT WENT PAST WHAT WAS SHOWN.
+   *
+   * THIS IS THE OWNER'S BUG, REHEARSED. The window claimed `TIP_SHA` when it was
+   * scheduled — that was the arrow on the card at the moment the button was
+   * pressed — and by the time the drain finished and `deploy.sh` ran its own
+   * fetch, the branch had moved to `LANDED_SHA`. Everything the console said was
+   * true when it said it and none of it was true afterwards, and the settled
+   * card used to assert "running the latest code" with no commit to check.
+   *
+   * WHAT THE CARD SHOWS IS THE COMMIT, NOT THE DISCREPANCY. Landing past the
+   * commit on the page is what a deploy that fetches and resets to the tip DOES,
+   * and it is what "get the server current" means — so this rehearses a normal
+   * outcome being reported honestly, not an alarm. `parked-level` above is the
+   * same card with nothing recorded, which is every window scheduled before this
+   * field existed and is the state that must still render.
+   */
+  'parked-landed': {
+    deployedRef: 'dev',
+    refUpdate: refAt('dev', 0),
+    behindMain: null,
+    updateTarget: { ...targetOn('dev'), toSha: LANDED_SHA },
+    window: {
+      ...BASE,
+      shownSha: TIP_SHA,
+      deployLandedSha: LANDED_SHA,
+      completedAt: NOW - 6 * 60_000,
+      deployConfirmedAt: NOW - 5 * 60_000,
+    },
     players: 7,
   },
 
@@ -588,7 +631,33 @@ async function Preview({
 }) {
   const { state } = await searchParams
   const key = state && state in views ? state : 'parked'
-  const view = views[key]!
+  const fixture = views[key]!
+
+  /**
+   * THE DESTINATION READING IS RE-STAMPED AT REQUEST TIME, AND IT HAS TO BE.
+   *
+   * `updateTargetNow` refuses a reading older than `TARGET_MAX_AGE_MS`, which is
+   * the fix for the owner's "the hash on the maintenance page isn't the latest
+   * hash" — a reading nothing is refreshing must stop being rendered as one. The
+   * fixtures below are built from `NOW`, a module-scope `Date.now()` evaluated
+   * when this file is first loaded, so on a server that has been up for an hour
+   * every `at` in this harness is an hour old and the arrow would vanish from
+   * EVERY state here — a reviewer flipping between `?state=parked-behind` and
+   * `?state=parked-blocked` would see no commits at all and read the harness as
+   * broken rather than the gate as working.
+   *
+   * ONLY `at` MOVES. `stale`, the shas and the ref are the fixture's, untouched,
+   * so each state still rehearses exactly what it was written to rehearse. What
+   * this says is "this reading is current", which is the condition every one of
+   * these states was authored under and none of them declared because there was
+   * nothing to declare it to.
+   */
+  const view = {
+    ...fixture,
+    updateTarget: fixture.updateTarget
+      ? { ...fixture.updateTarget, at: Date.now() }
+      : null,
+  }
 
   const deadline = view.window?.updateFirstSeenAt
     ? view.window.updateFirstSeenAt + AUTO_AFTER_MS
