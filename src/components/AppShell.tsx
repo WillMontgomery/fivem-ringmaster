@@ -16,7 +16,10 @@ import {
 import {
   DdbHealthBanner,
   DdbHealthChip,
+  DispatchHealthBanner,
+  DispatchHealthChip,
   type DdbSeed,
+  type DispatchSeed,
 } from '@/components/DdbHealth'
 import { IdleGuard } from '@/components/IdleGuard'
 import { IncidentBadge, MaintenanceBadge } from '@/components/NavBadges'
@@ -268,6 +271,7 @@ export async function AppShell({
   feed,
   hostRef,
   ddb,
+  dispatch,
 }: {
   children: React.ReactNode
   active?: string
@@ -342,6 +346,18 @@ export async function AppShell({
    * wins; on the harness no poll ever succeeds, so the fixture stands.
    */
   ddb?: DdbSeed
+  /**
+   * FOR THE DESIGN HARNESS ONLY: pretend `/api/host` reported this SSH channel
+   * state and this error text.
+   *
+   * SAME CONTRACT AS `ddb`, AND THE ARGUMENT FOR IT IS STRONGER RATHER THAN
+   * WEAKER. Reaching these states for real means a console whose private key is
+   * genuinely unreadable or a game box that is genuinely unreachable — and the
+   * console has already spent an hour of an outage rendering a page nobody
+   * could review, because the only way to see the failing shape was to have the
+   * failure.
+   */
+  dispatch?: DispatchSeed
 }) {
   const resolvedUser =
     user === undefined
@@ -895,6 +911,19 @@ export async function AppShell({
               the leftmost. Renders nothing unless something is stated broken.
             */}
             <DdbHealthChip seed={ddb} />
+            {/*
+              THE SECOND SUBSYSTEM, AND THE SECOND CHIP. `dispatch` is this
+              box's SSH channel to the game box — telemetry, the branch list and
+              every deploy ride it — and it is outside `chipCluster` for exactly
+              the reason br_ddb is: a deploy in flight must not be able to
+              suppress the alarm saying the deploy channel is down.
+
+              TWO CHIPS AND NOT ONE, because they name two different machines to
+              go and look at. In practice they rarely both speak: reachability
+              rides the ingest push, so a dead SSH channel silences the bundle
+              reading rather than reddening it.
+            */}
+            <DispatchHealthChip seed={dispatch} />
             <ServerChips
               live={chipFeed.live}
               initialBadge={b.maintenance ?? null}
@@ -918,6 +947,21 @@ export async function AppShell({
           fault does — see DdbHealth, which has no dismissed flag to go stale.
         */}
         <DdbHealthBanner seed={ddb} />
+
+        {/*
+          UNDER THE br_ddb STRIP on the rare load where both are up, and the
+          order is the same judgement made one rung down. br_ddb being down
+          means bans are not checked at connect and match results are not saved,
+          which affects players while nobody acts. This being down means the
+          console is blind and cannot deploy — serious, and a tool rather than a
+          live service.
+
+          IT SAYS THE TITLE AND NOT THE ERROR. The poller's text is a multi-line
+          ssh command line naming a key path and the game box's address; it
+          belongs in the popup this opens and on the Host page, not across the
+          top of every page in the console.
+        */}
+        <DispatchHealthBanner seed={dispatch} />
 
         {/*
           Directly under the header and above everything else on the page,

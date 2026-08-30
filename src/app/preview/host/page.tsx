@@ -4,6 +4,7 @@ import { AppShell } from '@/components/AppShell'
 import { HostBoard } from '@/components/HostBoard'
 import {
   HOST_DDB,
+  HOST_DISPATCH,
   HOST_STATUS,
   HOST_WINDOWS,
 } from '@/lib/__fixtures__/hostSamples'
@@ -59,7 +60,12 @@ import type { hostView } from '@/lib/telemetry'
 export default function PreviewHostPage({
   searchParams,
 }: {
-  searchParams: Promise<{ state?: string; status?: string; ddb?: string }>
+  searchParams: Promise<{
+    state?: string
+    status?: string
+    ddb?: string
+    dispatch?: string
+  }>
 }) {
   if (process.env.NODE_ENV === 'production') notFound()
   return <Preview searchParams={searchParams} />
@@ -68,9 +74,14 @@ export default function PreviewHostPage({
 async function Preview({
   searchParams,
 }: {
-  searchParams: Promise<{ state?: string; status?: string; ddb?: string }>
+  searchParams: Promise<{
+    state?: string
+    status?: string
+    ddb?: string
+    dispatch?: string
+  }>
 }) {
-  const { state, status, ddb } = await searchParams
+  const { state, status, ddb, dispatch } = await searchParams
   const window = state && state in HOST_WINDOWS ? state : 'full'
   const reading = status && status in HOST_STATUS ? status : 'behind'
   const fixture = HOST_STATUS[reading]!
@@ -90,6 +101,28 @@ async function Preview({
   const ddbKey = ddb && ddb in HOST_DDB ? ddb : 'silent'
   const ddbFixture = HOST_DDB[ddbKey]!
 
+  /**
+   * THE FOURTH AXIS, AND `ok` IS ITS DEFAULT WHERE THE br_ddb ONE DEFAULTS TO
+   * SILENCE.
+   *
+   * The two defaults differ because the two cold states differ. A real console
+   * has never been told anything about br_ddb, so `silent` IS its truth. The
+   * SSH channel, by contrast, is the thing every other reading on this page
+   * arrived over — if the harness is showing samples and a commit, the channel
+   * worked, and opening on a red one would put the page in a state that
+   * contradicts the rest of the fixture around it.
+   *
+   * IT SEEDS `AppShell` AS WELL AS `HostBoard`, like `ddb`, so the chip and the
+   * strip are reviewed in the same frame as the card. Reviewing the card alone
+   * is how a red card ends up under a calm header.
+   *
+   * THE PAIR WORTH OPENING IS `?ddb=healthy&dispatch=key-unreadable`: a green
+   * DynamoDB card beside a dead channel. That combination is what actually
+   * happened, and it is what made the outage take an hour.
+   */
+  const dispatchKey = dispatch && dispatch in HOST_DISPATCH ? dispatch : 'ok'
+  const dispatchFixture = HOST_DISPATCH[dispatchKey]!
+
   const initial: ReturnType<typeof hostView> = {
     configured: true,
     status: fixture.status,
@@ -97,7 +130,8 @@ async function Preview({
     // so there is nothing for the footer to have measured.
     statusAgeMs: fixture.status ? 3_000 : null,
     samples: HOST_WINDOWS[window]!,
-    lastError: null,
+    lastError: dispatchFixture.lastError,
+    dispatch: dispatchFixture.dispatch,
     refUpdate: fixture.refUpdate,
     updateTarget: null,
     ddb: ddbFixture.ddb,
@@ -111,6 +145,7 @@ async function Preview({
       badges={DEMO_BADGES}
       feed={{ lastPushAt: Date.now() - 1_200, bootEpoch: null, now: Date.now() }}
       ddb={{ ...ddbFixture.ddb, bundle: ddbFixture.bundle }}
+      dispatch={dispatchFixture}
     >
       <div>
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
@@ -121,19 +156,25 @@ async function Preview({
               param="status"
               keys={Object.keys(HOST_STATUS)}
               active={reading}
-              other={`state=${window}&ddb=${ddbKey}`}
+              other={`state=${window}&ddb=${ddbKey}&dispatch=${dispatchKey}`}
             />
             <Picker
               param="state"
               keys={Object.keys(HOST_WINDOWS)}
               active={window}
-              other={`status=${reading}&ddb=${ddbKey}`}
+              other={`status=${reading}&ddb=${ddbKey}&dispatch=${dispatchKey}`}
             />
             <Picker
               param="ddb"
               keys={Object.keys(HOST_DDB)}
               active={ddbKey}
-              other={`status=${reading}&state=${window}`}
+              other={`status=${reading}&state=${window}&dispatch=${dispatchKey}`}
+            />
+            <Picker
+              param="dispatch"
+              keys={Object.keys(HOST_DISPATCH)}
+              active={dispatchKey}
+              other={`status=${reading}&state=${window}&ddb=${ddbKey}`}
             />
           </div>
         </div>

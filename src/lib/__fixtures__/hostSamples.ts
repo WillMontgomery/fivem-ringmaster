@@ -370,3 +370,88 @@ export const HOST_DDB: Record<string, DdbFixture> = {
     bundle: 'unknown',
   },
 }
+
+/**
+ * ═══ A FOURTH AXIS: THE SSH CHANNEL, WHICH NOTHING COULD REVIEW ═══
+ *
+ * The Host page spent an hour of a real outage rendering em-dashes and the
+ * words "last update failed" while `/api/host` carried the cause in its body,
+ * and NOBODY HAD EVER SEEN THAT SHAPE. There was no way to: reaching it means a
+ * console whose private key is genuinely unreadable, or a game box that is
+ * genuinely unreachable. Every argument `HOST_STATUS` makes for existing — the
+ * states that matter are the ones you cannot summon — applies here twice over,
+ * because this is the state in which the page is at its least useful and its
+ * least looked at.
+ *
+ * ITS OWN AXIS AND NOT MORE `HOST_DDB` KEYS, for the reason that record gives
+ * for not being folded into `HOST_STATUS`: these are independent facts on a
+ * different transport. br_ddb reaches AWS from the GAME box; this is the
+ * console's own route TO that box. The combination worth reviewing is
+ * `?ddb=healthy&dispatch=key-unreadable` — a green DynamoDB card beside a red
+ * channel — because that is precisely the pair that misled two people for an
+ * hour, and it is only reviewable if the two axes are separate.
+ *
+ * THE ERROR TEXT IS THE INCIDENT'S OWN, VERBATIM IN SHAPE. `key-unreadable`
+ * carries `execFile`'s `Command failed:` framing, then ssh's `Load key` line,
+ * then the publickey refusal that FOLLOWED FROM IT — which is the string the
+ * card's one line and `machineSaid` have to get right. A fixture that said
+ * "ssh failed" could not review either.
+ *
+ *   ok              the channel works. One green word, no chip, no strip.
+ *   unknown         the poll timer has not run. An em-dash — the cold console.
+ *   unconfigured    GAME_HOST/GAME_SSH_KEY unset. NOTE: on `/host` this is the
+ *                   whole-page "not configured yet" panel instead; this key is
+ *                   how the card's own fallback stays reviewable.
+ *   key-unreadable  THE INCIDENT. The key on this box cannot be loaded.
+ *   unreachable     no session opened at all.
+ *   rejected        the game box answered and refused the key. The state that
+ *                   proves the classifier reads the CAUSE and not the loudest
+ *                   line — its text is the second half of key-unreadable's.
+ *   verb-failed     logged in, and the dispatcher did not answer usefully.
+ */
+export interface DispatchFixture {
+  dispatch: View['dispatch']
+  lastError: string | null
+}
+
+export const HOST_DISPATCH: Record<string, DispatchFixture> = {
+  ok: { dispatch: 'ok', lastError: null },
+
+  unknown: { dispatch: 'unknown', lastError: null },
+
+  unconfigured: { dispatch: 'unconfigured', lastError: null },
+
+  'key-unreadable': {
+    dispatch: 'key-unreadable',
+    lastError:
+      'Command failed: ssh -i /opt/ringmaster-secrets/dispatch -o BatchMode=yes ' +
+      '-o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new ' +
+      '-o UserKnownHostsFile=/opt/ringmaster-secrets/known_hosts ' +
+      'ubuntu@10.1.148.227 status\n' +
+      'Load key "/opt/ringmaster-secrets/dispatch": Permission denied\n' +
+      'ubuntu@10.1.148.227: Permission denied (publickey,password).',
+  },
+
+  unreachable: {
+    dispatch: 'unreachable',
+    lastError:
+      'Command failed: ssh -i /opt/ringmaster-secrets/dispatch -o BatchMode=yes ' +
+      '-o ConnectTimeout=5 ubuntu@10.1.148.227 status\n' +
+      'ssh: connect to host 10.1.148.227 port 22: Connection timed out',
+  },
+
+  rejected: {
+    dispatch: 'rejected',
+    lastError:
+      'Command failed: ssh -i /opt/ringmaster-secrets/dispatch -o BatchMode=yes ' +
+      '-o ConnectTimeout=5 ubuntu@10.1.148.227 status\n' +
+      'ubuntu@10.1.148.227: Permission denied (publickey,password).',
+  },
+
+  'verb-failed': {
+    dispatch: 'verb-failed',
+    lastError:
+      'dispatch returned non-JSON: /opt/fivem/tools/dispatch.sh: line 84: ' +
+      'tmux: command not found',
+  },
+}

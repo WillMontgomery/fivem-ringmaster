@@ -1,4 +1,5 @@
 import { bundleNow, reachNow, type DdbProbe } from './ddbHealth'
+import { dispatchNow } from './dispatchHealth'
 import { REF_POLL_MS } from './maintenance'
 import { ddbProbe } from './state'
 import {
@@ -123,6 +124,29 @@ function create(): TelState {
 const state: TelState = (globalForTel.ringTel ??= create())
 
 /**
+ * ═══ THE POLLER SAYS SOMETHING WHEN IT FAILS. IT USED NOT TO ═══
+ *
+ * `journalctl -u ringmaster` was EMPTY for the whole of the outage that this
+ * module's channel caused — an hour of two-machine debugging over a private key
+ * the service user could not read. Every path that could have said so ended in
+ * a bare `catch {}` with a comment explaining why the failure was survivable,
+ * which it was; what none of them did was mention it had happened.
+ *
+ * SURVIVING A FAILURE AND SWALLOWING IT ARE TWO DECISIONS. The recovery
+ * behaviour below is unchanged and still right: a dropped round trip must age
+ * the graph rather than blank it, and must not overwrite a good reading with
+ * nothing. The log line costs that nothing.
+ *
+ * `console.error`, NOT A LOGGER. The unit is `StandardError=journal` with
+ * `SyslogIdentifier=ringmaster`, so this is already the thing an operator greps.
+ * `lib/audit` and `lib/actions` write `[tag] …` lines the same way.
+ */
+function why(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+
+/**
  * Derive per-second network rates from two cumulative samples.
  *
  * The dispatcher sends cumulative rx/tx byte counters, not rates, so the rate
@@ -194,8 +218,16 @@ async function pollDeployedRef(
     const answer = await listBranches()
     state.refUpdate = refUpdateFrom(answer)
     state.updateTarget = updateTargetFrom(answer)
-  } catch {
-    /* keep the last reading; a dropped fetch is not a branch that moved */
+  } catch (e) {
+    /*
+      Keep the last reading; a dropped fetch is not a branch that moved. But say
+      so: this is the call behind the branch picker's 502, and when the channel
+      is down it is the ONLY thing in this file that fails on a two-minute
+      cadence rather than every fifteen seconds — so an operator watching the
+      journal sees the slow one and the fast one disagree, which is the shape of
+      "the box is up and GitHub is not".
+    */
+    console.error(`[telemetry] branches read failed: ${why(e)}`)
   } finally {
     state.refBusy = false
   }
@@ -294,7 +326,15 @@ export async function refreshStatus(): Promise<HostStatus | null> {
     state.status = status
     state.statusAt = Date.now()
     return status
-  } catch {
+  } catch (e) {
+    /*
+      The caller turns this null into "not recorded" in the audit trail, which
+      is the honest record and is not a diagnosis. The line below is the
+      diagnosis, and it matters more here than anywhere else in this file: this
+      read happens exactly once per DEPLOY, at the instant the console is trying
+      to write down where that deploy landed.
+    */
+    console.error(`[telemetry] forced status read failed: ${why(e)}`)
     return null
   }
 }
@@ -313,6 +353,13 @@ async function poll(): Promise<void> {
 
     state.status = status
     state.statusAt = Date.now()
+    /*
+      RECOVERY IS LOGGED TOO, and it is the half that makes the journal
+      readable. Without it the last line about this channel is always a failure,
+      so an operator scrolling back cannot tell an outage that ended from one
+      that is still running.
+    */
+    if (state.lastError) console.log('[telemetry] poll recovered')
     state.lastError = null
 
     /**
@@ -379,7 +426,22 @@ async function poll(): Promise<void> {
     // A failed poll ages the data rather than clearing it — a graph that
     // blanks on one dropped SSH round trip is worse than one that holds its
     // last shape and says how old it is.
-    state.lastError = e instanceof Error ? e.message : String(e)
+    const message = why(e)
+
+    /*
+      ON THE TRANSITION, NOT ON EVERY TICK, and the distinction is what makes
+      this line worth reading. This poll runs every fifteen seconds forever, so
+      logging each failure would put 240 identical lines an hour into the
+      journal and bury whatever else went wrong that night. Comparing against
+      the message already held means a sustained outage costs ONE line at the
+      moment it starts, one more if the failure CHANGES — which is itself the
+      news, since `Load key … Permission denied` becoming `Connection timed
+      out` is a second fault, not the same one — and one at recovery.
+    */
+    if (message !== state.lastError) {
+      console.error(`[telemetry] poll failed: ${message}`)
+    }
+    state.lastError = message
   }
 }
 
@@ -398,6 +460,31 @@ export function hostView() {
     statusAgeMs: state.statusAt ? Date.now() - state.statusAt : null,
     samples: state.samples,
     lastError: state.lastError,
+
+    /**
+     * ═══ THE CHANNEL ITSELF, RESOLVED HERE FOR THE SAME REASON `ddb` IS ═══
+     *
+     * `lastError` HAS BEEN IN THIS PAYLOAD ALL ALONG and no surface read it.
+     * During the outage this field carried the exact cause — ssh could not load
+     * the private key — while the Host page rendered blank tiles and the words
+     * "last update failed", and the only way anybody saw the string was browser
+     * devtools. It is still here, verbatim, because the machine's own words are
+     * what an operator acts on; what is new is a reading BESIDE it, so the page
+     * has something to render at a glance and something to colour.
+     *
+     * RESOLVED ON THE SERVER RATHER THAN SHIPPED AS RAW TEXT FOR A CLIENT TO
+     * PARSE. Not for a clock this time — for a single source: the chip, the
+     * strip, the popup and the Host card must never disagree about which of the
+     * five states this is, and they cannot if there is one classification and it
+     * happens here.
+     *
+     * `statusAt > 0` IS THE `polled` ARGUMENT AND IT IS NOT `status !== null`.
+     * The status is deliberately KEPT after a failed poll, so it is evidence
+     * that the channel worked once, not that it works now. The timestamp
+     * answers the only question `dispatchNow` asks it: has this process ever
+     * had an answer at all, or has the timer simply not run yet.
+     */
+    dispatch: dispatchNow(sshConfigured(), state.lastError, state.statusAt > 0),
     /**
      * SERVED FROM MEMORY LIKE EVERYTHING ELSE HERE. Reading this costs a local
      * function call, not an SSH round trip, so a page may poll it as freely as
