@@ -601,20 +601,22 @@ if (dispatchNow(true, '', true) !== 'ok') {
  * so loudly" — so the one thing this file may never do is stop the boot.
  */
 {
-  const boot = code(read('src/instrumentation.ts'))
+  const boot = code(read('src/lib/dispatchStartup.ts'))
+  const hook = code(read('src/instrumentation.ts'))
+
   if (!/console\.error/.test(boot)) {
     fail('the startup check never writes an error — it exists to be read in the journal')
   }
-  if (/process\.exit/.test(boot)) {
+  if (/process\.exit/.test(boot) || /process\.exit/.test(hook)) {
     fail(
       'the startup check calls process.exit. Loud and running beats dead: a ' +
         'console that will not start is one you cannot use to find out why.',
     )
   }
-  if (/\bthrow\b/.test(boot)) {
+  if (/\bthrow\b/.test(boot) || /\bthrow\b/.test(hook)) {
     fail('the startup check throws. A failed probe must not be able to stop the service.')
   }
-  if (!/void startupProbe\(\)/.test(boot)) {
+  if (!/void startupProbe\(\)/.test(hook)) {
     fail(
       'register() awaits the probe — that puts an SSH round trip between systemd ' +
         'starting the unit and the first request being served',
@@ -628,6 +630,51 @@ if (dispatchNow(true, '', true) !== 'ok') {
     fail(
       'the startup check does not print the running uid beside the key owner. ' +
         'The key was already 600; what was wrong was whose 600 it was.',
+    )
+  }
+
+  /**
+   * AND THE PROBE'S OWN OUTER CATCH SAYS SOMETHING. That catch exists so a bug
+   * in the diagnostic cannot take the service down — which means it swallows a
+   * real exception, and a swallowed exception in the one piece of code that
+   * runs before anything is served is how this file becomes the next silent
+   * failure it was written to end.
+   */
+  if (!/\[dispatch\] startup check itself failed/.test(boot)) {
+    fail(
+      'the startup probe catches its own failure without logging it. It is ' +
+        'allowed to survive a bug in itself; it is not allowed to hide one.',
+    )
+  }
+
+  /**
+   * ═══ AND THE PROBE STAYS OUT OF `instrumentation.ts` ITSELF ═══
+   *
+   * THIS ASSERTION IS HERE BECAUSE THE BUILD ALREADY FAILED ON IT ONCE, and
+   * nothing in `npm run verify` runs `next build`. Next compiles
+   * `instrumentation.ts` for BOTH runtimes and this console has a
+   * `middleware.ts`, so the edge compilation is real — with the probe inline it
+   * died on `UnhandledSchemeError` for `node:fs`, `node:fs/promises` and
+   * `node:child_process`. A runtime guard does not save it: the bundler
+   * resolves the import whether or not the branch runs.
+   *
+   * What DOES save it is that `process.env.NEXT_RUNTIME` is inlined per
+   * compilation, so an import reached only through `=== 'nodejs'` folds away on
+   * edge. Both halves of that are checked: no node built-in named in the hook,
+   * and the import sited inside the positive branch.
+   */
+  if (/from '(node:|@?\/?lib\/ssh)/.test(hook) || /import\('node:/.test(hook)) {
+    fail(
+      'instrumentation.ts names a Node built-in. It is compiled for the EDGE ' +
+        'runtime too, where that is an UnhandledSchemeError and `next build` ' +
+        'fails — which `npm run verify` does not run.',
+    )
+  }
+  if (!/if \(process\.env\.NEXT_RUNTIME === 'nodejs'\) \{[\s\S]*?await import\(/.test(hook)) {
+    fail(
+      'the probe is not imported from inside `if (process.env.NEXT_RUNTIME === ' +
+        "'nodejs')`. That comparison is what folds to false and lets the edge " +
+        'bundler eliminate the import; an early return does not.',
     )
   }
 }
