@@ -795,8 +795,10 @@ export async function closeWithVerdict(input: {
 
   const result = await resolve({
     incidentId: input.incident.incidentId,
-    // The actor always has a license here — authorize() resolves the session to
-    // a grants row, and grants are keyed on license.
+    // EMPTY WHEN THE ADMIN HAS NO LICENSE, which is now a state that reaches
+    // here: the grants row is a Discord-to-license link rather than a
+    // permission, so an admin who has never joined the game server has no row
+    // and still holds every power in the console. See lib/grants.ts.
     byLicense: input.actor.license ?? '',
     byName: input.actor.name,
     resolution: input.resolution,

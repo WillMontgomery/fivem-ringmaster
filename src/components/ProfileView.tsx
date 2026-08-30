@@ -2545,7 +2545,6 @@ export function ProfileView({
      * only where it belongs — the moderation bar's own contract.
      */
     adminOnline: boolean
-    canBan: boolean
   }
   /** Report categories in English. From `lib/incidents`, which is server-only. */
   categoryLabel?: Record<string, string>
@@ -2621,12 +2620,14 @@ export function ProfileView({
         // counts Ban-or-lift, Kick and Spectate by the rules that actually draw
         // them; see lib/actionBar.ts.
         //
-        // NONE OF THE FOUR INPUTS WAITS ON DISCORD, which is the property that
+        // NONE OF THE THREE INPUTS WAITS ON DISCORD, which is the property that
         // makes counting here legitimate at all: `banned` is the server's
-        // `bans.isActive`, both presence booleans come from the snapshot, and
-        // `canBan` is a DynamoDB read. So the skeleton draws the number that
-        // is about to appear rather than always three, and no bar jumps when
-        // Discord answers.
+        // `bans.isActive` and both presence booleans come from the snapshot. So
+        // the skeleton draws the number that is about to appear rather than
+        // always three, and no bar jumps when Discord answers.
+        //
+        // IT WAS FOUR INPUTS. The fourth was `canBan`, a DynamoDB read; scopes
+        // are gone and nothing here reads the database at all now.
         moderationButtons={
           moderation === undefined
             ? 0
@@ -2634,7 +2635,6 @@ export function ProfileView({
                 banned,
                 online,
                 adminOnline: moderation.adminOnline,
-                canBan: moderation.canBan,
               }).buttons
         }
         actionsTaken={p.actionsTaken.length > 0}
@@ -2814,7 +2814,6 @@ export function ProfileView({
                 // reader rather than about the player — see the `moderation`
                 // prop.
                 adminOnline={moderation.adminOnline}
-                canBan={moderation.canBan}
               />
             )}
           </div>

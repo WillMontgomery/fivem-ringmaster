@@ -186,7 +186,7 @@ function Preview() {
                 The same three outcomes, on the moderation log.
               </p>
             </div>
-            <ModerationLog kicks={KICKS} bans={[]} canBan={false} />
+            <ModerationLog kicks={KICKS} bans={[]} />
           </div>
 
           <p className="border-t border-border pt-4 text-xs text-muted-foreground/60">

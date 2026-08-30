@@ -14,9 +14,11 @@ import { secureCookies, sessionCookieName, sessionSameSite } from './lib/handoff
  * beats writing them.
  *
  * SESSIONS ARE IN THE DATABASE, NOT JWTs, and this is not a stylistic choice.
- * A self-contained token stays valid until it expires, which would mean the
- * `grant` scope's revoke button does not actually revoke anything for up to the
- * token lifetime. An admin being removed has to take effect *now*.
+ * A self-contained token stays valid until it expires, which would mean taking
+ * somebody's Discord admin role away does not actually remove them for up to the
+ * token lifetime. An admin being removed has to take effect *now*, and with the
+ * role as the ONLY authorisation this matters more than it did when a DynamoDB
+ * grant could be revoked alongside it.
  */
 /**
  * The config is a FUNCTION, not an object literal, and that is a build
@@ -85,7 +87,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
 
   callbacks: {
     /**
-     * The admin role as the sign-in gate, before any grant lookup.
+     * The admin role as the sign-in gate — and, since the scopes went, as the
+     * whole of authorisation.
      *
      * Guild membership alone stopped being a meaningful filter the moment the
      * guild doubled as the player community — every player would pass it. So
@@ -95,9 +98,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
      * the guild, so membership comes free with the role lookup that replaced
      * the old guild-list scan.
      *
-     * This is still not the permission check — that is `lib/grants.ts`, per
-     * action, keyed on license. Returning `false` here sends Auth.js to
-     * /login?error=AccessDenied, which the login page surfaces as a toast.
+     * THIS IS THE PERMISSION CHECK NOW. It used to be one of two — `lib/grants.ts`
+     * held per-action scopes keyed on license — and that half is gone, so passing
+     * this gate makes somebody a full admin. The same role is re-asked before
+     * every write (`lib/discordRole.ts`), which is what keeps a revocation from
+     * waiting for the session to expire.
+     *
+     * IT FAILS CLOSED, and that is load-bearing for the fail-OPEN decision in
+     * lib/discordRole.ts: while Discord is unreachable nobody new gets in, so the
+     * only sessions in existence belong to people Discord vouched for.
+     *
+     * Returning `false` here sends Auth.js to /login?error=AccessDenied, which the
+     * login page surfaces as a toast.
      */
     async signIn({ account }) {
       if (!account?.access_token) return false

@@ -112,7 +112,7 @@ export function SettingsForm({ initial }: { initial: Prefs }) {
         {/*
           READ-ONLY, DELIBERATELY. Not an oversight and not a missing control:
           the window is a server-wide constant because the people reading this
-          page hold the scopes that ban players and restart the game server, and
+          page can ban players and restart the game server, and
           a timeout its own subject can extend to thirty days protects nobody.
           Stated here because this is where somebody looks for it. See
           lib/idle.ts.

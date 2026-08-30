@@ -777,7 +777,6 @@ async function Preview({
         <MaintenancePanel
           initial={view.window}
           initialPlayers={view.players}
-          canRun
           initialDeployedRef={view.deployedRef}
           initialRefUpdate={view.refUpdate}
           initialBehindMain={view.behindMain}

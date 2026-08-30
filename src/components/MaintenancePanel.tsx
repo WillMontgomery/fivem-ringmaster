@@ -221,7 +221,6 @@ function CommitPair({ target }: { target: UpdateTarget }) {
 export function MaintenancePanel({
   initial,
   initialPlayers,
-  canRun,
   initialDeployedRef,
   initialRefUpdate,
   initialBehindMain,
@@ -233,7 +232,6 @@ export function MaintenancePanel({
 }: {
   initial: MaintenanceWindow | null
   initialPlayers: number
-  canRun: boolean
   /**
    * What the game host is running right now, or null if it has not said.
    *
@@ -711,8 +709,7 @@ export function MaintenancePanel({
    * bounded at both ends — the box gives up and answers `stale`, and this end
    * gives up on the six-second SSH wall — and it is now spent once per
    * deliberate act by a human, which is exactly what Refresh has always cost. A
-   * timer would spend it forever on a page left open, which is what the
-   * `process` scope on the route exists to prevent.
+   * timer would spend it forever on a page left open.
    */
   const loadBranches = async () => {
     setLoadingBranches(true)
@@ -989,72 +986,70 @@ export function MaintenancePanel({
           </p>
         </div>
 
-        {canRun && (
-          /*
-            THE REASON IS WRITTEN DOWN, NOT HOVERED, AND THAT IS FORCED.
-            A native `title` fires on a `disabled` button; a `TooltipTrigger`
-            does not, because a disabled control swallows the pointer events the
-            trigger listens for. So a like-for-like conversion here deletes the
-            explanation outright, in the one state where the button explains
-            nothing on its own -- which the comment above calls the single moment
-            where "which code is this" matters most.
+        {/*
+          THE REASON IS WRITTEN DOWN, NOT HOVERED, AND THAT IS FORCED.
+          A native `title` fires on a `disabled` button; a `TooltipTrigger`
+          does not, because a disabled control swallows the pointer events the
+          trigger listens for. So a like-for-like conversion here deletes the
+          explanation outright, in the one state where the button explains
+          nothing on its own -- which the comment above calls the single moment
+          where "which code is this" matters most.
 
-            The in-repo workaround is to wrap the disabled button in a bare
-            `<span>` (`PlayerActions.tsx:87`), but that only restores the mouse
-            case: the span has no `tabIndex` and no role, so the keyboard and the
-            screen reader still get nothing. There are two copies of that shape
-            already; a third is not the fix.
+          The in-repo workaround is to wrap the disabled button in a bare
+          `<span>` (`PlayerActions.tsx:87`), but that only restores the mouse
+          case: the span has no `tabIndex` and no role, so the keyboard and the
+          screen reader still get nothing. There are two copies of that shape
+          already; a third is not the fix.
 
-            NOT `aria-describedby` EITHER: a `disabled` button is not focusable,
-            so nothing ever reaches the description. The visible sentence is what
-            does the work, and it is rendered only while `live`, so the panel
-            gains no permanent noise.
-          */
-          <div className="flex flex-col items-end gap-1">
-            {/*
-              WIREFRAME, NOT PURPLE, AND IT MATCHES THE BANNER'S COPY OF ITSELF
-              (owner: "change the remaining 'Revert to main' button from purple
-              to wireframe to match the one in the banner").
+          NOT `aria-describedby` EITHER: a `disabled` button is not focusable,
+          so nothing ever reaches the description. The visible sentence is what
+          does the work, and it is rendered only while `live`, so the panel
+          gains no permanent noise.
+        */}
+        <div className="flex flex-col items-end gap-1">
+          {/*
+            WIREFRAME, NOT PURPLE, AND IT MATCHES THE BANNER'S COPY OF ITSELF
+            (owner: "change the remaining 'Revert to main' button from purple
+            to wireframe to match the one in the banner").
 
-              THE BANNER'S BUTTON WAS CHANGED FIRST AND THIS ONE WAS MISSED, so
-              the console had two controls, one page apart, that do the same
-              thing and looked like different kinds of thing. `OffMainBanner`
-              carries the full reasoning; the short version is that `default` is
-              `--primary`, which means "the main action on this page", and this
-              is not that — it sits inside a warning card about an unusual state,
-              where a saturated brand fill competes with the warning for
-              attention.
+            THE BANNER'S BUTTON WAS CHANGED FIRST AND THIS ONE WAS MISSED, so
+            the console had two controls, one page apart, that do the same
+            thing and looked like different kinds of thing. `OffMainBanner`
+            carries the full reasoning; the short version is that `default` is
+            `--primary`, which means "the main action on this page", and this
+            is not that — it sits inside a warning card about an unusual state,
+            where a saturated brand fill competes with the warning for
+            attention.
 
-              THE `warn` EDGE IS COPIED WITH IT, AND IT IS LOAD-BEARING. This
-              card is a `warn/5` wash, the same family as the banner's `warn/10`,
-              and `outline`'s own `--border` measures around 1.3:1 against it —
-              under the 3:1 WCAG 1.4.11 asks of the boundary that identifies a
-              control. `--warn` takes it to 3.7:1 light and 10:1 dark.
-              `dark:border-warn` is not redundant: `outline` ships
-              `dark:border-input`, and twMerge treats a `dark:`-prefixed utility
-              as a different key, so a bare `border-warn` would silently lose in
-              dark mode.
+            THE `warn` EDGE IS COPIED WITH IT, AND IT IS LOAD-BEARING. This
+            card is a `warn/5` wash, the same family as the banner's `warn/10`,
+            and `outline`'s own `--border` measures around 1.3:1 against it —
+            under the 3:1 WCAG 1.4.11 asks of the boundary that identifies a
+            control. `--warn` takes it to 3.7:1 light and 10:1 dark.
+            `dark:border-warn` is not redundant: `outline` ships
+            `dark:border-input`, and twMerge treats a `dark:`-prefixed utility
+            as a different key, so a bare `border-warn` would silently lose in
+            dark mode.
 
-              A REAL `Button` HERE, unlike the banner's `buttonVariants` on a
-              `<Link>`: this one runs `revert` and has a disabled state, so it is
-              a button in the markup as well as in the paint.
-            */}
-            <Button
-              variant="outline"
-              className="border-warn dark:border-warn"
-              disabled={busy || Boolean(live)}
-              onClick={revert}
-            >
-              {busy ? <Loader2 className="animate-spin" /> : <Undo2 />}
-              Revert to main
-            </Button>
-            {live && (
-              <p className="text-xs text-muted-foreground">
-                Cancel the window that is already scheduled first.
-              </p>
-            )}
-          </div>
-        )}
+            A REAL `Button` HERE, unlike the banner's `buttonVariants` on a
+            `<Link>`: this one runs `revert` and has a disabled state, so it is
+            a button in the markup as well as in the paint.
+          */}
+          <Button
+            variant="outline"
+            className="border-warn dark:border-warn"
+            disabled={busy || Boolean(live)}
+            onClick={revert}
+          >
+            {busy ? <Loader2 className="animate-spin" /> : <Undo2 />}
+            Revert to main
+          </Button>
+          {live && (
+            <p className="text-xs text-muted-foreground">
+              Cancel the window that is already scheduled first.
+            </p>
+          )}
+        </div>
       </div>
     </Card>
   ) : null
@@ -1207,7 +1202,7 @@ export function MaintenancePanel({
               )}
             </div>
 
-            {canRun && w.state !== 'deploying' && (
+            {w.state !== 'deploying' && (
               <div className="flex gap-2">
                 <Button variant="ghost" onClick={() => setConfirmCancel(true)}>
                   <X />
@@ -1785,156 +1780,146 @@ export function MaintenancePanel({
               records that trap and the branch picker already answers it by
               rendering the sentence next to the disabled row.
             */}
-            {canRun && (
-              /*
-                THE COLUMN IS THE REVERT BUTTON'S SHAPE, ONE CARD UP — a button
-                with its reason under it — and `items-start` rather than that
-                one's `items-end` for one measured reason. This card's left half
-                is three paragraphs wide, so the row ALWAYS wraps and the button
-                sits on a line of its own; the column's width is then whatever
-                its widest child is, and a right-aligned column that grows to
-                `max-w-xs` when the sentence appears would slide the button 186px
-                sideways between two states a reviewer is asked to flip between
-                (`/preview/maintenance?state=parked-behind` and `parked-blocked`).
-                Starting both children at the same edge holds the button exactly
-                where it renders today and runs the sentence under it from that
-                edge — which is also how the branch picker aligns the same
-                string on a refused row.
-              */
-              <div className="flex flex-col items-start gap-1.5">
-                <Button
-                  disabled={busy || refBlocked !== null}
-                  onClick={schedule}
-                >
-                  {busy ? (
-                    <Loader2 className="animate-spin" />
-                  ) : (
-                    <CalendarClock />
-                  )}
-                  Schedule update
-                </Button>
-                {/*
-                  VERBATIM, AND IN THE PICKER'S OWN WORDS. `Cannot be deployed —`
-                  is the existing lead-in on a refused branch row; the rest is
-                  the game box's sentence, unedited. Rendered on the sentence
-                  being present rather than on the refusal, exactly as the
-                  picker does it — the button is greyed by the verdict, the line
-                  appears when there is something to read.
-                */}
-                {refBlocked && (
-                  <p className="max-w-xs text-xs text-warn">
-                    Cannot be deployed — {refBlocked}
-                  </p>
+            {/*
+              THE COLUMN IS THE REVERT BUTTON'S SHAPE, ONE CARD UP — a button
+              with its reason under it — and `items-start` rather than that
+              one's `items-end` for one measured reason. This card's left half
+              is three paragraphs wide, so the row ALWAYS wraps and the button
+              sits on a line of its own; the column's width is then whatever
+              its widest child is, and a right-aligned column that grows to
+              `max-w-xs` when the sentence appears would slide the button 186px
+              sideways between two states a reviewer is asked to flip between
+              (`/preview/maintenance?state=parked-behind` and `parked-blocked`).
+              Starting both children at the same edge holds the button exactly
+              where it renders today and runs the sentence under it from that
+              edge — which is also how the branch picker aligns the same
+              string on a refused row.
+            */}
+            <div className="flex flex-col items-start gap-1.5">
+              <Button
+                disabled={busy || refBlocked !== null}
+                onClick={schedule}
+              >
+                {busy ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <CalendarClock />
+                )}
+                Schedule update
+              </Button>
+              {/*
+                VERBATIM, AND IN THE PICKER'S OWN WORDS. `Cannot be deployed —`
+                is the existing lead-in on a refused branch row; the rest is
+                the game box's sentence, unedited. Rendered on the sentence
+                being present rather than on the refusal, exactly as the
+                picker does it — the button is greyed by the verdict, the line
+                appears when there is something to read.
+              */}
+              {refBlocked && (
+                <p className="max-w-xs text-xs text-warn">
+                  Cannot be deployed — {refBlocked}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <>
+            {/*
+              The default path is one button. Everything below is folded away
+              because choosing a time is the rare case — and a form with four
+              controls makes the common action look as considered as the
+              uncommon one.
+            */}
+            <button
+              type="button"
+              onClick={() => setAdvanced((v) => !v)}
+              className="mt-3 flex w-fit items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ChevronDown
+                className={cn(
+                  'size-3.5 transition-transform',
+                  advanced && 'rotate-180',
+                )}
+              />
+              {advanced ? 'Hide options' : 'Options'}
+            </button>
+
+            {advanced && (
+              <div className="mt-3 space-y-4 border-t border-border pt-4">
+                <div className="space-y-1.5">
+                  <Label htmlFor="m-drain">Stop accepting players</Label>
+                  <Select
+                    value={drainIn}
+                    onValueChange={(v) => setDrainIn(v ?? '0')}
+                  >
+                    <SelectTrigger id="m-drain" className="w-full max-w-xs">
+                      <SelectValue>
+                        {(value) =>
+                          DRAIN_CHOICES.find((d) => d.value === value)?.label ??
+                          'Choose when'
+                        }
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DRAIN_CHOICES.map((d) => (
+                        <SelectItem key={d.value} value={d.value}>
+                          {d.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <Checkbox
+                    id="m-timed"
+                    checked={timed}
+                    onCheckedChange={(v) => setTimed(v === true)}
+                  />
+                  <Label htmlFor="m-timed" className="font-normal">
+                    Deploy at a specific time instead of waiting for the server
+                    to empty
+                  </Label>
+                </div>
+
+                {timed && (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="m-at">Deploy at</Label>
+                    <Input
+                      id="m-at"
+                      type="datetime-local"
+                      value={deployAt}
+                      max={deadline ? localInput(deadline) : undefined}
+                      onChange={(e) => setDeployAt(e.target.value)}
+                      className="max-w-xs"
+                    />
+                    {/* Only when the two genuinely differ — a permanent
+                        "times are in your browser's zone" note beside a field
+                        that already is would be noise on every load. */}
+                    {zoneMismatch && (
+                      <p className="text-xs text-warn">
+                        The time you type here is in {browserZone!.replace(/_/g, ' ')},
+                        your browser&rsquo;s zone. Everything else on this page
+                        is shown in {timeZone.replace(/_/g, ' ')}.
+                      </p>
+                    )}
+                    <p className="text-xs text-warn">
+                      Anyone still connected at that moment is disconnected
+                      mid-match.
+                    </p>
+                    {deadline && (
+                      <p className="text-xs text-muted-foreground/70">
+                        Cannot be later than {clock(deadline)} — the automatic
+                        window would already have run by then, so a later time
+                        would never happen.
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             )}
-          </div>
+          </>
 
-          {canRun && (
-            <>
-              {/*
-                The default path is one button. Everything below is folded away
-                because choosing a time is the rare case — and a form with four
-                controls makes the common action look as considered as the
-                uncommon one.
-              */}
-              <button
-                type="button"
-                onClick={() => setAdvanced((v) => !v)}
-                className="mt-3 flex w-fit items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <ChevronDown
-                  className={cn(
-                    'size-3.5 transition-transform',
-                    advanced && 'rotate-180',
-                  )}
-                />
-                {advanced ? 'Hide options' : 'Options'}
-              </button>
-
-              {advanced && (
-                <div className="mt-3 space-y-4 border-t border-border pt-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="m-drain">Stop accepting players</Label>
-                    <Select
-                      value={drainIn}
-                      onValueChange={(v) => setDrainIn(v ?? '0')}
-                    >
-                      <SelectTrigger id="m-drain" className="w-full max-w-xs">
-                        <SelectValue>
-                          {(value) =>
-                            DRAIN_CHOICES.find((d) => d.value === value)?.label ??
-                            'Choose when'
-                          }
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {DRAIN_CHOICES.map((d) => (
-                          <SelectItem key={d.value} value={d.value}>
-                            {d.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="flex items-center gap-2.5">
-                    <Checkbox
-                      id="m-timed"
-                      checked={timed}
-                      onCheckedChange={(v) => setTimed(v === true)}
-                    />
-                    <Label htmlFor="m-timed" className="font-normal">
-                      Deploy at a specific time instead of waiting for the server
-                      to empty
-                    </Label>
-                  </div>
-
-                  {timed && (
-                    <div className="space-y-1.5">
-                      <Label htmlFor="m-at">Deploy at</Label>
-                      <Input
-                        id="m-at"
-                        type="datetime-local"
-                        value={deployAt}
-                        max={deadline ? localInput(deadline) : undefined}
-                        onChange={(e) => setDeployAt(e.target.value)}
-                        className="max-w-xs"
-                      />
-                      {/* Only when the two genuinely differ — a permanent
-                          "times are in your browser's zone" note beside a field
-                          that already is would be noise on every load. */}
-                      {zoneMismatch && (
-                        <p className="text-xs text-warn">
-                          The time you type here is in {browserZone!.replace(/_/g, ' ')},
-                          your browser&rsquo;s zone. Everything else on this page
-                          is shown in {timeZone.replace(/_/g, ' ')}.
-                        </p>
-                      )}
-                      <p className="text-xs text-warn">
-                        Anyone still connected at that moment is disconnected
-                        mid-match.
-                      </p>
-                      {deadline && (
-                        <p className="text-xs text-muted-foreground/70">
-                          Cannot be later than {clock(deadline)} — the automatic
-                          window would already have run by then, so a later time
-                          would never happen.
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-
-          {!canRun && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Scheduling needs the <code className="font-mono">process</code>{' '}
-              scope — it restarts the game server.
-            </p>
-          )}
         </Card>
       ) : (
         /*
@@ -2020,51 +2005,49 @@ export function MaintenancePanel({
         )
       )}
 
-      {canRun && (
-        <BranchPicker
-          open={branchesOpen}
-          onOpenChange={(v) => {
-            setBranchesOpen(v)
-            /**
-             * EVERY OPEN, NOT ONLY THE FIRST. The `branches === null` that used
-             * to stand here made the list a once-per-page-session reading; see
-             * `loadBranches` for what that did to a refusal the operator had
-             * just resolved. The only guard left is against asking twice at
-             * once.
-             */
-            if (v && !loadingBranches) void loadBranches()
-          }}
-          branches={branches}
-          stale={branchesStale}
-          error={branchError}
-          loading={loadingBranches}
-          deployedRef={deployedRef}
-          deployedSha={branchesFromSha}
-          now={now}
-          picked={picked}
-          onPick={setPicked}
-          onRefresh={loadBranches}
-          busy={busy}
-          onSchedule={() => {
-            if (!picked) return
-            /**
-             * CONFIRM ON THE TARGET, NOT ON THE SOURCE.
-             *
-             * The obvious rule — "confirm when leaving main" — lets
-             * feature/a → feature/b through without a word, and that is a
-             * switch between two unreviewed trees on a box that is already off
-             * reviewed code. It is at least as consequential as the first
-             * switch was, and it is the one an admin is most likely to make
-             * casually. Gate on where the server ENDS UP.
-             *
-             * Switching to main never asks, for the same reason: recovery has
-             * to be cheaper than the mistake.
-             */
-            if (picked.name === 'main') void scheduleWith(picked)
-            else setConfirmSwitch(true)
-          }}
-        />
-      )}
+      <BranchPicker
+        open={branchesOpen}
+        onOpenChange={(v) => {
+          setBranchesOpen(v)
+          /**
+           * EVERY OPEN, NOT ONLY THE FIRST. The `branches === null` that used
+           * to stand here made the list a once-per-page-session reading; see
+           * `loadBranches` for what that did to a refusal the operator had
+           * just resolved. The only guard left is against asking twice at
+           * once.
+           */
+          if (v && !loadingBranches) void loadBranches()
+        }}
+        branches={branches}
+        stale={branchesStale}
+        error={branchError}
+        loading={loadingBranches}
+        deployedRef={deployedRef}
+        deployedSha={branchesFromSha}
+        now={now}
+        picked={picked}
+        onPick={setPicked}
+        onRefresh={loadBranches}
+        busy={busy}
+        onSchedule={() => {
+          if (!picked) return
+          /**
+           * CONFIRM ON THE TARGET, NOT ON THE SOURCE.
+           *
+           * The obvious rule — "confirm when leaving main" — lets
+           * feature/a → feature/b through without a word, and that is a
+           * switch between two unreviewed trees on a box that is already off
+           * reviewed code. It is at least as consequential as the first
+           * switch was, and it is the one an admin is most likely to make
+           * casually. Gate on where the server ENDS UP.
+           *
+           * Switching to main never asks, for the same reason: recovery has
+           * to be cheaper than the mistake.
+           */
+          if (picked.name === 'main') void scheduleWith(picked)
+          else setConfirmSwitch(true)
+        }}
+      />
 
       <ConfirmDialog
         open={confirmSwitch}

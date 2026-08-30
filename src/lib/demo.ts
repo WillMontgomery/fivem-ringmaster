@@ -6,7 +6,7 @@ import type { NavBadges } from '@/components/AppShell'
  * ONE PLACE, so there is exactly one thing to delete when each page becomes
  * real — rather than eight copies of a fake admin scattered through the app,
  * one of which survives into production and shows a signed-out visitor a user
- * named Will with four scopes.
+ * named Will who appears to be signed in.
  */
 
 export const DEMO_USER = {

@@ -4,7 +4,6 @@ import { Suspense } from 'react'
 import { AppShell } from '@/components/AppShell'
 import { MaintenancePanel } from '@/components/MaintenancePanel'
 import { PageLoading } from '@/components/PageLoading'
-import { can } from '@/lib/grants'
 import * as maint from '@/lib/maintenance'
 import { ensureDriver } from '@/lib/maintenanceDriver'
 import { currentAdmin } from '@/lib/session'
@@ -29,11 +28,13 @@ export default async function MaintenancePage() {
   const now = Date.now()
 
   /**
-   * THE WINDOW IS READ HERE AND THE SCOPE CHECK IS NOT, because the window
-   * decides the sidebar's maintenance badge — shell state — and the scope check
-   * only decides whether the panel's buttons are live. So the badge is right
-   * from the first paint and the grant lookup happens under the boundary. See
-   * `PageLoading`.
+   * THE WINDOW IS READ ABOVE THE SUSPENSE BOUNDARY because it decides the
+   * sidebar's maintenance badge — shell state — so the badge is right from the
+   * first paint. See `PageLoading`.
+   *
+   * IT USED TO SHARE THIS SENTENCE WITH A SCOPE CHECK that sat below the
+   * boundary and decided whether the panel's buttons were live. There are no
+   * scopes: whoever can open this page can deploy.
    */
   const w = await maint.current()
   const view = liveView(now)
@@ -92,7 +93,6 @@ export default async function MaintenancePage() {
       <Suspense fallback={<PageLoading />}>
         <Body
           w={w}
-          license={admin.license}
           players={view.counts.connected}
           deployedRef={deployedRef}
           refUpdate={refUpdate}
@@ -107,10 +107,9 @@ export default async function MaintenancePage() {
   )
 }
 
-/** The grant lookup, below the boundary. See `PageLoading` for the split. */
+/** The panel, below the boundary. See `PageLoading` for the split. */
 async function Body({
   w,
-  license,
   players,
   deployedRef,
   refUpdate,
@@ -121,7 +120,6 @@ async function Body({
   lastPushAt,
 }: {
   w: Awaited<ReturnType<typeof maint.current>>
-  license: string | null
   players: number
   deployedRef: string | null
   refUpdate: ReturnType<typeof hostView>['refUpdate']
@@ -131,8 +129,6 @@ async function Body({
   bootEpoch: string | null
   lastPushAt: number | null
 }) {
-  const canRun = await can(license, 'process')
-
   return (
     <div className="mx-auto max-w-4xl">
       <div className="mb-5">
@@ -146,7 +142,6 @@ async function Body({
       <MaintenancePanel
         initial={w}
         initialPlayers={players}
-        canRun={canRun}
         initialDeployedRef={deployedRef}
         initialRefUpdate={refUpdate}
         initialBehindMain={behindMain}

@@ -9,7 +9,6 @@ import { discordChromeFor } from '@/lib/discord'
 import * as bans from '@/lib/bans'
 import { gameMatchesFor, gameProfileFor } from '@/lib/gameProfile'
 import * as incidents from '@/lib/incidents'
-import { can } from '@/lib/grants'
 import * as players from '@/lib/players'
 import type { Profile } from '@/lib/profile'
 import {
@@ -127,16 +126,18 @@ export default async function PlayerProfilePage({
     admin.license !== null &&
     view.players.some((p) => p.license === admin.license)
 
-  // `can(admin.license, 'spectate')` USED TO BE IN THIS BATCH and is gone
-  // (dba5a6a and its UI half). Watching somebody really is less destructive
-  // than removing them, so a scope of its own was the right instinct — but
-  // nothing in this console can grant a scope, so the read only ever returned
-  // false and the button was greyed for everybody. `/api/spectate` authorises
-  // the `view` scope that already let this page be opened.
-  const [ban, canBan, record, game, matches, log, against, filed, origin] =
+  // TWO SCOPE READS USED TO SIT IN THIS BATCH AND BOTH ARE GONE.
+  //
+  // `can(admin.license, 'spectate')` went first (dba5a6a and its UI half),
+  // because nothing in this console could grant a `spectate`, so the read only
+  // ever returned false and the button was greyed for everybody. That same
+  // argument then finished off the rest of the scopes, and `can(admin.license,
+  // 'ban')` — which decided whether Ban and Kick were live — went with them.
+  // Whoever can open this page can act from it; the routes still re-check
+  // Discord before anything happens.
+  const [ban, record, game, matches, log, against, filed, origin] =
     await Promise.all([
       bans.banFor(license),
-      can(admin.license, 'ban'),
       players.playerFor(license),
       gameProfileFor(license),
       // A SECOND READ OF THE SAME TABLE, and it has to be: the aggregate is a
@@ -499,7 +500,6 @@ export default async function PlayerProfilePage({
             moderation={{
               online: live !== null,
               adminOnline: adminLive,
-              canBan,
             }}
           />
         </div>

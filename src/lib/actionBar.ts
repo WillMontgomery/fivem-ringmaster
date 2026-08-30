@@ -16,66 +16,59 @@
  * rule moved here, both readers import it, and the skeleton now counts what the
  * bar is about to draw rather than what somebody remembered it draws.
  *
- * ═══ SHOWN AND ENABLED ARE DIFFERENT QUESTIONS, AND THE SPLIT IS THE DESIGN ═══
+ * ═══ THERE IS ONLY ONE QUESTION LEFT: IS THERE ANYBODY TO DO THIS TO? ═══
  *
- *   shown    IS THERE ANYBODY TO DO THIS TO? Decided by the state of the
- *            PLAYER (and, for Spectate, of the admin's own body in the world).
- *            When the answer is no the control is ABSENT — hidden, not greyed,
- *            the owner's standing rule. An action with no target is not an
- *            action being withheld; it is one that does not exist right now,
- *            and a dead button with a caption under it is the console
- *            explaining an absence nobody asked about. Nothing marks the gap.
+ * Decided by the state of the PLAYER (and, for Spectate, of the admin's own
+ * body in the world). When the answer is no the control is ABSENT — hidden, not
+ * greyed, the owner's standing rule. An action with no target is not an action
+ * being withheld; it is one that does not exist right now, and a dead button
+ * with a caption under it is the console explaining an absence nobody asked
+ * about. Nothing marks the gap.
  *
- *   enabled  MAY THIS ACCOUNT DO IT? Decided by the SCOPE, which is a fact
- *            about the admin rather than about the player. That stays
- *            DISABLED-with-a-reason on hover, because a permission you do not
- *            have is worth knowing about in a way that an empty seat is not.
+ * ═══ THE SECOND QUESTION — MAY THIS ACCOUNT DO IT? — HAS BEEN DELETED ═══
  *
- * The distinction in one line: the state of the PLAYER decides whether the
- * control is there at all, and the scope of the ADMIN decides whether it works.
+ * It was answered by a scope, and it always had the same answer.
  *
- * ═══ ONLY ONE CONTROL HERE STILL ASKS THE SECOND QUESTION ═══
+ * Spectate lost its scope first (dba5a6a). The scope was a good idea that could
+ * not work: NOTHING IN THIS CONSOLE COULD GRANT ONE. There was no scopes UI, the
+ * only route was editing DynamoDB by hand, and the owner does not do that. So
+ * the check was a wall with no door — every admin on the server got a
+ * permanently greyed button and a sentence telling them to acquire something
+ * unacquirable.
  *
- * Spectate used to. It asked for a `spectate` scope, and the scope was a good
- * idea that could not work: NOTHING IN THIS CONSOLE CAN GRANT A SCOPE. There is
- * no scopes UI, the only route is editing DynamoDB by hand, and the owner does
- * not do that. So the check was a wall with no door — every admin on the server
- * got a permanently greyed button and a sentence telling them to acquire
- * something unacquirable. `/api/spectate` moved to the `view` scope that already
- * opens the console (dba5a6a), and this file is the other half of that move.
+ * `canBan` then went the same way, and with it the whole scope system
+ * (lib/grants.ts). Anyone who can sign in is a full admin, so every control this
+ * file describes is enabled whenever it is drawn, and `enabled` is no longer a
+ * field: a boolean that is always true is a field nobody reads and a
+ * `disabled={}` branch nothing can reach.
  *
  * A GRANULAR CHECK WITH NO GRANT PATH IS NOT CAUTION, IT IS A BROKEN FEATURE.
- * If a scopes UI is ever built, the place to put spectate back is here — but it
- * goes back WITH the door, not before it.
+ * If levels are ever built, the place to put them back is here — but they go
+ * back WITH the door, not before it.
  *
- * ═══ NOTHING HERE WAITS ON DISCORD ═══
+ * ═══ NOTHING HERE WAITS ON DISCORD, AND NOW NOTHING HERE READS DYNAMODB ═══
  *
  * Every input is known on the server as the page is built — `banned` is
- * `bans.isActive`, the two presence booleans come out of the one live snapshot,
- * and `canBan` is a DynamoDB read. That is what lets the skeleton draw the
- * final count instead of drawing three and resolving to one when Discord
- * answers, which is the layout jump the skeleton exists to prevent.
+ * `bans.isActive` and the two presence booleans come out of the one live
+ * snapshot. That is what lets the skeleton draw the final count instead of
+ * drawing three and resolving to one when Discord answers, which is the layout
+ * jump the skeleton exists to prevent.
  *
  * NO RUNTIME IMPORTS, deliberately — the same property `serverPhase`, `labels`
  * and `incidentChip` keep. `PlayerActions` is a client component, so anything
  * this reached for would be reached for in the browser bundle too.
  */
 
-/** One control: whether it is drawn at all, and whether it does anything. */
-export interface ActionState {
-  shown: boolean
-  enabled: boolean
-}
-
 /**
- * A control with no scope behind it: the only question is whether it is drawn.
+ * A control: the only question is whether it is drawn.
  *
- * DELIBERATELY NOT `ActionState` WITH `enabled: true` HARD-CODED. A field that
- * is always the same value is a field nobody reads, and this repository's
- * standing failure is machinery that ships before — or after — anything calls
- * it. A constant `enabled` invites a call site to keep a `disabled={}` branch
- * that can never fire, which is how the greyed Spectate button survived the
- * route change that was supposed to remove it.
+ * `ActionState { shown, enabled }` USED TO SIT ABOVE THIS, for the controls that
+ * also asked a scope. Nothing asks one now, so it is gone rather than kept with
+ * `enabled: true` hard-coded. A field that is always the same value is a field
+ * nobody reads, and this repository's standing failure is machinery that ships
+ * before — or after — anything calls it. A constant `enabled` invites a call
+ * site to keep a `disabled={}` branch that can never fire, which is how the
+ * greyed Spectate button survived the route change meant to remove it.
  */
 export interface ShownOnly {
   shown: boolean
@@ -109,13 +102,10 @@ export interface ActionBarInputs {
    * point anywhere, so the request could only ever be refused.
    */
   adminOnline: boolean
-
-  /** The `ban` scope. Kicking needs it too; see `kick` below. */
-  canBan: boolean
 }
 
 export interface ActionBar {
-  kick: ActionState
+  kick: ShownOnly
   spectate: ShownOnly
   /**
    * How many buttons the bar will contain, Ban-or-Lift included.
@@ -152,15 +142,14 @@ export function actionBar(i: ActionBarInputs): ActionBar {
    * `/api/bans` kicks them in the same request — and it resolves towards the
    * button being irrelevant either way.
    *
-   * KICKING IS ENABLED BY `canBan`, NOT BY A `kick` SCOPE, and that mismatch is
-   * older than this file: the API route authorises on `kick`, and the button
-   * has always asked for `ban`. The tooltip says so out loud. Moving the rule
-   * did not change it — inventing a `canKick` here would have made the button
-   * disagree with the sentence beside it.
+   * NO SCOPE HALF ANY MORE. This used to carry `enabled: i.canBan` — the API
+   * route authorised on `kick` while the button asked for `ban`, a mismatch
+   * older than this file that the tooltip admitted to out loud. Both scopes are
+   * gone, so the button is live whenever it is drawn and the mismatch cannot be
+   * inherited by whatever comes next.
    */
-  const kick: ActionState = {
+  const kick: ShownOnly = {
     shown: !i.banned && i.online,
-    enabled: i.canBan,
   }
 
   /**
@@ -186,10 +175,9 @@ export function actionBar(i: ActionBarInputs): ActionBar {
    * connected in the seconds before the ban's own kick lands is not redundant
    * at all; it is the last chance to see what they were doing.
    *
-   * NO SCOPE HALF AT ALL — see the note at the top of this file. Whoever can
-   * open this page can press this button; `/api/spectate` authorises the same
-   * `view` scope that let them read the profile in the first place, and it
-   * still writes its audit row before the command leaves.
+   * NO SCOPE HALF EITHER — see the note at the top of this file. Whoever can
+   * open this page can press this button, and `/api/spectate` still writes its
+   * audit row before the command leaves.
    */
   const spectate: ShownOnly = {
     shown: i.online && i.adminOnline,

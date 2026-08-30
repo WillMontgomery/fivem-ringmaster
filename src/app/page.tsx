@@ -17,10 +17,11 @@ import { liveView } from '@/lib/state'
  * admin take effect immediately rather than whenever a token would have
  * expired.
  *
- * Scope checks are per action and land with the first write path in Slice 2.
- * Everything on this page is read-only, so holding a valid session is the
- * whole requirement for now — but the shape is deliberately "check here",
- * not "the middleware handled it".
+ * A VALID SESSION IS THE WHOLE REQUIREMENT, here and on every read in the
+ * console. There are no permission levels: whoever holds the Discord admin role
+ * is a full admin (lib/grants.ts), and writes re-ask Discord at the moment of
+ * action. The shape is deliberately "check here", not "the middleware handled
+ * it".
  */
 export default async function LivePlayersPage() {
   const admin = await currentAdmin()

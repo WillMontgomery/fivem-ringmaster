@@ -51,7 +51,7 @@ export default async function LoginPage({
    * structural half of the redirect loop this page was one end of.
    *
    * This read `auth()` directly while all thirteen other routes read
-   * `currentAdmin()`, which is `auth()` PLUS a scope lookup and a non-idle
+   * `currentAdmin()`, which is `auth()` PLUS a license lookup and a non-idle
    * check. The moment those two disagreed, `/` bounced here because
    * currentAdmin was null and this bounced back because the session was valid
    * — a loop with no exit, which is what the browser reports as "the page

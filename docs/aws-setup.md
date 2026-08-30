@@ -39,7 +39,7 @@ Create ten tables. For every one of them:
 
 | Table name | Partition key | Sort key | Notes |
 |---|---|---|---|
-| `ringmaster-grants` | `license` (String) | — | Who can do what. **Needs a secondary index — see below.** Ringmaster writes; the game server only reads. |
+| `ringmaster-grants` | `license` (String) | — | Maps a Discord account to a game license. **Needs a secondary index — see below.** The game server reads its `scopes` attribute for in-game admin powers; **Ringmaster no longer does** — it has no permission levels. |
 | `ringmaster-bans` | `license` (String) | — | Active and lifted bans. Ringmaster writes; the game server only reads. |
 | `ringmaster-audit` | `pk` (String) | `ts` (Number) | Every admin action. **Ringmaster only.** |
 | `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations. The game appends and updates five named attributes at match end; both sides read. Verdicts are written only by Ringmaster. |
@@ -123,11 +123,20 @@ and **it will not work without it**. Create the table as above, then open it →
 **Added 2026-08-09. If you created the tables before this date, this one is
 missing and nobody can log in.**
 
-Discord tells us *who* is logged in; every grant, ban and audit row keys on the
+Discord tells us *who* is logged in; every ban and audit row keys on the
 **license**. Something has to bridge them, and `ringmaster-grants` is keyed by
-`license` with `discordId` as a plain attribute — which answers "what can this
-license do?" but not "which license is this Discord account?", and login needs
-the second one.
+`license` with `discordId` as a plain attribute — so it cannot answer "which
+license is this Discord account?" without an index, and that is the only question
+Ringmaster asks of this table.
+
+> **This index is still required, but it no longer gates logging in.** Ringmaster
+> has no permission levels: whoever holds the Discord admin role is a full admin,
+> and a signed-in account with **no grants row at all** is normal and fully
+> privileged. What the lookup buys is *attribution* — the acting admin's license
+> on every audit row — and Spectate, which needs a character in the world to put
+> the camera behind. Without the index the query throws and `currentAdmin()`
+> fails, so it is not optional; but an admin who has simply never joined the game
+> server has no row, and that is not an error.
 
 Open `ringmaster-grants` → *Indexes* → *Create index*:
 

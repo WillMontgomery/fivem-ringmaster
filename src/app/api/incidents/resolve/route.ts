@@ -26,10 +26,12 @@ import * as incidents from '@/lib/incidents'
  * is a resolved incident carrying no verdict at all — see lib/incidents, where
  * absent means nobody decided.
  *
- * TAKES THE `ban` SCOPE, not a scope of its own. Resolving is a moderation
- * decision — "I looked, and this person is fine" carries the same weight as
- * acting, because the consequence of getting it wrong is that nobody looks
- * again. Reading an incident needs nothing beyond being logged in.
+ * IT USED TO TAKE THE `ban` SCOPE rather than one of its own, because resolving
+ * is a moderation decision — "I looked, and this person is fine" carries the
+ * same weight as acting, since the consequence of getting it wrong is that
+ * nobody looks again. There are no scopes now, so resolving and reading are
+ * separated only by the `write` intent: this one re-checks Discord, and opening
+ * the case does not.
  *
  * THE ONE-WAY RULE IS ENFORCED IN THE DATABASE, not here. lib/incidents issues
  * a conditional write that requires the incident to still be pending, so two

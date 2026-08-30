@@ -70,11 +70,6 @@ import { cn } from '@/lib/utils'
  *                          when the kick that follows a ban fails. Ban off,
  *                          Kick drawn.
  *
- *   ?scope=    with and without the `ban` scope. Without it the resolve buttons
- *              do not render at all, and the page has to still be worth
- *              reading — an admin who can see a case but not close it is a real
- *              account, not an error state.
- *
  *   ?record=   whether the subject's match history contains the match this was
  *              filed during. `running` and `absent` must render IDENTICALLY —
  *              see the axis itself for why that is the check rather than a
@@ -413,13 +408,6 @@ const SUBJECT_CASES = {
 } satisfies Record<string, { online: boolean; banned: boolean }>
 
 type SubjectKey = keyof typeof SUBJECT_CASES
-
-const SCOPE_CASES = { resolve: true, readonly: false } satisfies Record<
-  string,
-  boolean
->
-
-type ScopeKey = keyof typeof SCOPE_CASES
 
 /**
  * ═══ THE MATCH AXIS (#30) ═══
@@ -1095,12 +1083,11 @@ async function Preview({
 
   const state = pick(sp.state, STATE_CASES, 'pending' as StateKey)
   const subject = pick(sp.subject, SUBJECT_CASES, 'here' as SubjectKey)
-  const scope = pick(sp.scope, SCOPE_CASES, 'resolve' as ScopeKey)
   const artifacts = pick(sp.artifacts, ARTIFACT_CASES, 'full' as ArtifactKey)
   const match = pick(sp.match, MATCH_CASES, 'none' as MatchKey)
   const record = pick(sp.record, HISTORY_CASES, 'found' as HistoryKey)
 
-  const params = { state, subject, scope, artifacts, match, record }
+  const params = { state, subject, artifacts, match, record }
 
   /**
    * THE CLOCK IS PART OF THE MATCH CASE, not a constant. Whether a match with
@@ -1153,12 +1140,6 @@ async function Preview({
             params={params}
           />
           <Axis
-            name="scope"
-            keys={Object.keys(SCOPE_CASES)}
-            current={scope}
-            params={params}
-          />
-          <Axis
             name="artifacts"
             keys={Object.keys(ARTIFACT_CASES)}
             current={artifacts}
@@ -1187,8 +1168,8 @@ async function Preview({
             </span>
             <span className="font-mono">
               subjectOnline={String(SUBJECT_CASES[subject].online)} ·
-              subjectBanned={String(SUBJECT_CASES[subject].banned)} · canResolve=
-              {String(SCOPE_CASES[scope])} · now={utcIso(now)}
+              subjectBanned={String(SUBJECT_CASES[subject].banned)} ·
+              now={utcIso(now)}
             </span>
           </p>
         </nav>
@@ -1203,7 +1184,6 @@ async function Preview({
             makes the two rows numbered 412 in that fixture worth having.
           */
           matchRecord={matchRecordFor(incident, history)}
-          canResolve={SCOPE_CASES[scope]}
           subjectOnline={SUBJECT_CASES[subject].online}
           subjectBanned={SUBJECT_CASES[subject].banned}
           now={now}

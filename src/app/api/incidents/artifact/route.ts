@@ -12,8 +12,8 @@ import { currentAdmin } from '@/lib/session'
  * presigned URL is a bearer credential, and HTML is a bad place to keep one:
  *
  *   · IT OUTLIVES THE SESSION. Sign for fifteen minutes and the URL still works
- *     fifteen minutes after the admin signs out, or after their grant is
- *     revoked. Signed here, per fetch, the session is checked every time.
+ *     fifteen minutes after the admin signs out, or after their Discord role
+ *     is taken away. Signed here, per fetch, the session is checked every time.
  *   · IT LEAVES THE CONSOLE. "View source", a screenshot of devtools, a page
  *     saved and pasted into Discord — each one hands over a link to a picture of
  *     a player's screen that anybody can open. What is in this page's markup is
@@ -28,8 +28,8 @@ import { currentAdmin } from '@/lib/session'
  * ═══ AS PERMISSIVE AS THE PAGE, AND NO MORE ═══
  *
  * `currentAdmin()`, not `authorize()`. Reading an incident takes a session and
- * nothing else — `app/incidents/[id]/page.tsx` requires no scope, and only
- * RESOLVING one takes `ban`. An image route stricter than its page would hide
+ * nothing else — `app/incidents/[id]/page.tsx` requires nothing more, and only
+ * RESOLVING one is a write. An image route stricter than its page would hide
  * evidence from admins who are allowed to see the case; one looser would serve
  * players' screens to anyone who guessed a UUID. The rule is that this route and
  * that page agree, and `currentAdmin()` is what the page uses.

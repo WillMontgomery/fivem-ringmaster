@@ -3,26 +3,37 @@ import { env } from './env'
 import { REVOKED_MESSAGE } from './revocation'
 
 /**
- * Discord as a live second opinion on every write.
+ * Discord as the authorisation check, asked live before every write.
  *
  * ---------------------------------------------------------------------------
- * WHAT THIS IS NOT. It is not the authorisation check. That is `lib/grants.ts`,
- * keyed on license, read fresh from DynamoDB on every single call — a grant
- * revoked in the table stops working on the next request with no help from this
- * file. That half already worked and was not touched.
+ * WHAT THIS IS. The only thing in this console that decides whether an admin
+ * may do something. One question — does this account hold the Discord admin
+ * role right now? — asked of Discord at the moment of action.
  *
- * WHAT IT IS. Ringmaster's grants are independent of Discord, so somebody
- * kicked from the Discord server — or merely stripped of the admin role there —
- * kept a working console until a human remembered to revoke their row by hand.
- * Discord is where admin status is actually decided in this project, and this
- * asks it, at the point of action, before anything changes.
+ * WHAT IT USED TO BE, because the difference matters to everything below. This
+ * file was defence in depth: `lib/grants.ts` held per-account scopes in
+ * DynamoDB, `authorize()` checked them first, and this ran afterwards as a
+ * second opinion. THE SCOPES ARE GONE — they could not be granted by any
+ * surface in the console, so they were a permission system nobody could
+ * administer (the reasoning is written out in lib/grants.ts). Anyone who can log
+ * in is a full admin.
+ *
+ * SO THIS FILE IS NOW LOAD-BEARING IN A WAY IT WAS NOT WHEN IT WAS WRITTEN, and
+ * the fail-open decision further down has been re-argued from scratch rather
+ * than inherited. NOTHING IN DYNAMODB TAKES PART IN AUTHORISATION any more:
+ * the session says who is asking, Discord says whether they may.
  *
  * ONLY ON WRITES. `authorize()` takes an explicit `read` / `write` intent and
  * only the second reaches this file. Reads are a different risk: the cost of a
- * revoked admin reading the moderation board for another thirty seconds is
- * approximately nothing, and putting a Discord round trip in front of every
+ * revoked admin reading the moderation board until their session is signed out
+ * is approximately nothing, and putting a Discord round trip in front of every
  * page render and every two-second poll would be both slow and, at poll rates,
  * a genuine rate-limit problem.
+ *
+ * WHAT BOUNDS A READ IS THE SIGN-IN GATE AND THE IDLE TIMEOUT. `auth.ts` refuses
+ * the login outright without the role, and the first write this admin attempts
+ * ends the session for real. A revoked admin cannot get IN, and cannot DO
+ * anything; for a window they can still look.
  *
  * NOT CACHED, AT ALL. The owner's requirement is "every time", and writes are
  * measured in tens per day against a global ceiling of fifty requests per
@@ -307,31 +318,45 @@ export interface GateDeps {
 }
 
 /**
- * The gate. Runs after the grant check has already passed, before anything is
- * written.
+ * The gate. Runs on an authenticated, non-idle session, before anything is
+ * written. There is no check in front of it.
  *
  * ---------------------------------------------------------------------------
- * THE AVAILABILITY DECISION, STATED PLAINLY BECAUSE IT IS A REAL TRADE AND
- * SOMEBODY WILL WANT TO ARGUE WITH IT LATER.
+ * THE AVAILABILITY DECISION, RE-ARGUED FROM SCRATCH WHEN THE SCOPES WERE
+ * REMOVED, BECAUSE THE ARGUMENT THAT USED TO CARRY IT NO LONGER EXISTS.
  *
  *   Discord answers "no"           -> DENY. Session ends. Audited.
  *   Discord does not answer at all -> ALLOW. Logged as loudly as a denial.
  *
  * That is fail-OPEN on unreachability and fail-CLOSED only on a definitive
- * negative, and the reasoning is this: the PRIMARY authorisation is the
- * DynamoDB grant, it has already been checked live against the database on this
- * very request, and it passed. This check is defence in depth on top of an
- * authorisation that is already satisfied. Failing closed on a Discord outage
- * would take every moderation tool in the console offline — bans, kicks,
- * incident closure, the maintenance deploy — during exactly the kind of
- * incident where moderation is most needed, and it would do so for a reason
- * unrelated to anybody's actual permissions.
+ * negative. THE OLD JUSTIFICATION WAS "the DynamoDB grant already authorised
+ * this request, so this is only defence in depth" — and that sentence is now
+ * false. There is no grant. If this check does not resolve, nothing else has
+ * checked anything.
  *
- * The residual risk is stated honestly: an admin removed from Discord during a
- * Discord outage keeps writing until either the outage ends or a human revokes
- * their grant. That is a narrow window, it requires the two events to coincide,
- * and the grant revoke — which is immediate and does not depend on Discord at
- * all — remains available throughout it.
+ * IT STILL FAILS OPEN, AND HERE IS THE HONEST CASE FOR IT.
+ *
+ * What an unresolved check risks is narrow and specific: it needs somebody who
+ * (a) held the Discord admin role recently enough to sign in, (b) has had it
+ * taken away since, (c) still holds a live non-idle session, and (d) attempts a
+ * write during the outage. IT IS NEVER A STRANGER — there is no path in for one.
+ * `auth.ts` fails CLOSED: while Discord is unreachable nobody new logs in at
+ * all, and every session that exists belongs to somebody Discord vouched for.
+ *
+ * What failing closed costs is broad and certain: every moderation tool in the
+ * console — bans, kicks, incident closure, the maintenance deploy — goes down
+ * for everybody, for the duration, whenever Discord has a bad afternoon. This is
+ * a game server's moderation console, and the incidents that most need it are
+ * not correlated with Discord's uptime.
+ *
+ * SO THE TRADE IS: a narrow window in which an admin who was trusted minutes ago
+ * keeps acting, against a certain outage of all moderation. The window closes on
+ * its own — the next resolved check ends that session — and every write taken
+ * inside it leaves a row saying the check did not run.
+ *
+ * THE LEVER, IF THIS EVER NEEDS REVERSING, IS ONE BRANCH: make `unresolved()`
+ * throw instead of return. It is deliberately the only place that decides, so
+ * the change is one function and its checks rather than a sweep.
  *
  * WHICH IS WHY THE UNRESOLVED CASE IS AS LOUD AS THE DENIAL. A fail-open that
  * nobody can see afterwards is indistinguishable from a check that was never
@@ -347,11 +372,15 @@ export async function enforceDiscordAdmin(input: {
   /** Null when the session never resolved to a Discord account. */
   discordId: string | null
   actor: Actor
-  /** The scope the write asked for. Recorded, never used to decide. */
-  scope: string
+  /**
+   * What the write was called — `ban`, `kick`, `maintenance`. Recorded, never used
+   * to decide, and there is now nothing it COULD decide: it was a `Scope` when
+   * scopes existed, and it is a label now. See `ActionLabel` in lib/actions.ts.
+   */
+  action: string
   deps: GateDeps
 }): Promise<RoleCheck> {
-  const { discordId, actor, scope, deps } = input
+  const { discordId, actor, action, deps } = input
 
   /**
    * NO DISCORD ID IS NOT A DENIAL, and it is not silence either.
@@ -366,7 +395,7 @@ export async function enforceDiscordAdmin(input: {
     return await unresolved(
       { state: 'unresolved', why: 'the session carries no Discord account id' },
       actor,
-      scope,
+      action,
       deps,
     )
   }
@@ -375,7 +404,7 @@ export async function enforceDiscordAdmin(input: {
 
   if (verdict.state === 'held') return verdict
   if (verdict.state === 'unresolved') {
-    return await unresolved(verdict, actor, scope, deps)
+    return await unresolved(verdict, actor, action, deps)
   }
 
   /**
@@ -387,7 +416,7 @@ export async function enforceDiscordAdmin(input: {
    */
   deps.log(
     'error',
-    `[discord-role] REFUSED a \`${scope}\` write: ${actor.name} (${actor.license ?? 'no license'}) ` +
+    `[discord-role] REFUSED a \`${action}\` write: ${actor.name} (${actor.license ?? 'no license'}) ` +
       `${verdict.why === 'not-a-member' ? 'is no longer in the Discord server' : 'no longer holds the Discord admin role'}. Session ended.`,
   )
 
@@ -399,7 +428,7 @@ export async function enforceDiscordAdmin(input: {
         verdict.why === 'not-a-member'
           ? 'No longer a member of the Discord server'
           : 'Discord admin role removed',
-      detail: { scope, why: verdict.why },
+      detail: { attempted: action, why: verdict.why },
     })
 
     try {
@@ -446,14 +475,14 @@ export async function enforceDiscordAdmin(input: {
 async function unresolved(
   verdict: RoleCheck & { state: 'unresolved' },
   actor: Actor,
-  scope: string,
+  action: string,
   deps: GateDeps,
 ): Promise<RoleCheck> {
   const unconfigured = verdict.why === NO_TOKEN_REASON
 
   deps.log(
     unconfigured ? 'warn' : 'error',
-    `[discord-role] a \`${scope}\` write by ${actor.name} (${actor.license ?? 'no license'}) ` +
+    `[discord-role] a \`${action}\` write by ${actor.name} (${actor.license ?? 'no license'}) ` +
       `proceeded WITHOUT a Discord role re-check: ${verdict.why}`,
   )
 
@@ -464,7 +493,7 @@ async function unresolved(
       action: 'discord.unresolved',
       actor,
       reason: verdict.why,
-      detail: { scope, allowed: true },
+      detail: { attempted: action, allowed: true },
     })
     await deps.audit.resolve(ts, 'ok')
   } catch (e) {

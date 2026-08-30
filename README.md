@@ -26,25 +26,33 @@ tool, and "restart the server to change a number" is not a config system.
 | **Operates** | schedule maintenance windows around live matches, deploy the game box, switch the branch it is parked on |
 | **Travels** | opens inside the game's own pause menu, already signed in — see [The console in the pause menu](#the-console-in-the-pause-menu) |
 
-**Four of the nine grant scopes have no surface behind them.** `moderate`,
-`notify`, `config` and `spectate` are all defined in `src/lib/grants.ts` and
-nothing checks any of them: every `authorize()` call under `src/app/api/` asks
-for `view`, `kick`, `ban` or `process`. Holding one of the four grants nothing
-today.
+**There are no permission levels. Anyone who can sign in is a full admin.**
+Authorisation is one question, asked of Discord: does this account hold
+`DISCORD_ADMIN_ROLE_ID`? It is asked at sign-in (`src/auth.ts`) and asked again,
+live, before every write (`src/lib/discordRole.ts`). **Nothing in DynamoDB takes
+part in the decision.**
 
-> **`spectate` was checked for exactly one release, and the reason it stopped is
-> the general one.** `/api/spectate` authorised it (#192) — and since nothing
+> **This used to be nine scopes — `view`, `kick`, `ban`, `moderate`, `spectate`,
+> `notify`, `config`, `grant`, `process` — and four of them had never been
+> checked anywhere.** They came down in two steps, for one reason.
+>
+> `spectate` went first. `/api/spectate` authorised it (#192) — and since nothing
 > had ever checked it, no grant row carried it, so **every admin on the server
 > got a permanently greyed Spectate button** telling them to acquire a scope.
-> There is no scopes UI. The only way to issue one is editing DynamoDB by hand.
-> The check was a wall with no door, so the route moved to `view` (the scope
-> that already opens the console) and the greyed state, its hover sentence and
-> its `/preview/profile?mod=spectate-noscope` fixture were all removed.
+> The owner, on hitting it: *"in console it says I need a permission that I don't
+> have. That should not even exist."*
 >
-> **The granular check was not wrong, it was early.** If a scopes UI is ever
-> built, `spectate` is the first grant worth putting behind it — watching
-> somebody is trustable far earlier than removing them. It goes back with the
-> door, not before it.
+> **The rest followed, because the same sentence was true of all of them.** There
+> was no scopes UI and there never had been; the only way to issue a scope was to
+> hand-edit a DynamoDB item, which the owner does not do. So every account held
+> whatever its row happened to be seeded with, forever. **A granular check with
+> no grant path is not caution, it is a broken feature** — it bought nothing but
+> greyed buttons and sentences telling admins to acquire the unacquirable.
+>
+> **If levels are ever wanted, they go back with the UI that issues them, not
+> before it.** `lib/actionBar.ts`, `lib/grants.ts` and `lib/actionBar.check.ts`
+> each say so at the point where the check used to live, and the check suite
+> fails if an `enabled` or a `can(` creeps back onto the moderation bar.
 
 > **This paragraph used to name `spectate` alone, and then add: "Screenshots on
 > incidents are the same shape: the incident pipeline ships, the capture half
@@ -158,6 +166,14 @@ three times, so it is worth stating as it is today rather than as it was:
 - **It reads `ringmaster-bans`, `ringmaster-grants` and `ringmaster-maintenance`**
   — point lookups on a key it already holds, for the connect gate, in-game admin
   scopes and the drain gate.
+
+  > **The game's in-game admin scopes are a SEPARATE system from this console's
+  > authorisation, and removing Ringmaster's scopes did not touch them.** Nothing
+  > in Ringmaster has ever written the `scopes` attribute — there was no UI to do
+  > it with — so the rows the game reads are exactly as they were. What changed is
+  > that Ringmaster no longer reads that attribute: it uses the row only to map a
+  > Discord id to a game license, for audit attribution and for Spectate's camera.
+  > **The two systems both mean "admin" and now mean different things by it.**
 - **It appends to `ringmaster-incidents`** (conditional on the id being absent,
   so it can file a case and never overwrite one) and, since 2026-08-17, **reads
   back a four-attribute projection of one** — enough to answer "decided, and did
@@ -449,9 +465,7 @@ The load-bearing pieces:
 - **Discord OAuth2 with PKCE**, server-validated `state`, plus a guild-membership
   check as a coarse first filter.
 - **The Discord admin role is re-checked before every write, not only at the
-  door.** Grants live in DynamoDB and are independent of Discord, so somebody
-  kicked from the server — or merely stripped of the role there — kept a working
-  console until a human edited their grants row. Before every ban, lift, kick,
+  door — and it is now the whole of authorisation.** Before every ban, lift, kick,
   incident closure, maintenance action, branch switch and deploy, the console
   asks Discord whether that account still holds `DISCORD_ADMIN_ROLE_ID`; if the
   answer is no, the write is refused and the session is deleted. **If Discord
@@ -459,9 +473,19 @@ The load-bearing pieces:
   audit row saying the check did not resolve — failing closed would take every
   moderation tool offline during a Discord outage, which is exactly when
   moderation is most needed.
+
+  > **That fail-open trade was re-argued when the scopes were removed, because
+  > the argument that used to carry it died with them.** It read "the DynamoDB
+  > grant already authorised this request, so this is only defence in depth".
+  > There is no grant. What holds it up instead is that **the sign-in gate fails
+  > CLOSED**: while Discord is unreachable nobody new gets in, so every session in
+  > existence belongs to somebody Discord vouched for, and the exposure is an
+  > admin who was trusted minutes ago and has been demoted since. The lever, if
+  > this ever needs reversing, is one branch — `unresolved()` in
+  > `src/lib/discordRole.ts`.
 - **Server-side sessions, not stateless JWTs** — a revoked admin must lose access
   *immediately*, and a self-contained token stays valid until it expires.
-- **Scoped grants, re-checked per action, server-side.** Hiding a button is a
+- **One check, at the point of action, server-side.** Hiding a button is a
   courtesy, not a boundary. The check lives here and only here: the sole writer
   to the game host's command channel is the supervisor behind a forced-command
   SSH key, so anyone able to reach it already has console authority and a second
@@ -487,7 +511,7 @@ Tracked as GitHub milestones; this table is the map, `gh issue list` is the queu
 | # | Milestone | What it delivers |
 |---|---|---|
 | 0 | Foundations | Repo scaffold, toolchain, secret gate, DynamoDB tables, IAM role, deploy |
-| 1 | Identity | Discord OAuth2 + PKCE, server-side sessions, the grants table and scope model |
+| 1 | Identity | Discord OAuth2 + PKCE, server-side sessions, the grants table and scope model (**the scope model has since been removed — see above**) |
 | 2 | Observe | Ingest endpoint, realtime player list, live match/squad/party view |
 | 3a | Host observation | `dispatch.sh` over restricted SSH — `status` and `telemetry` verbs only; CPU/memory/network graphs |
 | 4 | Act | The command channel, kick, ban, the audit log |
@@ -503,8 +527,9 @@ places worth naming** so nobody reads a row as a claim about today:
   either repo.
 - **M6's "live config editing" shipped as reading only.** `/config` renders the
   allowlisted convars the game box reports and has no write path — there is no
-  config endpoint under `src/app/api/`. Its "generic event triggers" are the
-  `moderate` scope with nothing behind it.
+  config endpoint under `src/app/api/`. Its "generic event triggers" were the
+  `moderate` scope, which had nothing behind it and has since been deleted along
+  with every other scope.
 - **M3b's verbs are still unwritten**, but the deploy trio (`deploy`,
   `branches`, `switchref`) landed ahead of them and restarts FXServer as a
   consequence of deploying. See [One channel to the game host](#one-channel-to-the-game-host).
@@ -524,7 +549,7 @@ after it, next to the audit log that records them.
 **Spectate was deliberately absent, and the wait is over.** The paragraph here
 used to read: "The camera and client-state machinery belongs to the game repo's
 M7 (death-cam spectating), and Ringmaster's admin-spectate is that same machinery
-plus a routing-bucket hop and a grant check. Building it here would mean two
+plus a routing-bucket hop and a permission check. Building it here would mean two
 spectator modes. The UI can be built ahead of the tooling; the wiring waits."
 
 That was right and it is now spent. M7 built the machinery, so #192 built the

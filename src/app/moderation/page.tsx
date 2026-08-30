@@ -6,7 +6,6 @@ import { ModerationLog, type KickRow } from '@/components/ModerationLog'
 import { PageLoading } from '@/components/PageLoading'
 import * as audit from '@/lib/audit'
 import * as bans from '@/lib/bans'
-import { can } from '@/lib/grants'
 import { currentAdmin } from '@/lib/session'
 
 /**
@@ -36,18 +35,24 @@ export default async function ModerationPage() {
       user={{ name: admin.name, avatarUrl: admin.avatarUrl }}
     >
       <Suspense fallback={<PageLoading />}>
-        <Body license={admin.license} />
+        <Body />
       </Suspense>
     </AppShell>
   )
 }
 
-/** The three reads, below the boundary. See `PageLoading` for why it is split. */
-async function Body({ license }: { license: string | null }) {
-  const [rows, allBans, canBan] = await Promise.all([
+/**
+ * The two reads, below the boundary. See `PageLoading` for why it is split.
+ *
+ * IT WAS THREE. The third was `can(license, 'ban')`, which decided whether the
+ * Lift buttons were live and whether a banner appeared above the log explaining
+ * that they were not. Scopes are gone — everyone who can open this page can lift
+ * a ban — so the read, the prop and the banner all went with them.
+ */
+async function Body() {
+  const [rows, allBans] = await Promise.all([
     audit.recent(200),
     bans.all(),
-    can(license, 'ban'),
   ])
 
   const now = Date.now()
@@ -79,14 +84,7 @@ async function Body({ license }: { license: string | null }) {
         </p>
       </div>
 
-      {!canBan && (
-        <p className="mb-4 rounded-md border border-info/30 bg-info/5 px-4 py-3 text-sm text-info">
-          You can see this record but not act on it — lifting a ban needs the{' '}
-          <code className="font-mono">ban</code> scope.
-        </p>
-      )}
-
-      <ModerationLog kicks={kicks} bans={active} canBan={canBan} />
+      <ModerationLog kicks={kicks} bans={active} />
     </div>
   )
 }

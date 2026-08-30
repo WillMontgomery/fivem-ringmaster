@@ -29,12 +29,13 @@ import { CSRF_REJECT_STATUS, requestOriginAllowed } from '@/lib/origin'
  * 2. THE SIGNED-OUT BOUNCE. Everything below the guard. THIS IS A FAST PATH,
  * NOT THE BOUNDARY, and the distinction is load-bearing rather than pedantic.
  * All it does is look for a session cookie. It does not validate it, does not
- * look up the session record, and does not know anything about scopes — a
- * forged cookie sails straight through.
+ * look up the session record, and does not know who holds it — a forged
+ * cookie sails straight through.
  *
- * The real check is `auth()` in the page or route, followed by
- * `requireScope()` per action. Those run server-side against the session
- * record in DynamoDB, which is what makes revocation immediate.
+ * The real check is `auth()` in the page or route, and on a write a live
+ * Discord role check (`lib/discordRole.ts`) at the moment of action. The first
+ * runs server-side against the session record in DynamoDB and the second against
+ * Discord, which is what makes revocation immediate.
  *
  * WHY IT CANNOT DO MORE. Auth.js is configured with a *database* adapter, and
  * middleware runs on the edge runtime where the AWS SDK does not. Calling
