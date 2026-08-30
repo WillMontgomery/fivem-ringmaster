@@ -98,3 +98,113 @@ export async function grantsForDiscordId(
 
   return (res.Items?.[0] as Grant | undefined) ?? null
 }
+
+/**
+ * What resolving an admin to a license needs, named rather than imported.
+ *
+ * THE SEAM IS HERE SO THE CHECK CAN DRIVE THE REAL DECISION, the same reason
+ * `GateDeps` exists in lib/discordRole.ts. `lib/session.ts` supplies the real
+ * `grantsForDiscordId`, the real `players.licensesFor` and the real console.
+ * `grants.check.ts` supplies fakes, and both run the code below rather than two
+ * copies of the same rules.
+ */
+export interface LicenseLookup {
+  /** The hand-written link row, by Discord id. {@link grantsForDiscordId}. */
+  granted(discordId: string): Promise<Grant | null>
+  /**
+   * Licenses the GAME has seen present a qualified identifier —
+   * `players.licensesFor`, over the reverse index `recordConnect` maintains.
+   */
+  seen(qualifiedId: string): Promise<string[]>
+  /** The operator log. Separated so the check can assert loudness. */
+  log(level: 'warn' | 'error', message: string): void
+}
+
+/**
+ * The acting admin's own license: the hand-written row first, what the game
+ * actually saw second.
+ *
+ * ═══ WHY THE SECOND SOURCE HAD TO BE ADDED ═══
+ *
+ * `grantsForDiscordId` was the ONLY source of `actorLicense`, and until 4078d47
+ * that was self-correcting: the same row carried the scopes, `authorize()` ran
+ * `requireScope(admin.license, scope)`, and `can()` returns false for a null
+ * license — so an admin without a row was refused on every route, reads
+ * included. A null `actorLicense` on a human's audit row was UNREACHABLE.
+ *
+ * 4078d47 removed that gate and made the row optional. It did not make it
+ * unnecessary: the row is still the only thing that names the acting admin's
+ * license, and it is still written BY HAND (`scripts/grant.mjs`,
+ * docs/aws-setup.md). So an admin who was made an admin the new way — given the
+ * Discord role and nothing else — acts with full authority and signs every row
+ * `actorLicense: null`. That is not cosmetic: `audit.forPlayer` answers "what
+ * has this admin done" with `actorLicense === license`, so their own actions are
+ * invisible on their own profile, and their name is unlinked wherever a row is
+ * rendered.
+ *
+ * THE GAME ALREADY KNOWS THE ANSWER. `players.recordConnect` writes
+ * `discord:<id> -> [license]` into the reverse index on every connect, which is
+ * precisely the link src/auth.ts describes as existing "only because a player
+ * connected to the game server once with Discord integration enabled". Reading
+ * it here costs one GetItem and only for admins who have no row at all.
+ *
+ * ═══ THE HAND-WRITTEN ROW STILL WINS ═══
+ *
+ * It is an assertion by a human about which character is theirs; the index is an
+ * observation. When they disagree the assertion is the one somebody chose, and
+ * it is also the only source that can exist for an admin who has never connected
+ * with Discord integration on — the chicken-and-egg `grant.mjs` was written for.
+ *
+ * ═══ AND AMBIGUITY RESOLVES TO NULL, DELIBERATELY ═══
+ *
+ * Several licenses behind one Discord account is exactly the state
+ * `recordConnect` raises as a mismatch for a human to judge — a reinstall, a
+ * shared console, or somebody evading a ban. Guessing which of them acted would
+ * stamp a moderation record with a license nobody asserted. A missing
+ * attribution is a gap; a wrong one is a false record, and this log is read to
+ * decide what happened. Null, and the operator log says why.
+ *
+ * NEVER THROWS ON THE SECOND SOURCE. `currentAdmin()` runs on every page render,
+ * so a reverse-index read that fails must cost attribution rather than the
+ * console. The FIRST source is left to throw as it always has — a missing
+ * `discordId-index` is a broken deployment and docs/aws-setup.md says so.
+ */
+export async function licenseForDiscordId(
+  discordId: string,
+  deps: LicenseLookup,
+): Promise<{ license: string | null; grant: Grant | null }> {
+  const grant = await deps.granted(discordId)
+  if (grant?.license) return { license: grant.license, grant }
+
+  let seen: string[]
+  try {
+    seen = await deps.seen(`discord:${discordId}`)
+  } catch (e) {
+    deps.log(
+      'error',
+      `[session] could not read the identifier index for discord:${discordId}; ` +
+        `this admin's actions will be recorded without a license: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+    )
+    return { license: null, grant }
+  }
+
+  // De-duplicated because the index appends per license, and one human
+  // reconnecting is one license however many times it is listed.
+  const distinct = [...new Set(seen.filter((l) => typeof l === 'string' && l))]
+
+  const only = distinct.length === 1 ? distinct[0] : undefined
+  if (only) return { license: only, grant }
+
+  if (distinct.length > 1) {
+    deps.log(
+      'warn',
+      `[session] discord:${discordId} has presented ${distinct.length} licenses ` +
+        `(${distinct.join(', ')}); refusing to guess which one is acting, so ` +
+        `their audit rows carry no license. Settle it with scripts/grant.mjs.`,
+    )
+  }
+
+  return { license: null, grant }
+}
