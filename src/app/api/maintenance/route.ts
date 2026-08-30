@@ -1,7 +1,12 @@
 import { cookies } from 'next/headers'
 import { z } from 'zod'
 
-import { ActionError, authorize, errorResponse } from '@/lib/actions'
+import {
+  ActionError,
+  authorize,
+  authorizeWrite,
+  errorResponse,
+} from '@/lib/actions'
 import * as audit from '@/lib/audit'
 import * as maint from '@/lib/maintenance'
 import { ensureDriver, tick } from '@/lib/maintenanceDriver'
@@ -79,7 +84,24 @@ export async function GET(): Promise<Response> {
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('process', 'write')
+    /**
+     * EITHER DOOR — a session, or `blitz-bot`'s `/drain` presenting the service
+     * credential and the Discord id of the admin who ran it (lib/service.ts).
+     *
+     * AND THIS IS THE ROUTE THAT MADE A SERVICE CREDENTIAL NECESSARY RATHER
+     * THAN CONVENIENT. Every gate below — `nothingToDeploy`, `refBlockedNow`,
+     * the deploy time against the automatic deadline, the already-scheduled
+     * refusal in `maint.schedule` — lives here and nowhere else, while
+     * `maintenanceDriver` advances any `scheduled` row it finds and then really
+     * deploys. A bot writing that row straight into DynamoDB would start an
+     * unreviewed restart of the game server with none of this consulted.
+     *
+     * THE GET ABOVE IS UNTOUCHED AND STAYS SESSION-BOUND, as do
+     * `/api/maintenance/cancel` and `/api/maintenance/force` — the force-deploy
+     * button skips the drain, and it is deliberately not one of the paths this
+     * credential opens (see `SERVICE_ROUTES`).
+     */
+    const { actor } = await authorizeWrite('process', req)
 
     const body = await req.json().catch(() => {
       throw new ActionError('Expected a JSON body.')

@@ -2,11 +2,17 @@ import { z } from 'zod'
 
 import {
   ActionError,
-  authorize,
+  authorizeWrite,
   errorResponse,
   licenseSchema,
 } from '@/lib/actions'
 import * as audit from '@/lib/audit'
+import {
+  channelNotConfigured,
+  dispatchKick,
+  failureMessage,
+  failureStatus,
+} from '@/lib/commandOutcome'
 import * as incidents from '@/lib/incidents'
 import { kickPlayer, sshConfigured } from '@/lib/ssh'
 
@@ -45,12 +51,29 @@ const kickSchema = z.object({
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('kick', 'write')
+    /**
+     * EITHER DOOR. `blitz-bot`'s `/brkick` reaches this route with the service
+     * credential and the Discord id of the admin who typed it; a browser
+     * reaches it with a session. Both arrive here as an `actor`, and everything
+     * below — the SSH check, the closed-case refusal, the audit row, the
+     * verdict — is identical for both because none of it is authorisation. See
+     * lib/service.ts.
+     */
+    const { actor } = await authorizeWrite('kick', req)
 
+    /**
+     * NO CHANNEL, SO NOTHING WAS EVEN ATTEMPTED — and it is reported as a typed
+     * outcome rather than thrown, so the bot branches on `failure` here exactly
+     * as it does on a refusal. The sentence is the one this route already sent;
+     * only its wrapper changed. No audit row, for the reason there never was
+     * one: `audit.begin` records an INTENT that is about to be acted on, and
+     * this is a request that stops here.
+     */
     if (!sshConfigured()) {
-      throw new ActionError(
-        'The command channel to the game server is not configured.',
-        503,
+      const outcome = channelNotConfigured()
+      return Response.json(
+        { ok: false, ...outcome, error: failureMessage(outcome) },
+        { status: failureStatus(outcome) },
       )
     }
 
@@ -89,19 +112,42 @@ export async function POST(req: Request): Promise<Response> {
       detail: input.incidentId ? { incidentId: input.incidentId } : undefined,
     })
 
-    try {
-      const res = await kickPlayer(input.license, reason, commandId)
-      if (!res.ok) throw new Error(res.error ?? 'kick refused')
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e)
-      await audit.resolve(ts, 'failed', message)
-      throw new ActionError(`The game server refused the kick: ${message}`, 502)
+    /**
+     * WHAT ACTUALLY HAPPENED, not whether we sent it — the owner's second
+     * comment on #42, and lib/commandOutcome.ts carries the reasoning. The two
+     * failures this used to flatten into one 502 sentence are now told apart:
+     * a box that ANSWERED AND SAID NO is `refused` and carries its reason; a box
+     * that never answered is `unreachable`, which is not the same fact and is
+     * not the same fix.
+     */
+    const outcome = await dispatchKick(() =>
+      kickPlayer(input.license, reason, commandId),
+    )
+
+    if (outcome.outcome === 'failed') {
+      await audit.resolve(ts, 'failed', outcome.detail)
+
+      /**
+       * A BODY RATHER THAN A THROW, and the difference is who can read it.
+       * `ActionError` produces `{ ok, error }` and nothing else, which is a
+       * sentence written for a dialog; the bot needs `failure` to choose its
+       * own words in Discord. The sentence is still there, and still the one the
+       * browser toasts, so KickDialog is untouched.
+       *
+       * `commandId` IS CARRIED ON THE FAILURE TOO. It names the audit row that
+       * has just been stamped `failed`, which is the row somebody will be asked
+       * about when an admin says the kick did not work.
+       */
+      return Response.json(
+        { ok: false, ...outcome, commandId, error: failureMessage(outcome) },
+        { status: failureStatus(outcome) },
+      )
     }
 
     /**
-     * The verdict, recorded only now that the command has been accepted.
+     * The verdict, recorded only now that the command has been dispatched.
      *
-     * "ACCEPTED" IS AS STRONG A CLAIM AS THIS PATH CAN MAKE, and the verdict
+     * "DISPATCHED" IS AS STRONG A CLAIM AS THIS PATH CAN MAKE, and the verdict
      * inherits exactly that and no more — see the note below on why the audit
      * row is not marked `ok` either. A `kick` verdict means the game host took
      * the command, which is the same thing the `player.kick` row beside it
@@ -122,11 +168,19 @@ export async function POST(req: Request): Promise<Response> {
       incident = res.ok ? { closed: true } : { closed: false, error: res.reason }
     }
 
-    // DELIBERATELY NOT RESOLVED AS 'ok' HERE. All we know is that the command
-    // reached the console; whether a player was removed comes back as an
-    // outcome event carrying this commandId. Marking it done now would make the
-    // audit log claim knowledge it does not have.
-    return Response.json({ ok: true, accepted: true, commandId, incident })
+    /**
+     * DELIBERATELY NOT RESOLVED AS 'ok' HERE. All we know is that the command
+     * reached the FXServer console; whether a player was removed would come back
+     * as an outcome event carrying this commandId, and nothing sends one today
+     * (lib/commandOutcome.ts names what is missing). Marking it done now would
+     * make the audit log claim knowledge it does not have.
+     *
+     * AND THE RESPONSE NOW SAYS THE SAME THING THE ROW DOES. `accepted: true` is
+     * gone: it was receipt dressed as success, and it let a caller report "done"
+     * for a command whose own audit row says `pending`. `confirmed: false` rides
+     * the outcome so that a reader has to decide what to do about it.
+     */
+    return Response.json({ ok: true, ...outcome, commandId, incident })
   } catch (e) {
     return errorResponse(e)
   }

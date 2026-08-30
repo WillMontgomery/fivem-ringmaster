@@ -87,6 +87,49 @@ const schema = z.object({
   // security groups get edited by tired people.
   INGEST_SECRET: z.string().min(16),
 
+  // --- Command credential ----------------------------------------------
+  /**
+   * The shared secret a named MACHINE caller presents to act on an admin's
+   * behalf — today `blitz-bot`, whose `/brkick`, `/brban` and `/drain` have no
+   * other way to reach the live kick and the maintenance route. Presented in
+   * `x-ringmaster-service` and compared with `timingSafeEqual`, the same way
+   * INGEST_SECRET is. See lib/service.ts and docs/deploy.md.
+   *
+   * ═══ WHY IT IS SPELLED `COMMAND_SECRET` ═══
+   *
+   * IT IS NAMED FOR THE ENDPOINT FAMILY IT GUARDS, exactly as INGEST_SECRET is.
+   * That one is not called GAME_SECRET after the box that holds it; it is called
+   * after `/api/ingest`, the thing it opens. This one opens the command routes —
+   * kick, ban, drain — so it is called after them. A secret named after its
+   * holder has to be renamed the day a second holder appears; a secret named
+   * after its door does not.
+   *
+   * AND IT IS DELIBERATELY UNPREFIXED, BECAUSE IT IS SHARED WITH THE BOT. The
+   * same value is pasted into `/opt/ringmaster/.env.local` and
+   * `/opt/blitz-bot/.env`, so it belongs to the pair rather than to either side
+   * — the same reason DISCORD_BOT_TOKEN carries no prefix. A `RINGMASTER_` on
+   * the front would read as "this console's setting" in a file where the bot's
+   * OWN settings are the ones wearing `BLITZ_`, and an operator comparing the
+   * two files would be looking for a name that is not in one of them.
+   *
+   * A SECOND VARIABLE RATHER THAN REUSING INGEST_SECRET, and the separation is
+   * the point. That one lives on the GAME box, where a compromise is already a
+   * bad day; if it also opened this door then that bad day would include
+   * banning players and scheduling restarts. Two secrets, two blast radii.
+   *
+   * OPTIONAL, AND UNSET IS A SUPPORTED STATE THAT CLOSES THE DOOR ENTIRELY —
+   * every command call is refused with a line in the operator log naming this
+   * variable, and the console is otherwise unchanged. It is not made required
+   * for the same reason DISCORD_BOT_TOKEN is not: doing so would stop an
+   * already-deployed console at boot over a path it has never had.
+   *
+   * SIXTEEN CHARACTERS AT MINIMUM WHEN IT IS SET, matching INGEST_SECRET,
+   * because `.optional()` means "absent or valid" and never "absent or
+   * anything" — a one-character secret would be a door with a lock drawn on it.
+   *   openssl rand -hex 24
+   */
+  COMMAND_SECRET: z.string().min(16).optional(),
+
   // --- Game host SSH ---------------------------------------------------
   // The forced-command channel to the game box, for host status and
   // telemetry. All optional: with them unset, the Host page shows

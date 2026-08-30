@@ -3,12 +3,14 @@ import { z } from 'zod'
 import {
   ActionError,
   authorize,
+  authorizeWrite,
   errorResponse,
   licenseSchema,
   reasonSchema,
 } from '@/lib/actions'
 import * as audit from '@/lib/audit'
 import * as bans from '@/lib/bans'
+import { dispatchKick, type CommandOutcome } from '@/lib/commandOutcome'
 import * as incidents from '@/lib/incidents'
 import { kickPlayer, sshConfigured } from '@/lib/ssh'
 import { liveView } from '@/lib/state'
@@ -73,7 +75,21 @@ export async function GET(): Promise<Response> {
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('ban', 'write')
+    /**
+     * EITHER DOOR — a session, or `blitz-bot`'s `/brban` presenting the service
+     * credential and the Discord id of the admin who ran it (lib/service.ts).
+     *
+     * THE BAN RULES DO NOT MOVE, and that is the whole reason `/brban` comes
+     * through this route instead of writing the row itself: the
+     * already-banned refusal, the closed-case refusal, the duration converted
+     * to an absolute expiry HERE rather than taken from the caller, the
+     * immediate kick, the verdict, the permanent-ban sweep. A caller that could
+     * write `ringmaster-bans` directly would have none of them.
+     *
+     * THE GET ABOVE IS UNTOUCHED AND STAYS SESSION-BOUND. Listing bans is not
+     * something the bot needs and the credential does not open it.
+     */
+    const { actor } = await authorizeWrite('ban', req)
 
     const body = await req.json().catch(() => {
       throw new ActionError('Expected a JSON body.')
@@ -163,7 +179,18 @@ export async function POST(req: Request): Promise<Response> {
       (p) => p.license === input.license,
     )
 
-    let kicked: { attempted: boolean; ok: boolean; error?: string } = {
+    /**
+     * `attempted` AND `ok` ARE KEPT ALONGSIDE THE TYPED OUTCOME, not replaced by
+     * it. BanDialog branches on those two today and the ban path is not what
+     * #42 changed; what is added is the same {@link CommandOutcome} `/api/kick`
+     * now answers with, so `/brban` and `/brkick` describe the identical kick in
+     * identical words rather than in two shapes that differ by accident.
+     */
+    let kicked: {
+      attempted: boolean
+      ok: boolean
+      error?: string
+    } & Partial<CommandOutcome> = {
       attempted: false,
       ok: false,
     }
@@ -178,25 +205,28 @@ export async function POST(req: Request): Promise<Response> {
         detail: { becauseOf: 'ban.issue' },
       })
 
-      try {
-        // The message the player sees as they are dropped. Same words as the
-        // connect gate uses, so being removed and being refused read alike.
-        const msg =
-          expiresAt === null
-            ? `Banned: ${input.reason}`
-            : `Banned until ${new Date(expiresAt).toISOString().slice(0, 16).replace('T', ' ')} UTC: ${input.reason}`
+      // The message the player sees as they are dropped. Same words as the
+      // connect gate uses, so being removed and being refused read alike.
+      const msg =
+        expiresAt === null
+          ? `Banned: ${input.reason}`
+          : `Banned until ${new Date(expiresAt).toISOString().slice(0, 16).replace('T', ' ')} UTC: ${input.reason}`
 
-        const res = await kickPlayer(input.license, msg, commandId)
-        if (!res.ok) throw new Error(res.error ?? 'kick refused')
+      const outcome = await dispatchKick(() =>
+        kickPlayer(input.license, msg, commandId),
+      )
 
-        // ACCEPTED, not confirmed. The real outcome arrives as an event
-        // carrying this commandId; until it does the row stays honest about
-        // not knowing.
-        kicked = { attempted: true, ok: true }
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e)
-        await audit.resolve(ts, 'failed', message)
-        kicked = { attempted: true, ok: false, error: message }
+      if (outcome.outcome === 'failed') {
+        await audit.resolve(ts, 'failed', outcome.detail)
+        // `error` STAYS THE RAW DETAIL, which is what BanDialog has always shown
+        // as the toast description. The composed sentence is `/api/kick`'s, for
+        // a dialog whose whole subject is the kick.
+        kicked = { attempted: true, ok: false, error: outcome.detail, ...outcome }
+      } else {
+        // DISPATCHED, NOT CONFIRMED. The real outcome would arrive as an event
+        // carrying this commandId; until something sends one the row stays
+        // honest about not knowing, and so does `confirmed: false`.
+        kicked = { attempted: true, ok: true, ...outcome }
       }
     }
 

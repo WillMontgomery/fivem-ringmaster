@@ -256,6 +256,11 @@ sudo nano /etc/systemd/system/ringmaster.service
 Description=Ringmaster admin console
 After=network-online.target
 Wants=network-online.target
+# systemd gives up after five restarts in ten seconds by default, which is the
+# wrong behaviour for something that should keep trying at 3am. It belongs in
+# [Unit] even though the thing it governs is [Service]'s Restart= — put it in
+# [Service] and systemd drops it without failing, so the limit stays on.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -266,9 +271,6 @@ ExecStart=/usr/bin/npm run start
 
 Restart=always
 RestartSec=5
-# systemd gives up after five restarts in ten seconds by default, which is the
-# wrong behaviour for something that should keep trying at 3am.
-StartLimitIntervalSec=0
 
 # It talks to DynamoDB and to the game host, and reads one directory.
 NoNewPrivileges=true
@@ -292,6 +294,71 @@ sudo systemctl daemon-reload && sudo systemctl enable --now ringmaster
 ```bash
 systemctl status ringmaster --no-pager && journalctl -u ringmaster -n 30 --no-pager
 ```
+
+### Every box installed before this was written has that line in the wrong section
+
+**`StartLimitIntervalSec` sat in `[Service]` in this document for as long as
+there have been boxes, so the live unit has it there too — and systemd has been
+ignoring it the whole time.** An unknown key is not an error to systemd; it drops
+the directive, logs one line at load, and starts the service anyway. So a console
+installed from the earlier version has been running under exactly the default the
+directive was written to remove: five restarts in ten seconds, then systemd stops
+trying and leaves the unit in `failed`, where it stays until a human restarts it.
+Nothing looks wrong until the app is crash-looping, which is the one occasion the
+setting exists for.
+
+Ask the box rather than guessing:
+
+```bash
+systemd-analyze verify /etc/systemd/system/ringmaster.service
+```
+
+Silence is the pass. `Unknown key 'StartLimitIntervalSec' in section [Service],
+ignoring.` means this box is one of them. Delete the misplaced line, then put it
+back above `[Service]`, which is where `[Unit]` ends:
+
+```bash
+sudo sed -i '/^StartLimitIntervalSec=/d' /etc/systemd/system/ringmaster.service
+```
+
+```bash
+sudo sed -i '/^\[Service\]/i StartLimitIntervalSec=0\n' /etc/systemd/system/ringmaster.service
+```
+
+```bash
+sudo systemctl daemon-reload
+```
+
+**No restart.** This changes what systemd does the *next* time the process dies,
+not anything about the process running now — restarting would buy an outage and
+nothing else.
+
+The `sed` removes the directive and leaves the two comment lines that were above
+it stranded in `[Service]`, explaining a line that is no longer under them.
+systemd does not care; move them by hand if you do.
+
+```bash
+systemd-analyze verify /etc/systemd/system/ringmaster.service && systemctl show ringmaster -p StartLimitIntervalUSec
+```
+
+Nothing from the first. From the second, anything except `10s` — `10s` is the
+built-in default and means the directive is still not being read.
+
+> **`StartLimitIntervalSec=0` means "never give up", and that is a trade rather
+> than a free win.** For something whose job is to hold a connection open and
+> reconnect forever it is plainly right. The console is a web app behind Caddy,
+> and a unit that can never give up also never reaches `failed` — it restarts
+> every five seconds indefinitely and, to anything watching `systemctl is-failed`,
+> is indistinguishable from a console that is fine. `failed` is a state a monitor
+> could one day alert on; "restarting since Tuesday" is only visible to somebody
+> already reading the journal.
+>
+> This document keeps `0`, because there is no alerting on this box today and an
+> unattended recovery at 3am is worth more than a state nobody is watching. If
+> alerting ever arrives, revisit it: a finite window such as
+> `StartLimitIntervalSec=300` with `StartLimitBurst=10` still rides out a
+> transient failure but eventually stops and says so. Both go in `[Unit]` —
+> `StartLimitBurst` is the same kind of option and fails the same silent way.
 
 ---
 
@@ -344,6 +411,171 @@ by hitting the IP:
 ```bash
 curl -s https://www.cloudflare.com/ips-v4
 ```
+
+---
+
+## 6. `COMMAND_SECRET` — the Discord bot's door — CONSOLE box
+
+**The value is already set on this box**, in `/opt/ringmaster/.env.local`, and
+the same string is in `/opt/blitz-bot/.env`. This section is for the day the bot
+starts refusing commands, for rotating the value, and for rebuilding either
+side — not a step to come back and do later.
+
+`src/lib/env.ts` keeps it optional and the console still starts without it.
+Unset, the door is simply shut: `/brkick`, `/brban` and `/drain` are refused
+with a line in the journal naming this variable, and nothing else about the
+console changes.
+
+### What it is
+
+The credential `blitz-bot` presents when it asks this console to do something a
+bot cannot do itself. There are two such things. **The live kick** is tmux over
+SSH and only the CONSOLE box holds that channel. **Starting a maintenance
+window** is `POST /api/maintenance`, because `nothingToDeploy`, the
+branch-eligibility gate and the already-scheduled refusal live in that route and
+nowhere else — and the maintenance driver deploys any `scheduled` row it finds,
+so a bot writing that row straight into DynamoDB would start a restart no gate
+had looked at.
+
+**It authorises the caller, not the action.** Every check the route already
+makes still runs, on the same code, in the same order: the closed-case refusal
+on a kick and on a ban, the refusal to ban a license that is already banned,
+`nothingToDeploy`, the already-scheduled guard. Holding this secret cannot wave
+any of them through, because nothing it does runs after them — the gate hands
+back the acting human and stops. It is a second door into the same room, and
+never a way around what is in the room.
+
+### How the bot presents it
+
+Two headers, on a POST to one of three paths:
+
+| Header | Carries |
+|---|---|
+| `x-ringmaster-service` | the value of `COMMAND_SECRET` |
+| `x-ringmaster-actor` | the **Discord id of the admin who typed the command** |
+
+| Path | Command |
+|---|---|
+| `POST /api/kick` | `/brkick` |
+| `POST /api/bans` | `/brban` |
+| `POST /api/maintenance` | `/drain` |
+
+**Nothing else.** `/api/maintenance/force` — the button that skips the drain and
+restarts the box now — and `/api/maintenance/cancel` and `/api/bans/lift` are
+deliberately not on that list, and the console refuses them whatever the secret
+says. `src/lib/service.check.ts` fails the build if the routes and the list ever
+stop agreeing.
+
+> **`x-ringmaster-actor` is why the audit log is still worth reading.** The row
+> names the admin who ran the command — their license, their name, their Discord
+> id — never the bot. A log full of `blitz-bot` would answer a question nobody
+> asks. That id is not taken on trust either: the console asks Discord whether
+> that account holds `DISCORD_ADMIN_ROLE_ID` **right now**, and refuses on a
+> definitive no — not in the guild, or in it without the role.
+>
+> **An unanswered check is not a no.** If Discord times out, rate-limits, or the
+> bot token is unset, the call proceeds and a `discord.unresolved` audit row
+> records that it did. That is deliberate: `blitz-bot` does not relay a command
+> from somebody it does not believe is an admin, so this is the second opinion
+> rather than the first, and a bad minute at Discord must not stop every
+> moderation command in the guild. It is the same polarity the session path
+> uses, through the same function.
+
+### The value, and keeping the two copies the same
+
+The same string is in two files, both on the CONSOLE box:
+
+| File | Read by |
+|---|---|
+| `/opt/ringmaster/.env.local` | this console |
+| `/opt/blitz-bot/.env` | the bot |
+
+A new one is generated with:
+
+```bash
+openssl rand -base64 32
+```
+
+Write it into both files, then restart both services — each reads its
+environment once, at start, so a file the running process has not re-read is a
+file that is not yet in effect:
+
+```bash
+sudo systemctl restart ringmaster blitz-bot
+```
+
+### When the two copies disagree
+
+**A mismatch is a `401`, and a `401` looks like anything but a typo.** Every
+command from every admin stops working at the same moment, and what the guild
+sees is the bot reporting that the console refused it — which reads like an
+outage, or Discord, or somebody's permissions, and sends you off to check role
+ids and security groups. The journal is what says otherwise:
+
+```bash
+journalctl -u ringmaster -n 30 --no-pager | grep '\[service\]'
+```
+
+`the presented credential is not blitz-bot's` is a mismatch and nothing else.
+
+Compare the two files without putting either value on your screen or in your
+shell history:
+
+```bash
+for f in /opt/ringmaster/.env.local /opt/blitz-bot/.env; do sudo grep -m1 '^COMMAND_SECRET=' "$f" | cut -d= -f2- | tr -d '" \r' | sha256sum | cut -c1-12; done
+```
+
+Two identical lines mean the copies agree, two different lines mean they do not,
+and neither line is the secret — it is twelve characters of a hash of it, so
+this is safe on a shared screen and safe to paste into an issue. One line rather
+than two means the `grep` matched nothing in one of the files, which is its own
+answer.
+
+### If it leaks
+
+Whoever holds this string can ban players and restart the game server. That is
+the blast radius, and it is why every refused call is logged at error level
+rather than passed over quietly.
+
+**Rotation is generating a new one and restarting both services** — the two
+steps above, in that order. There is no revocation list and no second credential
+to fall back on; the old value stops working the moment the console restarts.
+
+### It is a different secret from `INGEST_SECRET`, on purpose
+
+`INGEST_SECRET` lives on the **GAME** box. If it also opened this door, then a
+compromise of the game host would come with the ability to ban players and
+schedule restarts. Two secrets, two blast radii. Do not reuse one for the other.
+
+### Where the bot connects
+
+**Over 443, through Cloudflare, like a browser — not over port 3000.** Port 3000
+is the peered link from the GAME box and stays that way; the bot is an ordinary
+HTTPS client of the public origin in `AUTH_URL`. It must **not** send an
+`Origin` header (the cross-origin guard in `src/middleware.ts` refuses a present,
+foreign one and allows an absent one — the same allowance the game box's push
+relies on).
+
+### Check it
+
+A call carrying a deliberately wrong credential should be refused without
+touching Discord or DynamoDB:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST https://ringmaster.example.com/api/kick -H 'x-ringmaster-service: definitely-wrong' -H 'content-type: application/json' -d '{}'
+```
+
+`401`. And the journal says so, loudly — every refused call does, because this
+credential can ban a player and restart the game server:
+
+```bash
+journalctl -u ringmaster -n 30 --no-pager | grep '\[service\]'
+```
+
+**`503` instead of `401` means `COMMAND_SECRET` is not set on this box**, which
+is the one distinction the response deliberately makes: an operator debugging a
+silent bot should not have to guess between "stale secret" and "never
+configured".
 
 ---
 

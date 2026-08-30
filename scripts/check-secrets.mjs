@@ -86,6 +86,22 @@ const RULES = [
     re: /\bINGEST_SECRET\s*[=:]\s*['"]?[A-Za-z0-9/+=_-]{12,}/,
     why: 'Shared secret for the game server push.',
   },
+  {
+    /**
+     * The same rule as INGEST_SECRET above, for the credential that opens the
+     * kick, ban and drain routes to `blitz-bot` (lib/service.ts).
+     *
+     * IT IS THE MORE DANGEROUS OF THE TWO TO LEAK, which is why it is not left
+     * to the ingest pattern's coattails: the ingest secret pushes state at us,
+     * and this one bans players and restarts the game server. It is also pasted
+     * into two repositories by hand — this one's `.env.local` and the bot's
+     * `.env` — and a value that lives in two places is a value with two chances
+     * to end up in a commit.
+     */
+    name: 'command secret with a value',
+    re: /\bCOMMAND_SECRET\s*[=:]\s*['"]?[A-Za-z0-9/+=_-]{12,}/,
+    why: 'Whoever holds this can ban players and restart the game server.',
+  },
 ]
 
 function walk(dir, out = []) {

@@ -12,6 +12,12 @@ import {
 import { isIdle } from './activity'
 import { ACTIVITY_COOKIE, IDLE_ERROR_CODE } from './idle'
 import { REVOKED_ERROR_CODE, REVOKED_MESSAGE } from './revocation'
+import {
+  isServiceCall,
+  serviceDeps,
+  serviceGate,
+  serviceRequest,
+} from './service'
 import { currentAdmin, type CurrentAdmin } from './session'
 
 /**
@@ -192,6 +198,67 @@ export async function authorize(
   }
 
   return { admin, actor }
+}
+
+/**
+ * What a write route gets, whichever door the request came through.
+ *
+ * NO `admin` FIELD, AND ITS ABSENCE IS THE POINT. `ActionContext.admin` is a
+ * `CurrentAdmin` — a live session, an avatar, a grants row — and a machine
+ * caller has none of those. A route that genuinely needs the signed-in person
+ * rather than the acting one keeps calling {@link authorize} and gets the wider
+ * object; a route offered through the service credential cannot accidentally
+ * reach for a session that is not there, because `tsc` does not know of one.
+ */
+export interface WriteContext {
+  actor: audit.Actor
+}
+
+/**
+ * Authorise a write from EITHER door: the signed-in admin, or the named machine
+ * caller in lib/service.ts.
+ *
+ * ONE BRANCH, IN ONE PLACE, for the reason every other choke point in this file
+ * exists: three routes each writing their own version of "is this the bot or a
+ * person" is three chances to get it wrong, and this repository has shipped the
+ * same one-line omission across five routes before now.
+ *
+ * THE HEADER PICKS THE DOOR AND OPENS NOTHING. Presenting
+ * `x-ringmaster-service` only means the request is judged as a service call —
+ * where it then needs the secret, an allowlisted path, and a named human who
+ * holds the Discord admin role right now. A browser cannot reach that path by
+ * adding a header, and adding one does not weaken the session path either: the
+ * two are exclusive, and neither is consulted twice.
+ *
+ * WHAT IT DOES NOT DO IS AS IMPORTANT AS WHAT IT DOES. It authorises the
+ * CALLER. Every check the route makes afterwards — `nothingToDeploy`, the
+ * already-scheduled guard, "that license is already banned", the closed-case
+ * refusals — runs exactly as it did, because none of them is here.
+ *
+ * ONLY THE THREE ROUTES IN `SERVICE_ROUTES` MAY CALL THIS, and `serviceGate`
+ * refuses on the path rather than trusting the import: wiring this into a
+ * fourth route gets a 403, not a fourth entrance. `service.check.ts` asserts
+ * that the routes calling this and the paths on that list are the same set, in
+ * both directions.
+ */
+export async function authorizeWrite(
+  action: ActionLabel,
+  req: Request,
+): Promise<WriteContext> {
+  if (!isServiceCall(req)) return await authorize(action, 'write')
+
+  const verdict = await serviceGate(serviceRequest(action, req), serviceDeps())
+
+  /**
+   * A MACHINE CODE RATHER THAN A SENTENCE, and no `code` field. `ActionError`'s
+   * message is written for an admin reading a dialog; this one is read by the
+   * bot, which turns it into words in Discord. The `code` slot stays empty
+   * because it exists for the browser client's own branching (see lib/api.ts),
+   * and there is no browser on this path.
+   */
+  if (!verdict.ok) throw new ActionError(verdict.error, verdict.status)
+
+  return { actor: verdict.actor }
 }
 
 /**
