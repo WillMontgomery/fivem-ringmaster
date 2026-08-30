@@ -216,8 +216,10 @@ import {
   MATCH_EVENT_LABEL,
   MATCH_PROGRESS_LABEL,
   WEAPON_UNAUTHORIZED_CLASS,
+  chatText,
   indefiniteArticle,
   isBracket,
+  isChatBlock,
   isCaseBracket,
   isResolution,
   killDiscrepancy,
@@ -696,6 +698,7 @@ const bracketCases: Array<[string, boolean]> = [
   ['match_end', true],
   ['kill', false],
   ['weapon_strip', false],
+  ['chat_block', false],
   // An open set: a kind from a newer gamemode is an event, not an edge.
   ['artifact', false],
   ['', false],
@@ -704,6 +707,80 @@ const bracketCases: Array<[string, boolean]> = [
 for (const [kind, expected] of bracketCases) {
   const got = isBracket({ at: NOW, kind })
   check(`isBracket(${JSON.stringify(kind)}) === ${expected}`, got === expected, got)
+}
+
+// ---------------------------------------------------------------------------
+// 4c-bis. A CHAT LINE THE GAMEMODE REFUSED TO DELIVER, AND WHAT IT SAID.
+// ---------------------------------------------------------------------------
+
+console.log('4c-bis. the refused chat row, and the player-authored text on it')
+
+for (const [kind, expected] of [
+  ['chat_block', true],
+  ['kill', false],
+  ['weapon_strip', false],
+  ['match_start', false],
+  // The near-miss. `close.js` drops a kind it does not recognise, so this shape
+  // cannot reach a row — but the predicate is where a typo would be silent.
+  ['chat_blocked', false],
+  ['', false],
+] as Array<[string, boolean]>) {
+  const got = isChatBlock({ at: NOW, kind })
+  check(`isChatBlock(${JSON.stringify(kind)}) === ${expected}`, got === expected, got)
+}
+
+/*
+ * THE LABEL IS THE MECHANICAL ONE, AND THAT IS THE POINT RATHER THAN AN
+ * OVERSIGHT. `labelFor` humanises `chat_block` to `Chat block`, which is the
+ * owner's own phrase for it — "Ideally I'd just like to see chat block in the
+ * timeline" — so a MATCH_EVENT_LABEL entry would be a second copy of a word that
+ * already agrees. `weapon_strip` is absent for the same reason and this pins
+ * both: if the fallback ever stops producing these, that is a real break.
+ */
+check(
+  'chat_block humanises to the owner’s own phrase with no map entry',
+  MATCH_EVENT_LABEL['chat_block'] === undefined &&
+    labelFor(MATCH_EVENT_LABEL, 'chat_block') === 'Chat block',
+  labelFor(MATCH_EVENT_LABEL, 'chat_block'),
+)
+
+/*
+ * ═══ THE TEXT IS CHOSEN BY THE PLAYER IT IS EVIDENCE AGAINST ═══
+ *
+ * So every shape it can arrive in is a shape this has to survive. The type says
+ * `string | null | undefined`, and the type is a promise about the SCHEMA rather
+ * than about the row: DynamoDB will hand back whatever was written, a row from
+ * an older gamemode has no `text` at all, and a marshalling fault could put a
+ * number there.
+ */
+const chatTextCases: Array<[unknown, string | null]> = [
+  ['join evilserver.com', 'join evilserver.com'],
+  // Trimmed, and empty becomes absent — a row that slipped through with blanks
+  // would otherwise render as `Chat block — ""`, which reads as the console
+  // having lost the message rather than there never having been one.
+  ['  spaced  ', 'spaced'],
+  ['', null],
+  ['   ', null],
+  [null, null],
+  [undefined, null],
+  // Not a string. `close.js` coerces, but this is the last reader before a page.
+  [42, null],
+  [{ evil: true }, null],
+  // Markup and entities survive VERBATIM. React escapes on the way out, so the
+  // job here is to change nothing: a value altered here would be double-encoded
+  // on the page and would misquote a player on a moderation record.
+  ['<script>alert(1)</script>', '<script>alert(1)</script>'],
+  ['a & b < c', 'a & b < c'],
+  ['مرحبا', 'مرحبا'],
+]
+
+for (const [input, expected] of chatTextCases) {
+  const got = chatText({ at: NOW, kind: 'chat_block', text: input as string })
+  check(
+    `chatText(${JSON.stringify(input)}) === ${JSON.stringify(expected)}`,
+    got === expected,
+    got,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -2139,6 +2216,109 @@ check(
 check(
   'the kill sentence is drawn for kills and for nothing else',
   /kind === 'kill'/.test(component?.text ?? ''),
+)
+
+/*
+ * ═══ THE REFUSED MESSAGE IS ON THE ROW, AND IS ASKED FOR RATHER THAN SPELLED ═══
+ *
+ * The owner, #244: "Ideally I'd just like to see chat block in the timeline, and
+ * the content of said blocked message." The row said `Chat block` and nothing
+ * else for a week while the game stored the text, which is the shape of failure
+ * this whole file exists for: a value written at one end, read at neither.
+ *
+ * THE PREDICATE IS PINNED, NOT THE LITERAL. `isChatBlock` is asked by the
+ * component the way `isBracket` and `isResolution` are — a kind spelled in JSX
+ * is a kind nothing checks — and the literal itself lives here, once.
+ */
+check(
+  'the refused chat row is chosen by the predicate, not by a literal in markup',
+  /isChatBlock\(entry\)/.test(component?.text ?? ''),
+)
+check(
+  'and the component reads the text through chatText',
+  /chatText\(entry\)/.test(component?.text ?? ''),
+)
+
+/*
+ * BREAK-WORDS, BECAUSE THIS IS THE ONLY PLAYER-CHOSEN STRING ON THE LIST. A URL
+ * is one unbroken token and the game stores up to 200 bytes of it; nothing else
+ * on this timeline needs wrapping because nothing else on it is chosen by the
+ * person it is evidence against. Without it the token runs past the card, which
+ * clips under the card's own overflow and takes the end of the evidence with it.
+ */
+/*
+ * IN A className, NOT ANYWHERE IN THE FILE -- the same lesson the raw-HTML check
+ * below had to learn, and this one was caught by mutation rather than by
+ * reading. Written as a bare substring, deleting `break-words` from the actual
+ * span left this GREEN, because the component's own comment explains what
+ * `break-words` is for. A gate satisfied by prose about the fix is a gate that
+ * passes while the fix is gone.
+ */
+check(
+  'the refused message is allowed to wrap',
+  /className="[^"]*\bbreak-words\b/.test(component?.text ?? ''),
+)
+
+/*
+ * AND THE MESSAGE ACTUALLY REACHES THE MARKUP. `chatText` being called proves
+ * the value was read; this proves it was drawn. Deleting the interpolation
+ * leaves a row that says `Chat block` and nothing else -- which is exactly the
+ * state #244 was raised about, and every other check here would still pass.
+ */
+/*
+ * ═══ THE MARKUP, NOT THE TOKEN -- AND THIS FILE HAS NOW LEARNED THAT THREE
+ * TIMES ═══
+ *
+ * A bare `{text}` grep passed with the interpolation DELETED, because the
+ * component's own comment explains what `{text}` is. `break-words` and
+ * `dangerouslySetInnerHTML` above each failed the same way and for the same
+ * reason: every one of these checks reads a source file that also contains
+ * PROSE ABOUT ITSELF, so a pattern loose enough to match the explanation is
+ * satisfied by a file where the thing explained is gone.
+ *
+ * Matching the quotation marks around it fixes that and pins a real decision at
+ * the same time. This is the only place on the console where a PLAYER'S words
+ * sit inside a sentence the console wrote; unquoted, `Chat block — join my
+ * server` reads as the console describing the incident rather than as the
+ * player being quoted, and on a moderation record that is the difference the
+ * stored text exists to make.
+ */
+check(
+  'the refused message is rendered, and rendered as a quotation',
+  /&ldquo;\{text\}&rdquo;/.test(component?.text ?? ''),
+)
+
+/*
+ * AND THE BRANCH THAT DRAWS IT IS REACHABLE. Asserting the interpolation alone
+ * is not enough and mutation proved it: replacing the guard with a constant
+ * false left `{text}` sitting in dead markup and every other check here green,
+ * with the page back to a bare `Chat block`. Source greps can only ever pin the
+ * shape, so the shape pinned has to include the thing that decides whether the
+ * shape runs.
+ */
+check(
+  'and the branch that draws it is reachable',
+  /\{text \? \(/.test(component?.text ?? ''),
+)
+
+/*
+ * AND IT IS NEVER MARKUP. React escapes a text child, which is what makes this
+ * structural — but the guarantee is only as good as the absence of the one
+ * escape hatch that would undo it, and this is a string a hostile player picked.
+ * The sweep in section 8 covers `src/components` generally; this names the file
+ * the player-authored text actually lands in.
+ */
+/*
+ * THE ATTRIBUTE, NOT THE WORD -- and the distinction was earned rather than
+ * anticipated. Written as a bare substring this failed on its first run, on the
+ * COMMENT in the component that warns against the very thing: a gate that
+ * forbids naming a hazard makes the hazard undocumentable, and the next person
+ * removes the sentence rather than the risk. Matching the `=` matches a JSX
+ * attribute and not prose about one.
+ */
+check(
+  'the timeline never sets raw HTML',
+  !/dangerouslySetInnerHTML\s*=/.test(component?.text ?? ''),
 )
 
 /*

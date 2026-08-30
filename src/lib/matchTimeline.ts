@@ -114,6 +114,37 @@ export interface MatchTimelineEntry {
   /** How they died — `fall`, `drowning`, `storm`, a weapon cause, … */
   cause?: string | null
   headshot?: boolean
+
+  /**
+   * `chat_block` entries only: the message the game refused to deliver.
+   *
+   * ═══ THE ONLY PLAYER-AUTHORED PROSE ON THIS LIST ═══
+   *
+   * Everything above is a fact the server measured — a timestamp, a licence it
+   * resolved, a weapon hash. This is what somebody typed, and it is on the row
+   * because the owner asked for it by name: the message was SHADOWED, so the
+   * sender saw it post and nobody else received it, and the record is the only
+   * place it exists.
+   *
+   * RENDERED AS TEXT, NEVER AS MARKUP. React escapes a text child, which is
+   * what makes that structural rather than a sanitiser somebody has to
+   * remember — see the note on the component. The game caps it at 200 bytes
+   * (`BR.ChatLimits.maxLength`, the length it already refuses to deliver past)
+   * and does not pre-escape it, so nothing here should unescape anything.
+   */
+  text?: string | null
+  /**
+   * Which rule refused it — `link`, `shortener`, `invite`, `social`, `script`.
+   *
+   * STORED AND NOT CURRENTLY DRAWN. The owner asked for "chat block in the
+   * timeline, and the content of said blocked message" and nothing else, and
+   * this console does not invent copy he has not asked for. It is typed here
+   * because it is on the row today and the next person to want it should find
+   * it described rather than have to go and read the gamemode.
+   */
+  reason?: string | null
+  /** `global` or `squad`. Stored, not drawn, for the reason `reason` is not. */
+  channel?: string | null
 }
 
 /**
@@ -148,6 +179,43 @@ export interface MatchFields {
 
 export function isKill(e: MatchTimelineEntry): boolean {
   return e.kind === 'kill'
+}
+
+/**
+ * A chat line the gamemode accepted and then delivered to nobody.
+ *
+ * A PREDICATE BESIDE {@link isKill} RATHER THAN A COMPARISON IN THE JSX, for
+ * the reason this module's header gives and {@link isBracket} repeats: a kind
+ * spelled in markup is a kind nothing checks. `check:timeline` pins the
+ * literal here and asserts the component asks this rather than asking itself.
+ */
+export function isChatBlock(e: MatchTimelineEntry): boolean {
+  return e.kind === 'chat_block'
+}
+
+/**
+ * The refused message, or null when the row does not carry one.
+ *
+ * WHY A FUNCTION FOR ONE FIELD. Three reasons, and the first is the one that
+ * matters: this value is chosen by the player it is evidence against, so
+ * everything that reads it should go through one place. It is typed
+ * `string | null | undefined` and arrives from DynamoDB, where a row written by
+ * an older gamemode has no `text` at all and a marshalling fault could put a
+ * number there — so the type is a promise about the schema, not about the row.
+ *
+ * TRIMMED, AND EMPTY BECOMES null. `close.js` already stores an empty string as
+ * null, and a row that slipped through with `"   "` would render as `Chat block
+ * — ""`, which reads as though the console lost the message rather than as
+ * though there was never one.
+ *
+ * NOT TRUNCATED HERE. The game caps the stored value; clipping again on the way
+ * to the page would be a second, quieter cap that disagrees with the first, and
+ * an admin reading half a message would have nothing telling them it was half.
+ */
+export function chatText(e: MatchTimelineEntry): string | null {
+  if (typeof e.text !== 'string') return null
+  const t = e.text.trim()
+  return t === '' ? null : t
 }
 
 /**
@@ -202,6 +270,12 @@ export function isBracket(e: MatchTimelineEntry): boolean {
  * it to `Weapon strip`, and a map entry spelling the identical string would be
  * a second place for one word to live and to rot. If it ever wants wording that
  * is not the mechanical one, that is the owner's to give.
+ *
+ * `chat_block` IS NOT IN IT EITHER, AND THAT ONE IS LUCKY AS WELL AS RIGHT. The
+ * fallback humanises it to `Chat block`, which is the owner's own phrase for it
+ * -- "Ideally I'd just like to see chat block in the timeline" -- so the
+ * mechanical word and the word he used are the same word, and a map entry would
+ * be a second copy of it.
  */
 export const MATCH_EVENT_LABEL: Record<string, string> = {
   match_created: 'Match formed',
