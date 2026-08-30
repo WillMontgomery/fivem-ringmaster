@@ -149,10 +149,21 @@ Open `ringmaster-grants` → *Indexes* → *Create index*:
 > behaviour: the `discordId` on a grants row is written **by hand when the admin
 > is granted**, not discovered automatically. FiveM only reports a `discord:`
 > identifier when the connecting player has Discord's activity integration
-> enabled on their end, which is opt-in. So an admin who has never connected
-> with it on has no discovered mapping — and without a manually-set `discordId`,
-> **they cannot log in at all.** That includes, awkwardly, the first admin.
-> `scripts/grant.mjs` therefore takes `--discord-id` explicitly.
+> enabled on their end, which is opt-in. That is why `scripts/grant.mjs` takes
+> `--discord-id` explicitly, and why the first admin's row has to be created
+> from the box before anybody can be attributed.
+
+> **ATTRIBUTION NO LONGER DEPENDS ON THIS TABLE ALONE**, and it had to stop
+> depending on it. Once the scopes went, an admin could be made an admin purely
+> in Discord — nobody runs `grant.mjs` for them — and every audit row they wrote
+> was signed `actorLicense: null`: their name unlinked in `/audit`, and their own
+> actions missing from their profile. So `currentAdmin()` falls back to
+> `ringmaster-player-ids` — the reverse index `/api/ingest` maintains from the
+> game's own connect events — and takes the license from there when it is
+> unambiguous. The grants row still wins when it exists, and several licenses
+> behind one Discord account still resolve to null rather than to a guess. **No
+> new IAM grant**: the console already reads and writes that table on ingest.
+> See `licenseForDiscordId` in `src/lib/grants.ts`.
 
 ### TTL, on the three tables that need it
 

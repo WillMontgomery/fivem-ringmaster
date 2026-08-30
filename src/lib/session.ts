@@ -2,7 +2,12 @@ import { cookies } from 'next/headers'
 
 import { auth } from '@/auth'
 import { ddb, tables } from '@/lib/dynamo'
-import { grantsForDiscordId, type Grant } from '@/lib/grants'
+import {
+  grantsForDiscordId,
+  licenseForDiscordId,
+  type Grant,
+} from '@/lib/grants'
+import { licensesFor } from '@/lib/players'
 import { isIdle } from '@/lib/activity'
 
 /**
@@ -14,11 +19,21 @@ import { isIdle } from '@/lib/activity'
  * chain is
  *
  *   session.user.id  ──►  account record  ──►  discordId  ──►  grants row
- *        (Auth.js)      (sessions table)       (Discord)      (license)
+ *        (Auth.js)      (sessions table)       (Discord)   │   (hand-written)
+ *                                                          │
+ *                                                          └►  identifier index
+ *                                                              (what the game saw)
  *
  * The account hop exists because the DynamoDB adapter stores the OAuth account
  * — provider and providerAccountId included — as an item under the user's
  * partition key. `providerAccountId` for Discord IS the Discord id.
+ *
+ * THE LAST HOP HAS TWO SOURCES AND THE SECOND ONE IS NOT REDUNDANT. The grants
+ * row is written by hand and there is no UI that writes it; the identifier index
+ * is written by the game on every connect. Since 4078d47 an admin can be made an
+ * admin without anybody touching DynamoDB, so "no grants row" stopped being a
+ * rare bootstrap state and became the normal one — see `licenseForDiscordId` in
+ * lib/grants.ts for the rules and for what a null costs.
  *
  * NOTHING ON THIS OBJECT DECIDES WHAT THE ADMIN MAY DO. `scopes` used to, and
  * there are no scopes any more: whoever holds the Discord admin role is a full
@@ -33,12 +48,17 @@ export interface CurrentAdmin {
   avatarUrl: string | null
   discordId: string | null
   /**
-   * The admin's own game license, or null when no grants row links this Discord
-   * account to one.
+   * The admin's own game license, or null when neither the grants row nor the
+   * game's own identifier index can name one unambiguously.
    *
    * NULL IS NOT A REDUCED ACCOUNT. It stamps `actorLicense: null` on their audit
    * rows and it makes Spectate refuse — there is no character on the server to
    * look through — and it withholds nothing else.
+   *
+   * IT IS ALSO NOT FREE, which is why it is now worth two reads to avoid. A null
+   * here unlinks their name everywhere a row is rendered AND empties the "actions
+   * taken" half of their own profile, because `audit.forPlayer` finds it with
+   * `actorLicense === license`. See `licenseForDiscordId` in lib/grants.ts.
    */
   license: string | null
   grant: Grant | null
@@ -73,10 +93,12 @@ async function discordIdFor(userId: string): Promise<string | null> {
  *
  * A signed-in person with NO grants row is not an error, not null, and no
  * longer even limited: they passed the Discord role gate, which is the whole
- * of authorisation, so they are a full admin whose actions are attributed by
- * name and Discord id rather than by license. That state is the first admin's
- * first login and every admin who has never joined the game server — it has to
- * render, not throw.
+ * of authorisation. It is ALSO no longer the same thing as having no license —
+ * the game's identifier index answers for anybody who has connected with
+ * Discord integration on, which since 4078d47 is most of the admins who have
+ * one. Only somebody the game has never seen under that Discord account is
+ * attributed by name and id alone, and that state — the first admin's first
+ * login — has to render, not throw.
  *
  * AN IDLE SESSION IS NULL HERE, not a separate state, and that is what makes
  * the timeout cost nothing at the call sites. Every page already handles "not
@@ -106,13 +128,25 @@ export async function currentAdmin(): Promise<CurrentAdmin | null> {
   const discordId = await discordIdFor(session.user.id)
   if (!discordId) return { name, avatarUrl, discordId: null, license: null, grant: null }
 
-  const grant = await grantsForDiscordId(discordId)
+  /**
+   * TWO SOURCES, AND THE SECOND ONE IS ONLY REACHED WHEN THE FIRST IS EMPTY —
+   * which matters here because AppShell's note about this function is still
+   * true: this is four sequential DynamoDB reads on every page render and the
+   * owner has already felt them. An admin with a grants row pays nothing new.
+   * An admin without one pays a single GetItem, and gets attribution they
+   * previously had no way to have. The whole rule lives in lib/grants.ts.
+   */
+  const { license, grant } = await licenseForDiscordId(discordId, {
+    granted: grantsForDiscordId,
+    seen: licensesFor,
+    log: (level, message) => console[level](message),
+  })
 
   return {
     name,
     avatarUrl,
     discordId,
-    license: grant?.license ?? null,
+    license,
     grant,
   }
 }
