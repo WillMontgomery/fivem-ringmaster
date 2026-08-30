@@ -311,6 +311,49 @@ if (dispatchFaults.length !== 1) {
       'outlives the fault.',
   )
 }
+
+/**
+ * AND THE SAME PROPERTY READ OFF THE SOURCE, BECAUSE `Function.length` HAS A
+ * HOLE AND A MUTATION FOUND IT.
+ *
+ * `Function.length` counts parameters BEFORE the first one with a default. So
+ *
+ *     export function dispatchFaults(state, dismissed = false)
+ *
+ * still reports `length === 1` and sails past the assertion above — while being
+ * exactly the change that assertion exists to stop, written in the way somebody
+ * would actually write it. Adding a dismiss flag is not a hostile act; it is a
+ * plausible afternoon, and it arrives with a default so nothing else has to
+ * change. That is precisely why the runtime check cannot be the only one.
+ *
+ * (`faults` in check-ddb-health.mjs is asserted the same way and has the same
+ * hole. Flagged rather than changed here — that gate is not this change's.)
+ */
+{
+  const src = code(read('src/lib/dispatchHealth.ts'))
+  const decl = /export function dispatchFaults\(([^)]*)\)/.exec(src)
+  if (!decl) {
+    fail('cannot find the dispatchFaults declaration to read its parameter list')
+  } else {
+    const params = decl[1]
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean)
+    if (params.length !== 1) {
+      fail(
+        `dispatchFaults is declared with ${params.length} parameters (${decl[1].trim()}), ` +
+          'expected exactly the reading',
+      )
+    }
+    if (params.some((p) => p.includes('='))) {
+      fail(
+        `dispatchFaults has a DEFAULT parameter (${decl[1].trim()}). Function.length ` +
+          'does not count those, so it is the one shape that passes the arity ' +
+          'assertion above while being the flag it forbids.',
+      )
+    }
+  }
+}
 for (const state of FAULTING) {
   const before = dispatchFaults(state)
   if (dispatchFaults('ok').length !== 0) {
