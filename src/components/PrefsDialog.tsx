@@ -157,7 +157,7 @@ export function PrefsDialog({ initialTheme }: { initialTheme: Theme }) {
             STATED, NOT OFFERED. The idle window is a server-wide constant on
             purpose — see lib/idle.ts. A security control whose own subject can
             set it to thirty days is not a control, and the people using this
-            console hold the scopes that restart the game server. It appears
+            console can restart the game server. It appears
             here because this is where a reader looks for it.
           */}
           <p className="flex items-start gap-2 rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">

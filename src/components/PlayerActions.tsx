@@ -48,10 +48,13 @@ import { postJson } from '@/lib/api'
  * the /preview harness drop it into the same top bar without a session.
  *
  * THE HELP TEXT IS GONE BUT ITS INFORMATION IS NOT. Everything the paragraph
- * said — they are connected, they are already banned, you lack the scope — is
- * now carried by the button that the fact applies to: enabled or disabled, with
- * the reason on hover. A disabled control with no explanation is a bug report
- * waiting to be filed, which is why nothing here is merely greyed out.
+ * said — they are connected, they are already banned — is now carried by the
+ * button the fact applies to, with the reason on hover.
+ *
+ * "YOU LACK THE SCOPE" WAS THE THIRD THING IT SAID, and that one is gone
+ * outright rather than relocated. There are no scopes (lib/grants.ts): whoever
+ * can open this profile can act from it, so no button here is ever greyed for a
+ * permission and no tooltip has a second branch explaining one.
  *
  * THE LICENSE IS ALREADY IN HAND, which is the whole reason these live here
  * rather than only on a form that asks you to paste one. Copying an identifier
@@ -84,7 +87,6 @@ export function PlayerActions({
   banned,
   online,
   adminOnline,
-  canBan,
 }: {
   license: string
   name: string
@@ -113,7 +115,6 @@ export function PlayerActions({
    * is no body in the world to put behind it.
    */
   adminOnline: boolean
-  canBan: boolean
 }) {
   const router = useRouter()
   const [banOpen, setBanOpen] = useState(false)
@@ -130,7 +131,8 @@ export function PlayerActions({
    * WHICH BUTTONS EXIST AND WHICH OF THEM WORK — ALL OF IT, FROM ONE FUNCTION.
    *
    * `const kick = { shown: !banned && online, enabled: canBan }` USED TO BE
-   * THIS LINE, with every word of its reasoning above it. The reasoning moved
+   * THIS LINE, with every word of its reasoning above it. (The `enabled` half
+   * has since gone entirely — no scope can withhold these buttons.) The reasoning moved
    * to `lib/actionBar.ts` unchanged; what changed is that it is no longer
    * written down twice. `ProfileView`'s loading skeleton has to draw the right
    * NUMBER of button-shaped rectangles before this component has rendered, so
@@ -147,7 +149,7 @@ export function PlayerActions({
    * correct rule with a call site that ignores it is the failure this repo
    * keeps shipping.
    */
-  const bar = actionBar({ banned, online, adminOnline, canBan })
+  const bar = actionBar({ banned, online, adminOnline })
 
   /**
    * Ask the game to point this admin's camera at this player (#192).
@@ -236,28 +238,23 @@ export function PlayerActions({
           lib/actionBar.ts for both. Nothing marks either gap: a caption or a
           ghost button explaining the absence would be text nobody asked for.
 
-          WHAT IS LEFT ON HOVER IS THE SCOPE. Without `ban` this button and the
-          one beside it disable the same way and say why, which is where the
-          removed "you can see this record but not act on it" paragraph went.
+          WHAT IS LEFT ON HOVER IS WHAT THE BUTTON DOES, and nothing else. The
+          scope branch that used to grey this button and the one beside it went
+          with the scopes themselves — see lib/actionBar.ts.
         */}
         {bar.kick.shown && (
           <Tooltip>
             <TooltipTrigger
               render={
-                <span
-                  className={bar.kick.enabled ? undefined : 'cursor-not-allowed'}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setKickOpen(true)}
                 />
               }
             >
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!bar.kick.enabled}
-                onClick={() => setKickOpen(true)}
-              >
-                <LogOut />
-                Kick
-              </Button>
+              <LogOut />
+              Kick
             </TooltipTrigger>
             {/*
               NO "not connected" BRANCH ANY MORE, and it is not an oversight:
@@ -267,47 +264,38 @@ export function PlayerActions({
               presence contradicts.
             */}
             <TooltipContent side="bottom">
-              {canBan
-                ? 'Remove them from the server now. Does not ban.'
-                : 'Kicking needs the ban scope, which this account does not have.'}
+              Remove them from the server now. Does not ban.
             </TooltipContent>
           </Tooltip>
         )}
 
         <Tooltip>
           <TooltipTrigger
-            render={<span className={canBan ? undefined : 'cursor-not-allowed'} />}
+            render={
+              banned ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLiftOpen(true)}
+                />
+              ) : (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setBanOpen(true)}
+                />
+              )
+            }
           >
-            {banned ? (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!canBan}
-                onClick={() => setLiftOpen(true)}
-              >
-                <ShieldOff />
-                Lift ban
-              </Button>
-            ) : (
-              <Button
-                variant="destructive"
-                size="sm"
-                disabled={!canBan}
-                onClick={() => setBanOpen(true)}
-              >
-                <BanIcon />
-                Ban
-              </Button>
-            )}
+            {banned ? <ShieldOff /> : <BanIcon />}
+            {banned ? 'Lift ban' : 'Ban'}
           </TooltipTrigger>
           <TooltipContent side="bottom">
-            {!canBan
-              ? 'Banning needs the ban scope, which this account does not have.'
-              : banned
-                ? `Let ${name} join again. The ban record is kept.`
-                : online
-                  ? 'Ban them. They are on the server, so it removes them immediately.'
-                  : 'Ban them. It applies the next time they try to join.'}
+            {banned
+              ? `Let ${name} join again. The ban record is kept.`
+              : online
+                ? 'Ban them. They are on the server, so it removes them immediately.'
+                : 'Ban them. It applies the next time they try to join.'}
           </TooltipContent>
         </Tooltip>
       </div>

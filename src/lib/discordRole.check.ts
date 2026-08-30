@@ -203,7 +203,7 @@ async function gate(
     const result = await enforceDiscordAdmin({
       discordId,
       actor: ACTOR,
-      scope: 'ban',
+      action: 'ban',
       deps,
     })
     return { threw: null, result }
@@ -252,8 +252,9 @@ async function main(): Promise<void> {
     rec.began[0],
   )
   check(
-    'role-removed: records the scope that was refused',
-    (rec.began[0]?.detail as { scope?: string } | undefined)?.scope === 'ban',
+    'role-removed: records which write was refused',
+    (rec.began[0]?.detail as { attempted?: string } | undefined)?.attempted ===
+      'ban',
     rec.began[0]?.detail,
   )
   check(

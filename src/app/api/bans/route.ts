@@ -24,7 +24,7 @@ import { liveView } from '@/lib/state'
  * A ban here is a RECORD ONLY. Writing the row does not remove anyone from the
  * server — enforcement happens when the banned license next connects and the
  * game host checks this table, and kicking someone already connected is a
- * separate action with its own scope. Issuing a ban against a player who is
+ * separate action on a separate route. Issuing a ban against a player who is
  * online right now therefore does nothing visible until they reconnect, and
  * the UI says so rather than implying otherwise.
  */
@@ -62,8 +62,8 @@ const issueSchema = z.object({
 
 export async function GET(): Promise<Response> {
   try {
-    // Reading the ban list needs `view`, not `ban`: a moderator who cannot
-    // issue bans still has to be able to see who is banned.
+    // A READ, so no Discord round trip — see `ActionIntent` in lib/actions.
+    // The label is for the audit log and authorises nothing.
     await authorize('view', 'read')
     return Response.json({ ok: true, bans: await bans.all() })
   } catch (e) {

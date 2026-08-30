@@ -57,21 +57,28 @@
  *      being able to show the bug it exists to show.
  *
  * ============================================================================
- * SPECTATE HAS NO SCOPE, AND SEVERAL ASSERTIONS HERE EXIST TO KEEP IT THAT WAY.
+ * NO CONTROL IN THIS BAR HAS A SCOPE, AND MOST OF THIS FILE EXISTS TO KEEP IT
+ * THAT WAY.
  *
- * It had one. `/api/spectate` authorised a `spectate` grant and this file
- * required it. The argument was sound — watching somebody is less destructive
- * than removing them, so it is trustable earlier — and it did not survive
- * contact with the fact that NOTHING IN THIS CONSOLE CAN GRANT A SCOPE. There
- * is no scopes UI; the only route is editing DynamoDB by hand; the owner does
- * not. Every admin got a greyed button and a sentence naming a grant no surface
- * hands out. The route moved to `view` in dba5a6a; the button, the prop, the
- * fixture and the truth-table column went with it.
+ * Spectate lost its scope first. `/api/spectate` authorised a `spectate` grant
+ * and this file required it. The argument was sound — watching somebody is less
+ * destructive than removing them, so it is trustable earlier — and it did not
+ * survive contact with the fact that NOTHING IN THIS CONSOLE COULD GRANT A
+ * SCOPE. There was no scopes UI; the only route was editing DynamoDB by hand;
+ * the owner does not. Every admin got a greyed button and a sentence naming a
+ * grant no surface hands out. The route moved to `view` in dba5a6a; the button,
+ * the prop, the fixture and a truth-table column went with it.
+ *
+ * `canBan` THEN WENT THE SAME WAY, and took the entire scope system with it
+ * (lib/grants.ts). Anyone who can sign in is a full admin. So `ActionState` is
+ * gone, `enabled` is gone from every control, the truth table halved a second
+ * time, and Kick — which used to grey itself on `canBan` while the route
+ * authorised `kick` — is simply drawn or absent like everything else.
  *
  * THE ASSERTIONS THAT REMAIN ARE THEREFORE NEGATIVE ONES — that no `enabled`
- * has crept back onto Spectate, that no scope sentence has, that the profile
- * page reads no spectate grant. A wall with no door is easy to rebuild by
- * instinct, because gating things feels careful.
+ * has crept back onto any control, that no scope sentence has, that the profile
+ * page reads no grant. A wall with no door is easy to rebuild by instinct,
+ * because gating things feels careful.
  *
  * ============================================================================
  * THESE CHECKS ARE WRITTEN TO BE ABLE TO FAIL, and the mutations they were
@@ -85,11 +92,11 @@
  *   `{true && (` at the JSX gate                     fails B
  *   `{online && (` at the JSX gate                   fails B
  *   deleting `adminOnline` from the page's props     fails B (and tsc)
- *   `disabled={!bar.kick.enabled}` → `disabled={false}`   fails B
- *   re-adding a scope gate to the Spectate button    fails B
- *   re-adding `can(license, 'spectate')` to the page fails B
+ *   re-adding `disabled={}` to the Kick button        fails B
+ *   re-adding a scope gate to any button             fails B
+ *   re-adding `can(license, …)` to the page           fails B
  *   sending the command before `audit.begin`         fails C
- *   `authorize('spectate', 'write')` on the route    fails C
+ *   `authorize(…, 'read')` on the spectate route      fails C
  *   dropping `admin-offline` from the harness        fails D
  */
 
@@ -162,17 +169,17 @@ console.log('A. actionBar — the complete truth table')
 /**
  * EVERY COMBINATION, not a hand-picked handful.
  *
- * Four booleans is sixteen rows, which is small enough to enumerate and large
- * enough that no reviewer would have written them all out by hand. The
- * expectations are computed from the SPECIFICATION — the sentences in #192 and
- * the two owner quotes about Kick — rather than by calling the function, so
- * this is a second statement of the rule and not an echo of the first.
+ * Three booleans is eight rows, small enough to enumerate and large enough that
+ * no reviewer would have written them all out by hand. The expectations are
+ * computed from the SPECIFICATION — the sentences in #192 and the two owner
+ * quotes about Kick — rather than by calling the function, so this is a second
+ * statement of the rule and not an echo of the first.
  *
- * IT WAS THIRTY-TWO ROWS OVER FIVE BOOLEANS. `canSpectate` was the fifth and it
- * is gone, so the table halved. THAT SHRINKAGE IS THE POINT AND NOT A LOSS OF
- * COVERAGE: the sixteen rows it dropped differed only in a scope no code reads,
- * and each one asserted that a button greys for a grant nothing can issue.
- * Rows that describe nothing are not evidence.
+ * IT WAS THIRTY-TWO ROWS OVER FIVE BOOLEANS, THEN SIXTEEN, NOW EIGHT.
+ * `canSpectate` went first, `canBan` second, and the table halved each time.
+ * THAT SHRINKAGE IS THE POINT AND NOT A LOSS OF COVERAGE: every row it dropped
+ * differed only in a scope no code reads, and each asserted that a button greys
+ * for a grant nothing can issue. Rows that describe nothing are not evidence.
  */
 const BOOLS = [false, true] as const
 let rows = 0
@@ -180,38 +187,31 @@ let rows = 0
 for (const banned of BOOLS) {
   for (const online of BOOLS) {
     for (const adminOnline of BOOLS) {
-      for (const canBan of BOOLS) {
-        const input: ActionBarInputs = {
-          banned,
-          online,
-          adminOnline,
-          canBan,
-        }
-        rows++
+      const input: ActionBarInputs = { banned, online, adminOnline }
+      rows++
 
-        // The specification, restated:
-        //   Kick exists when there is somebody present and unbanned to kick.
-        //   Spectate exists when BOTH people are in the game.
-        //   The one remaining scope decides only whether Kick works.
-        const wantKickShown = online && !banned
-        const wantSpectateShown = online && adminOnline
-        const want = {
-          kick: { shown: wantKickShown, enabled: canBan },
-          // NO `enabled` KEY AT ALL, and `check` compares serialised shapes, so
-          // re-adding one — even `enabled: true` — fails every row here. That
-          // is deliberate: a constant `enabled` is what a call site reads to
-          // justify keeping a `disabled={}` branch that can never fire.
-          spectate: { shown: wantSpectateShown },
-          buttons: 1 + (wantKickShown ? 1 : 0) + (wantSpectateShown ? 1 : 0),
-        }
-
-        check(JSON.stringify(input), actionBar(input), want)
+      // The specification, restated:
+      //   Kick exists when there is somebody present and unbanned to kick.
+      //   Spectate exists when BOTH people are in the game.
+      //   Nothing decides whether either of them WORKS — no scope is left.
+      const wantKickShown = online && !banned
+      const wantSpectateShown = online && adminOnline
+      // NO `enabled` KEY ON EITHER CONTROL, and `check` compares serialised
+      // shapes, so re-adding one — even `enabled: true` — fails every row here.
+      // That is deliberate: a constant `enabled` is what a call site reads to
+      // justify keeping a `disabled={}` branch that can never fire.
+      const want = {
+        kick: { shown: wantKickShown },
+        spectate: { shown: wantSpectateShown },
+        buttons: 1 + (wantKickShown ? 1 : 0) + (wantSpectateShown ? 1 : 0),
       }
+
+      check(JSON.stringify(input), actionBar(input), want)
     }
   }
 }
 
-if (rows !== 16) fail('rule', `enumerated ${rows} rows, expected 16`)
+if (rows !== 8) fail('rule', `enumerated ${rows} rows, expected 8`)
 console.log(`  ok    ${rows} rows`)
 
 /**
@@ -228,37 +228,50 @@ console.log('\nA. actionBar — the properties, stated independently')
   for (const banned of BOOLS)
     for (const online of BOOLS)
       for (const adminOnline of BOOLS)
-        for (const canBan of BOOLS)
-          all.push({ banned, online, adminOnline, canBan })
+        all.push({ banned, online, adminOnline })
 
-  // 1. THE SCOPE NEVER HIDES ANYTHING. Hidden means "there is nobody to do this
-  //    to"; a permission you lack is a different sentence and stays visible.
+  /**
+   * 1. THE BAR IS A FUNCTION OF THE THREE PRESENCE FACTS AND NOTHING ELSE.
+   *
+   * PROPERTIES 1 AND 1b USED TO LIVE HERE and both were about a scope: that a
+   * scope never HID anything, and that Spectate did not vary with one at all.
+   * They cannot be stated now — there is no permission left to vary — so this
+   * says the thing they were protecting instead, from the other direction.
+   *
+   * ANY EXTRA INPUT IS IGNORED. A future `canBan` handed back in by a call site
+   * that was never updated must change nothing, which is what stops a scope
+   * being reintroduced quietly: it would have to change this function's
+   * signature, in the open, rather than arriving as one more property on an
+   * object literal.
+   */
   for (const i of all) {
-    const withScopes = actionBar({ ...i, canBan: true })
-    const bar = actionBar(i)
-    if (
-      bar.kick.shown !== withScopes.kick.shown ||
-      bar.spectate.shown !== withScopes.spectate.shown ||
-      bar.buttons !== withScopes.buttons
-    ) {
-      fail('rule', `a scope changed what is DRAWN: ${JSON.stringify(i)}`)
+    const withJunk = actionBar({
+      ...i,
+      // A scope-shaped extra, cast because `ActionBarInputs` no longer has one
+      // — which is itself the point.
+      ...({ canBan: false, canSpectate: false } as Partial<ActionBarInputs>),
+    })
+    if (JSON.stringify(withJunk) !== JSON.stringify(actionBar(i))) {
+      fail('rule', `a permission-shaped input changed the bar: ${JSON.stringify(i)}`)
       break
     }
   }
 
   /**
-   * 1b. SPECTATE IS NOT A FUNCTION OF THE SCOPE AT ALL, which is stronger than
-   *     property 1 and is the one that would catch the whole feature being put
-   *     back. `canBan` is the only scope left, so if a `canSpectate` ever
-   *     returns it will arrive alongside it — and anything that makes Spectate
-   *     vary with a permission fails here regardless of which permission.
+   * 1b. KICK CARRIES NO `enabled`, for the same reason Spectate does not.
+   *
+   * It had one until the scopes went, and it is the control most likely to get
+   * one back: kicking feels like the thing a junior moderator should be trusted
+   * with first. If that judgement is ever made again it must be made in
+   * lib/actionBar.ts on purpose, not restored by a call site keeping a
+   * `disabled={}` branch alive.
    */
   for (const i of all) {
-    if (
-      actionBar({ ...i, canBan: true }).spectate.shown !==
-      actionBar({ ...i, canBan: false }).spectate.shown
-    ) {
-      fail('rule', `a scope changed whether Spectate is drawn: ${JSON.stringify(i)}`)
+    if ('enabled' in actionBar(i).kick) {
+      fail(
+        'rule',
+        `Kick has an \`enabled\` again — no scope is behind it: ${JSON.stringify(i)}`,
+      )
       break
     }
   }
@@ -349,10 +362,10 @@ const PROFILE_PAGE = 'src/app/players/[license]/page.tsx'
   }
 
   /**
-   * THE BAR IS BUILT FROM ALL FOUR INPUTS. Dropping one from this call is the
+   * THE BAR IS BUILT FROM ALL THREE INPUTS. Dropping one from this call is the
    * cheapest possible way to break the feature while leaving the rule correct
-   * — `actionBar({ banned, online, canBan })` type-errors today, but a future
-   * optional field would not.
+   * — `actionBar({ banned, online })` type-errors today, but a future optional
+   * field would not.
    */
   const call = /const\s+bar\s*=\s*actionBar\(\{([^}]*)\}\)/.exec(code)
   if (!call) {
@@ -374,7 +387,7 @@ const PROFILE_PAGE = 'src/app/players/[license]/page.tsx'
      * Shorthand also means a renamed prop is a compile error rather than a
      * silent literal, which is the property worth having.
      */
-    for (const field of ['banned', 'online', 'adminOnline', 'canBan']) {
+    for (const field of ['banned', 'online', 'adminOnline']) {
       if (!new RegExp(`(^|[{,\\s])${field}\\s*(,|$)`).test(args.trim())) {
         fail(
           'call-site',
@@ -407,7 +420,16 @@ const PROFILE_PAGE = 'src/app/players/[license]/page.tsx'
      * one that can be fired twice before the first request lands.
      */
     ['{bar.spectate.shown && (', 'Spectate', 'watching'],
-    ['{bar.kick.shown && (', 'Kick', '!bar.kick.enabled'],
+    /**
+     * KICK EXPECTS NO `disabled` ATTRIBUTE AT ALL — that is what `null` means
+     * below, and it is an assertion rather than an omission.
+     *
+     * It read `!bar.kick.enabled`. Kicking is behind a dialog, so there is no
+     * double-click to guard, and there is no longer a scope to withhold it: a
+     * `disabled` on this button now could only be a permission coming back or a
+     * dead branch, and both should fail here.
+     */
+    ['{bar.kick.shown && (', 'Kick', null],
   ] as const) {
     const block = jsxBlock(code, gate)
     if (block === null) {
@@ -433,7 +455,14 @@ const PROFILE_PAGE = 'src/app/players/[license]/page.tsx'
      * the grant got a live button. Read the attribute.
      */
     const disabled = /disabled=\{([^}]*)\}/.exec(block)
-    if (!disabled) {
+    if (enabled === null) {
+      if (disabled) {
+        fail(
+          'call-site',
+          `the ${label} button has a \`disabled={${disabled[1]?.trim()}}\` again — nothing withholds it, so this is either a scope returning or a branch that can never fire`,
+        )
+      }
+    } else if (!disabled) {
       fail('call-site', `the ${label} button has no disabled attribute at all`)
     } else if (!disabled[1]?.includes(enabled)) {
       fail(
@@ -482,14 +511,14 @@ const PROFILE_PAGE = 'src/app/players/[license]/page.tsx'
       `${PLAYER_ACTIONS} names a Spectate scope sentence again — the scope was removed because nothing in this console can grant one`,
     )
   }
-  if (/bar\.spectate\.enabled/.test(code)) {
+  if (/bar\.\w+\.enabled/.test(code)) {
     fail(
       'call-site',
-      `${PLAYER_ACTIONS} reads \`bar.spectate.enabled\` — Spectate is drawn or absent, never greyed`,
+      `${PLAYER_ACTIONS} reads an \`.enabled\` off the bar — every control here is drawn or absent, never greyed`,
     )
   }
-  if (/canSpectate/.test(code)) {
-    fail('call-site', `${PLAYER_ACTIONS} has a canSpectate again`)
+  if (/canSpectate|canBan/.test(code)) {
+    fail('call-site', `${PLAYER_ACTIONS} has a scope prop again`)
   }
 }
 
@@ -517,15 +546,16 @@ const PROFILE_PAGE = 'src/app/players/[license]/page.tsx'
   // The admin's presence reaches the bar. Passed-but-unread is its own defect,
   // and read-but-unpassed does not compile.
   //
-  // `canSpectate={moderation.canSpectate}` WAS THE SECOND ENTRY HERE and went
-  // with the scope; the negative below is what stops it drifting back in.
+  // `canSpectate={moderation.canSpectate}` AND `canBan={moderation.canBan}`
+  // WERE THE OTHER TWO ENTRIES HERE and both went with the scopes; the negative
+  // below is what stops either drifting back in.
   for (const prop of ['adminOnline={moderation.adminOnline}']) {
     if (!code.includes(prop)) {
       fail('call-site', `${PROFILE_VIEW} does not hand \`${prop}\` to PlayerActions`)
     }
   }
-  if (/canSpectate/.test(code)) {
-    fail('call-site', `${PROFILE_VIEW} carries a canSpectate again`)
+  if (/canSpectate|canBan/.test(code)) {
+    fail('call-site', `${PROFILE_VIEW} carries a scope prop again`)
   }
 }
 
@@ -545,21 +575,23 @@ const PROFILE_PAGE = 'src/app/players/[license]/page.tsx'
     )
   }
   /**
-   * THE PAGE READS NO SPECTATE GRANT, and this assertion is the exact inverse
-   * of the one it replaces (`if (!/can\(admin\.license, 'spectate'\)/)`).
+   * THE PAGE READS NO GRANT AT ALL, and this assertion is the exact inverse of
+   * the one it replaces (`if (!/can\(admin\.license, 'spectate'\)/)`).
    *
-   * The read was not merely useless. It cost a DynamoDB call in the page's hot
-   * batch to fetch a boolean that was false for every account on the server,
-   * and its only effect was to grey a working button.
+   * IT WAS NARROWED TO `spectate` AND IS NOW ANY `can(` CALL. The spectate read
+   * was not merely useless — it cost a DynamoDB call in the page's hot batch to
+   * fetch a boolean that was false for every account on the server, and its only
+   * effect was to grey a working button. `can(admin.license, 'ban')` sat in the
+   * same batch and has gone the same way, along with `can` itself.
    */
-  if (/can\(admin\.license,\s*'spectate'\)/.test(code)) {
+  if (/\bcan\(/.test(code)) {
     fail(
       'call-site',
-      `${PROFILE_PAGE} reads a spectate grant again — /api/spectate authorises \`view\`, and no surface in this console can issue a \`spectate\``,
+      `${PROFILE_PAGE} reads a grant again — there are no scopes, and lib/grants.ts exports no \`can\``,
     )
   }
-  if (/canSpectate/.test(code)) {
-    fail('call-site', `${PROFILE_PAGE} carries a canSpectate again`)
+  if (/canSpectate|canBan/.test(code)) {
+    fail('call-site', `${PROFILE_PAGE} carries a scope prop again`)
   }
   for (const prop of ['adminOnline:']) {
     if (!code.includes(prop)) {
@@ -582,23 +614,25 @@ const ROUTE = 'src/app/api/spectate/route.ts'
   const code = codeOf(read(ROUTE))
 
   /**
-   * THE SCOPE IS `view`, AND THIS ASSERTION USED TO REQUIRE `spectate`.
+   * WHAT IS ASSERTED IS THE INTENT, AND ONLY THE INTENT.
    *
-   * A separate scope was the original design and the argument for it was good:
-   * watching somebody is less destructive than removing them, so it is a thing
-   * a trainee could hold earlier. It was still wrong, because NOTHING IN THIS
-   * CONSOLE CAN GRANT A SCOPE -- there is no scopes UI, the only route is
-   * editing DynamoDB by hand, and the owner does not. The check built a wall
-   * with no door and the feature shipped unreachable.
+   * This required `spectate`, then `view`, and now names no scope at all — the
+   * first argument to `authorize()` is an audit LABEL (see `ActionLabel` in
+   * lib/actions.ts) and authorises nothing. A separate scope was the original
+   * design and the argument for it was good: watching somebody is less
+   * destructive than removing them, so it is a thing a trainee could hold
+   * earlier. It was still wrong, because NOTHING IN THIS CONSOLE COULD GRANT A
+   * SCOPE, and that reasoning eventually took all of them.
    *
-   * WHAT IS STILL ASSERTED IS THE INTENT, and that half was never the problem.
-   * `write` is what re-reads the grant live and re-checks Discord; a read
-   * intent would skip both. The scope moved, the freshness requirement did not.
+   * `write` IS THE HALF THAT WAS NEVER THE PROBLEM AND IS NOW THE WHOLE CHECK.
+   * It is what re-checks Discord at the moment of action; a read intent would
+   * skip it, and skipping it on this route would mean spectating was authorised
+   * by nothing but a session.
    */
-  if (!/authorize\(\s*'view',\s*'write'\s*\)/.test(code)) {
+  if (!/authorize\([^)]*'write'\s*\)/.test(code)) {
     fail(
       'transport',
-      `${ROUTE} does not authorise on the view scope as a WRITE (a read intent skips the Discord re-check, and a granular scope nothing can grant is a wall with no door)`,
+      `${ROUTE} does not authorise as a WRITE — a read intent skips the Discord re-check, which is the only authorisation there is`,
     )
   }
 
@@ -721,18 +755,19 @@ console.log('\nD. /preview/profile — each half of the rule is falsifiable by e
       )
     }
     /**
-     * AND NO FIXTURE HOLDS A SPECTATE SCOPE BACK, because none can.
+     * AND NO FIXTURE HOLDS ANY SCOPE BACK, because none can.
      *
      * This assertion used to REQUIRE `canBan: true, canSpectate: false` — the
      * `spectate-noscope` case, "what every admin's grant row looks like the day
      * this ships". It shipped, every admin's row looked like that forever, and
-     * the button was greyed for all of them. The fixture and the state it
-     * depicted are both gone; what is left is the check that they stay gone.
+     * the button was greyed for all of them. That fixture went, then `noscope`
+     * went with `canBan` itself. What is left is the check that they stay gone:
+     * there is no greyed state anywhere on this bar for a fixture to show.
      */
-    if (/canSpectate/.test(body)) {
+    if (/canSpectate|canBan/.test(body)) {
       fail(
         'harness',
-        'a MOD_CASES fixture carries `canSpectate` again — Spectate has no scope, so there is no greyed state for a fixture to show',
+        'a MOD_CASES fixture carries a scope again — no control in this bar has a permission behind it, so there is no greyed state to show',
       )
     }
     // And one where both are in-game, or nothing shows the button at all.

@@ -2,22 +2,28 @@ import { cookies } from 'next/headers'
 
 import { auth } from '@/auth'
 import { ddb, tables } from '@/lib/dynamo'
-import { grantsForDiscordId, type Grant, type Scope } from '@/lib/grants'
+import { grantsForDiscordId, type Grant } from '@/lib/grants'
 import { isIdle } from '@/lib/activity'
 
 /**
  * Who is signed in, in the terms the rest of the system speaks.
  *
  * THE MAPPING PROBLEM, stated once: Discord tells us who logged in, but every
- * grant, ban and audit row keys on the game LICENSE. Auth.js's session gives
- * us its own internal user id — not even the Discord id. So the chain is
+ * ban, audit row and game-side record keys on the game LICENSE. Auth.js's
+ * session gives us its own internal user id — not even the Discord id. So the
+ * chain is
  *
  *   session.user.id  ──►  account record  ──►  discordId  ──►  grants row
- *        (Auth.js)      (sessions table)       (Discord)     (license, scopes)
+ *        (Auth.js)      (sessions table)       (Discord)      (license)
  *
  * The account hop exists because the DynamoDB adapter stores the OAuth account
  * — provider and providerAccountId included — as an item under the user's
  * partition key. `providerAccountId` for Discord IS the Discord id.
+ *
+ * NOTHING ON THIS OBJECT DECIDES WHAT THE ADMIN MAY DO. `scopes` used to, and
+ * there are no scopes any more: whoever holds the Discord admin role is a full
+ * admin, and that role is the only authorisation input in the system. The last
+ * hop is kept for ATTRIBUTION, not permission — see lib/grants.ts.
  */
 
 export interface CurrentAdmin {
@@ -26,9 +32,15 @@ export interface CurrentAdmin {
   /** Discord avatar URL, persisted by the adapter from the OAuth profile. */
   avatarUrl: string | null
   discordId: string | null
-  /** null until a grants row links this Discord account to a license. */
+  /**
+   * The admin's own game license, or null when no grants row links this Discord
+   * account to one.
+   *
+   * NULL IS NOT A REDUCED ACCOUNT. It stamps `actorLicense: null` on their audit
+   * rows and it makes Spectate refuse — there is no character on the server to
+   * look through — and it withholds nothing else.
+   */
   license: string | null
-  scopes: Scope[]
   grant: Grant | null
 }
 
@@ -56,14 +68,15 @@ async function discordIdFor(userId: string): Promise<string | null> {
 }
 
 /**
- * The signed-in admin, resolved to license and scopes — or null when nobody
- * is signed in.
+ * The signed-in admin, resolved to a license where one exists — or null when
+ * nobody is signed in.
  *
- * A signed-in person with NO grants row is not an error and not null: they
- * passed the Discord role gate but nobody has granted them anything yet, so
- * they get an empty scope list and a sidebar that says so. That state is the
- * first admin's first login, every time a new moderator joins, and the day
- * after someone's grants are revoked — it has to render, not throw.
+ * A signed-in person with NO grants row is not an error, not null, and no
+ * longer even limited: they passed the Discord role gate, which is the whole
+ * of authorisation, so they are a full admin whose actions are attributed by
+ * name and Discord id rather than by license. That state is the first admin's
+ * first login and every admin who has never joined the game server — it has to
+ * render, not throw.
  *
  * AN IDLE SESSION IS NULL HERE, not a separate state, and that is what makes
  * the timeout cost nothing at the call sites. Every page already handles "not
@@ -91,7 +104,7 @@ export async function currentAdmin(): Promise<CurrentAdmin | null> {
   const avatarUrl = session.user.image ?? null
 
   const discordId = await discordIdFor(session.user.id)
-  if (!discordId) return { name, avatarUrl, discordId: null, license: null, scopes: [], grant: null }
+  if (!discordId) return { name, avatarUrl, discordId: null, license: null, grant: null }
 
   const grant = await grantsForDiscordId(discordId)
 
@@ -100,7 +113,6 @@ export async function currentAdmin(): Promise<CurrentAdmin | null> {
     avatarUrl,
     discordId,
     license: grant?.license ?? null,
-    scopes: grant?.scopes ?? [],
     grant,
   }
 }

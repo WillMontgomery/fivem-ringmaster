@@ -34,11 +34,8 @@ function isActive(b: Ban, now: number): boolean {
 
 export function ModerationBoard({
   initial,
-  canBan,
 }: {
   initial: Ban[]
-  /** Drives whether the form is offered. The API re-checks regardless. */
-  canBan: boolean
 }) {
   const [rows, setRows] = useState<Ban[]>(initial)
   const [now, setNow] = useState(() => Date.now())
@@ -167,62 +164,60 @@ export function ModerationBoard({
   return (
     <>
       <div className="space-y-4">
-        {canBan && (
-          <Card className="surface-edge gap-0 px-5 py-4">
-            <h2 className="text-sm font-medium">Issue a ban</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Recorded against the license. It takes effect the next time that
-              player connects — it does not remove anyone who is online now.
-            </p>
+        <Card className="surface-edge gap-0 px-5 py-4">
+          <h2 className="text-sm font-medium">Issue a ban</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Recorded against the license. It takes effect the next time that
+            player connects — it does not remove anyone who is online now.
+          </p>
 
-            <div className="mt-4 grid gap-3 md:grid-cols-[2fr_1fr]">
-              <div className="space-y-1.5">
-                <label htmlFor="ban-license" className="text-xs uppercase tracking-wider text-muted-foreground">
-                  License
-                </label>
-                <Input
-                  id="ban-license"
-                  value={license}
-                  onChange={(e) => setLicense(e.target.value)}
-                  placeholder="license:0123abcd…"
-                  className="font-mono text-sm"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="ban-days" className="text-xs uppercase tracking-wider text-muted-foreground">
-                  Days (blank = permanent)
-                </label>
-                <Input
-                  id="ban-days"
-                  value={days}
-                  onChange={(e) => setDays(e.target.value)}
-                  inputMode="numeric"
-                  placeholder="7"
-                />
-              </div>
-            </div>
-
-            <div className="mt-3 space-y-1.5">
-              <label htmlFor="ban-reason" className="text-xs uppercase tracking-wider text-muted-foreground">
-                Reason — shown to the player
+          <div className="mt-4 grid gap-3 md:grid-cols-[2fr_1fr]">
+            <div className="space-y-1.5">
+              <label htmlFor="ban-license" className="text-xs uppercase tracking-wider text-muted-foreground">
+                License
               </label>
-              <Textarea
-                id="ban-reason"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                rows={2}
-                placeholder="Aimbot, match 3 — clip in #reports"
+              <Input
+                id="ban-license"
+                value={license}
+                onChange={(e) => setLicense(e.target.value)}
+                placeholder="license:0123abcd…"
+                className="font-mono text-sm"
               />
             </div>
-
-            <div className="mt-3 flex justify-end">
-              <Button onClick={submit} disabled={busy || !license.trim() || reason.trim().length < 3}>
-                {busy ? <Loader2 className="animate-spin" /> : <BanIcon />}
-                Issue ban
-              </Button>
+            <div className="space-y-1.5">
+              <label htmlFor="ban-days" className="text-xs uppercase tracking-wider text-muted-foreground">
+                Days (blank = permanent)
+              </label>
+              <Input
+                id="ban-days"
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+                inputMode="numeric"
+                placeholder="7"
+              />
             </div>
-          </Card>
-        )}
+          </div>
+
+          <div className="mt-3 space-y-1.5">
+            <label htmlFor="ban-reason" className="text-xs uppercase tracking-wider text-muted-foreground">
+              Reason — shown to the player
+            </label>
+            <Textarea
+              id="ban-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              rows={2}
+              placeholder="Aimbot, match 3 — clip in #reports"
+            />
+          </div>
+
+          <div className="mt-3 flex justify-end">
+            <Button onClick={submit} disabled={busy || !license.trim() || reason.trim().length < 3}>
+              {busy ? <Loader2 className="animate-spin" /> : <BanIcon />}
+              Issue ban
+            </Button>
+          </div>
+        </Card>
 
         <Card className="surface-edge gap-0 overflow-hidden py-0">
           <header className="flex items-baseline gap-2 border-b border-border bg-card/60 px-4 py-3">
@@ -258,12 +253,10 @@ export function ModerationBoard({
                     <div>{when(b.at)}</div>
                     <div className="text-muted-foreground/60">by {b.byName}</div>
                   </div>
-                  {canBan && (
-                    <Button variant="ghost" size="sm" onClick={() => setLifting(b)}>
-                      <ShieldOff />
-                      Lift
-                    </Button>
-                  )}
+                  <Button variant="ghost" size="sm" onClick={() => setLifting(b)}>
+                    <ShieldOff />
+                    Lift
+                  </Button>
                 </li>
               ))}
             </ul>

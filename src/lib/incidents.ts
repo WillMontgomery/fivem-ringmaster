@@ -175,8 +175,28 @@ export interface ClosedByBan {
 /** One thing that happened to this incident. Append-only. */
 export interface IncidentEvent {
   at: number
-  /** Machine-readable; the UI maps it to prose. */
-  kind: 'opened' | 'note' | 'resolved'
+  /**
+   * Machine-readable; the UI maps it to prose.
+   *
+   * `corroborated` IS NOT A NOTE, AND IT USED TO BE ONE. {@link corroborate}
+   * wrote `note` with `byName: 'System'`, which put the game's "it is still
+   * happening" on the timeline wearing an admin's handwriting — the same word,
+   * the same marker, nothing on the row saying where it came from. The owner,
+   * reading a real case: "corroboration doesn't show on the incident timeline".
+   * It was showing. It was showing as a note.
+   *
+   * THE SET IS OPEN EVERYWHERE IT IS READ, which is why widening it costs
+   * nothing downstream. `labelFor` humanises a kind no map names, `isCaseBracket`
+   * and `isResolution` answer false for anything they do not recognise, and
+   * `mergeTimeline` drops nothing. A row of this kind therefore renders with a
+   * default marker and no verdict chip, which is what it should have.
+   *
+   * ROWS ALREADY WRITTEN STAY `note` AND ARE NOT BACKFILLED. There is no way to
+   * tell an old corroboration from an admin's note without guessing at
+   * `byName === 'System'`, and guessing is what this field exists to stop — the
+   * same argument `verdict` makes about cases closed before it existed.
+   */
+  kind: 'opened' | 'note' | 'resolved' | 'corroborated'
   /** Who. Null for the system. */
   byLicense: string | null
   byName: string
@@ -775,8 +795,10 @@ export async function closeWithVerdict(input: {
 
   const result = await resolve({
     incidentId: input.incident.incidentId,
-    // The actor always has a license here — authorize() resolves the session to
-    // a grants row, and grants are keyed on license.
+    // EMPTY WHEN THE ADMIN HAS NO LICENSE, which is now a state that reaches
+    // here: the grants row is a Discord-to-license link rather than a
+    // permission, so an admin who has never joined the game server has no row
+    // and still holds every power in the console. See lib/grants.ts.
     byLicense: input.actor.license ?? '',
     byName: input.actor.name,
     resolution: input.resolution,
@@ -1050,8 +1072,24 @@ export function invalidateCount(): void {
  *
  * IT DOES NOT REOPEN ANYTHING. A resolved case that is still being corroborated
  * is a real situation — an admin decided, and the player carried on — and the
- * no-reopen rule holds. The note lands on the timeline either way, which is
+ * no-reopen rule holds. The row lands on the timeline either way, which is
  * where somebody deciding whether to look again will see it.
+ *
+ * ═══ AND IT IS ITS OWN KIND, WHICH IT WAS NOT ═══
+ *
+ * This wrote `kind: 'note'`. Everything worked: the game emitted
+ * `incident_corroborated`, the ingest route applied it, the row grew, the
+ * timeline rendered it. It rendered it as "Note", identically to a sentence an
+ * admin typed, and the only thing separating the two on the page was
+ * `byName: 'System'` in the meta line under it. So the console was recording
+ * corroboration and showing nothing that says corroboration, which is what the
+ * owner reported as it not showing at all.
+ *
+ * NOTHING ELSE ON THE PATH CHANGED, and that is the measure of how narrow this
+ * is. Same event, same UpdateExpression, same attribute, same append. One
+ * string on the row is different, and the renderer's existing fallback turns it
+ * into a word — see {@link IncidentEvent.kind} for why widening the set is safe
+ * at every reader.
  */
 export async function corroborate(input: {
   incidentId: string
@@ -1060,7 +1098,7 @@ export async function corroborate(input: {
 }): Promise<boolean> {
   const event: IncidentEvent = {
     at: input.at,
-    kind: 'note',
+    kind: 'corroborated',
     byLicense: null,
     byName: 'System',
     text: input.text,

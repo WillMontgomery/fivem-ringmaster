@@ -1,30 +1,62 @@
 import { ddb, tables } from './dynamo'
 
 /**
- * Permission scopes.
+ * The Discord → license link. NOT a permission record.
  *
- * Scoped, not a single admin bit: a moderator who can kick must not be able to
- * grant themselves the ability to ban. `process` is separate from `config`
- * because it is strictly more dangerous — a bad config edit degrades a match,
- * a bad process action ends one for everyone on the box.
+ * ═══ THERE ARE NO PERMISSION LEVELS IN THIS CONSOLE ═══
+ *
+ * This file used to define nine scopes — view, kick, ban, moderate, spectate,
+ * notify, config, grant, process — and the `can()` / `requireScope()` pair that
+ * gated every route on them. All of it is gone. ANYONE WHO CAN LOG IN IS A FULL
+ * ADMIN, and the login gate is the whole authorisation model:
+ *
+ *   `auth.ts`         the Discord admin role, checked at sign-in
+ *   `discordRole.ts`  the same role, re-checked live before every write
+ *
+ * WHY IT WENT, stated plainly so nobody rebuilds it by accident: the scopes
+ * could not be granted. There was no scopes UI and there never was one — the
+ * only way to give somebody `ban` was to hand-edit a DynamoDB item, which the
+ * owner does not do. So in practice every account had whatever its row happened
+ * to be seeded with, forever, and the granularity bought nothing but greyed
+ * buttons and sentences telling admins to acquire something unacquirable. That
+ * argument had already retired the `spectate` scope on its own (dba5a6a); this
+ * is the same reasoning applied to the remaining eight.
+ *
+ * A GRANULAR CHECK WITH NO GRANT PATH IS NOT CAUTION, IT IS A BROKEN FEATURE.
+ * If levels are ever wanted again, they go back WITH the UI that issues them,
+ * not before it.
+ *
+ * ═══ SO WHY DOES THIS FILE STILL EXIST ═══
+ *
+ * Because the row was doing a second job all along, and that job is not a
+ * permission. Discord tells us WHO logged in; every ban, audit row and
+ * game-side record keys on the game LICENSE. This table is the only bridge
+ * between the two, and two things still genuinely need it:
+ *
+ *   audit attribution   `actorLicense` on every row in the audit table
+ *   /api/spectate       whose camera to move — the admin needs a body in the
+ *                       world, and that body is found by license
+ *
+ * A SIGNED-IN ADMIN WITH NO ROW IS NORMAL AND FULLY PRIVILEGED. They get a null
+ * license, their audit rows say so, and Spectate refuses them for a reason that
+ * is about physics rather than permission — there is no character on the server
+ * to look through. Nothing else about the console is diminished.
+ *
+ * The table keeps its name (`grants`, see docs/aws-setup.md) because renaming a
+ * live DynamoDB table to improve a noun is not worth an outage.
  */
-export const SCOPES = [
-  'view',      // read player data, history, incidents
-  'kick',      // remove a player from the server
-  'ban',       // issue and lift bans
-  'moderate',  // trigger loot drops and game events
-  'spectate',  // watch a live player, across matches
-  'notify',    // send server-wide notifications
-  'config',    // edit hot-reloadable config values
-  'grant',     // grant and revoke scopes — the one that makes admins
-  'process',   // terminate and restart the FXServer process
-] as const
 
-export type Scope = (typeof SCOPES)[number]
-
+/**
+ * One admin's link row.
+ *
+ * `scopes` USED TO BE A FIELD HERE. Existing rows in DynamoDB still carry the
+ * attribute — nothing reads it, and an unread attribute costs nothing but a few
+ * bytes, so there is no migration to run. Should anyone ever want the table
+ * tidied, deleting the attribute is safe precisely because no code path looks
+ * at it.
+ */
 export interface Grant {
   license: string
-  scopes: Scope[]
   discordId?: string
   note?: string
   grantedBy?: string
@@ -32,36 +64,26 @@ export interface Grant {
 }
 
 /**
- * Look up one admin's grants.
- *
- * DynamoDB is the sole authority on permissions. FXServer's own ACE system is
- * never consulted for anything Ringmaster does — the two are separate systems
- * that happen to both mean "admin", and conflating them is how a moderator
- * ends up with console access nobody meant to give them.
- *
- * Returns null for an unknown license. That is not an error: it is the normal
- * answer for every player who is not an admin.
- */
-export async function grantsFor(license: string): Promise<Grant | null> {
-  const res = await ddb.get({
-    TableName: tables.grants,
-    Key: { license },
-  })
-
-  return (res.Item as Grant | undefined) ?? null
-}
-
-/**
- * Look up grants by Discord id — the login-time direction.
+ * Look up an admin's license by Discord id — the login-time direction, and now
+ * the only direction.
  *
  * The table is keyed by license because every ban, audit row and game-side
  * record is; Discord id is a plain attribute with a GSI over it
  * (`discordId-index`, provisioned in docs/aws-setup.md). Login only knows the
  * Discord id, so this is the bridge every session crosses exactly once.
  *
+ * `grantsFor(license)` — THE OTHER DIRECTION — WAS DELETED WITH THE SCOPES. Its
+ * only caller was `can()`, which asked "does this license hold this scope?".
+ * Nothing asks that any more, and a lookup with no callers is the exact kind of
+ * scaffolding this repository keeps shipping by mistake.
+ *
  * Takes the FIRST match if several rows carry the same discordId. That state
  * is a data-entry error — one human, one license, one row — and picking
  * deterministically beats refusing to log the person in over it.
+ *
+ * Returns null for an unknown Discord id. That is not an error and it is no
+ * longer even a restriction: it means we could not resolve this admin to a
+ * character in the game, not that they may do less.
  */
 export async function grantsForDiscordId(
   discordId: string,
@@ -75,65 +97,4 @@ export async function grantsForDiscordId(
   })
 
   return (res.Items?.[0] as Grant | undefined) ?? null
-}
-
-/**
- * Does this admin hold this scope?
- *
- * CALL THIS AT THE POINT OF ACTION, in every route that changes anything —
- * not once at login, and not only where the UI decides whether to draw a
- * button. Hiding a button is a courtesy; this is the boundary. Same principle
- * the whole gamemode runs on: the client asks, the server decides.
- *
- * This is the whole check, and that is a deliberate change from an earlier
- * design. That design had `br_ringmaster` re-check independently on arrival,
- * because RCON carried no notion of *which* admin sent a command. RCON is gone
- * (see the README), and the only writer to its replacement — SSH forced-command
- * → supervisor → FXServer stdin — is the supervisor itself. Anyone able to put
- * bytes on that channel already has console authority on the game box, so a
- * second check there would guard nothing. The acting admin's license still
- * travels with every command, as an audit field, never as an authorisation
- * input.
- */
-export async function can(
-  license: string | null | undefined,
-  scope: Scope,
-): Promise<boolean> {
-  if (!license) return false
-
-  const grant = await grantsFor(license)
-  if (!grant) return false
-
-  return Array.isArray(grant.scopes) && grant.scopes.includes(scope)
-}
-
-/**
- * Thrown by {@link requireScope}. Distinct from a generic Error so a route
- * handler can map it to a 403 without string-matching a message.
- */
-export class ForbiddenError extends Error {
-  constructor(public readonly scope: Scope) {
-    super(`forbidden: ${scope}`)
-    this.name = 'ForbiddenError'
-  }
-}
-
-/**
- * Throwing form, for route handlers.
- *
- * Named `requireScope` rather than `require`: the latter shadows CommonJS's
- * global in any file that imports it, which is a genuinely confusing thing to
- * do to the next person reading a stack trace.
- *
- * Deliberately does not say whether the license was unknown or merely lacked
- * the scope. That distinction is useful to an attacker enumerating admins and
- * useless to a legitimate one, who already knows which they are.
- */
-export async function requireScope(
-  license: string | null | undefined,
-  scope: Scope,
-): Promise<void> {
-  if (!(await can(license, scope))) {
-    throw new ForbiddenError(scope)
-  }
 }

@@ -91,11 +91,9 @@ function PersonLink({
 export function ModerationLog({
   kicks,
   bans,
-  canBan,
 }: {
   kicks: KickRow[]
   bans: Ban[]
-  canBan: boolean
 }) {
   const router = useRouter()
   const now = Date.now()
@@ -269,12 +267,10 @@ export function ModerationLog({
                       </div>
                     </div>
 
-                    {canBan && (
-                      <Button variant="ghost" size="sm" onClick={() => setLifting(b)}>
-                        <ShieldOff />
-                        Lift
-                      </Button>
-                    )}
+                    <Button variant="ghost" size="sm" onClick={() => setLifting(b)}>
+                      <ShieldOff />
+                      Lift
+                    </Button>
                   </li>
                 ))}
               </ul>

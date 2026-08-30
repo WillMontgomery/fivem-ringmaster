@@ -9,7 +9,6 @@ import {
   enforceDiscordAdmin,
   RoleRevokedError,
 } from './discordRole'
-import { ForbiddenError, requireScope, type Scope } from './grants'
 import { isIdle } from './activity'
 import { ACTIVITY_COOKIE, IDLE_ERROR_CODE } from './idle'
 import { REVOKED_ERROR_CODE, REVOKED_MESSAGE } from './revocation'
@@ -21,19 +20,26 @@ import { currentAdmin, type CurrentAdmin } from './session'
  * ONE PLACE THAT ORDERS THE STEPS, because the order is the security property
  * and getting it right once beats getting it right in each of eight routes:
  *
- *   authenticate → authorise → re-check Discord → validate → record intent →
- *   act → record outcome
+ *   authenticate → re-check Discord → validate → record intent → act →
+ *   record outcome
  *
- * Authorisation before validation is deliberate. A caller without the scope
- * should not be able to learn anything about what the endpoint accepts — a
- * 400 that says "reason must be at least 3 characters" is a free schema oracle
- * for someone who has no business calling it at all.
+ * ═══ THERE IS NO SCOPE STEP ANY MORE, AND DISCORD IS NOW THE WHOLE OF IT ═══
  *
- * THE DISCORD RE-CHECK SITS AFTER THE GRANT CHECK AND NOT BEFORE IT, and that
- * ordering is what the whole fail-open argument in lib/discordRole.ts rests on:
- * by the time Discord is asked, the primary authorisation has already been
- * satisfied against a live database read. It also means a stranger cannot make
- * this console call Discord by POSTing at it.
+ * `requireScope(admin.license, scope)` used to sit between authentication and
+ * the Discord re-check, reading a `scopes` array out of DynamoDB. Scopes are
+ * gone (see lib/grants.ts for why), so authorisation is exactly one question,
+ * asked live at the moment of action:
+ *
+ *   DOES THIS ACCOUNT HOLD THE DISCORD ADMIN ROLE, RIGHT NOW?
+ *
+ * Nothing in DynamoDB takes part in that decision. The session proves who is
+ * asking; Discord decides whether they may.
+ *
+ * AUTHENTICATION STILL COMES BEFORE VALIDATION, for the reason it always did: a
+ * stranger should not be able to learn what the endpoint accepts, and a 400
+ * saying "reason must be at least 3 characters" is a free schema oracle for
+ * someone with no business calling it. It also means a stranger cannot make this
+ * console call Discord by POSTing at it.
  */
 
 /** A route handler failed in a way the caller should be told about. */
@@ -113,22 +119,39 @@ export interface ActionContext {
  *
  * WHAT COUNTS AS A WRITE: anything that changes state anywhere — a ban, a lift,
  * a kick, an incident verdict, a maintenance window, a branch switch, a deploy.
- * Listing and viewing are reads even when they are expensive and even when they
- * are guarded by a heavy scope; `/api/host/branches` is the case that looks
+ * Listing and viewing are reads even when they are expensive and even when the
+ * thing they list is dangerous; `/api/host/branches` is the case that looks
  * ambiguous and is not, because a `git fetch` on the game box changes nothing a
  * player or a moderator can observe.
  */
 export type ActionIntent = 'read' | 'write'
 
 /**
- * Authenticate, authorise, re-check Discord on writes, and hand back the acting
- * admin.
+ * What this request is called, for the operator log and the audit row.
+ *
+ * A PLAIN STRING, AND IT AUTHORISES NOTHING. This argument used to be a
+ * `Scope` — one of nine values, checked against a DynamoDB row before the
+ * request was allowed to proceed. Scopes are gone (lib/grants.ts), and what is
+ * left in its place is a LABEL: `discordGate` puts it in the `discord.revoked`
+ * and `discord.unresolved` audit rows and in the operator log, so "which write
+ * was refused when that admin's role vanished" stays an answerable question.
+ *
+ * DELIBERATELY NOT A UNION TYPE, and that is a safeguard rather than laziness.
+ * A closed set of strings sitting in front of every mutation route is a
+ * permission system with the checking temporarily removed, and it would take
+ * one plausible-looking commit to wire it back up. A free string cannot be
+ * mistaken for a capability by anybody reading it.
+ */
+export type ActionLabel = string
+
+/**
+ * Authenticate, re-check Discord on writes, and hand back the acting admin.
  *
  * Throws {@link ActionError} with the right status for each failure, so a
  * route handler maps one error type rather than branching.
  */
 export async function authorize(
-  scope: Scope,
+  action: ActionLabel,
   intent: ActionIntent,
 ): Promise<ActionContext> {
   /**
@@ -152,18 +175,12 @@ export async function authorize(
   const admin = await currentAdmin()
   if (!admin) throw new ActionError('Not signed in.', 401)
 
-  try {
-    await requireScope(admin.license, scope)
-  } catch (e) {
-    if (e instanceof ForbiddenError) {
-      throw new ActionError(
-        `You do not hold the \`${scope}\` scope.`,
-        403,
-      )
-    }
-    throw e
-  }
-
+  /**
+   * AND THAT IS THE WHOLE OF AUTHORISATION FOR A READ. A valid, non-idle
+   * session belongs to somebody who held the Discord admin role when they
+   * signed in; there is no second thing to consult, and no DynamoDB row that
+   * could say otherwise. A write goes on to ask Discord again, below.
+   */
   const actor: audit.Actor = {
     license: admin.license,
     name: admin.name,
@@ -171,7 +188,7 @@ export async function authorize(
   }
 
   if (intent === 'write') {
-    await discordGate(scope, actor)
+    await discordGate(action, actor)
   }
 
   return { admin, actor }
@@ -179,6 +196,12 @@ export async function authorize(
 
 /**
  * Ask Discord whether this admin still holds the role, and act on the answer.
+ *
+ * THIS IS NOW THE ONLY AUTHORISATION IN THE CONSOLE, rather than a second
+ * opinion on top of one. It used to run after a DynamoDB grant check had
+ * already passed, and lib/discordRole.ts argued its fail-open behaviour from
+ * exactly that — so that argument has been rewritten there rather than left
+ * standing on a backstop which no longer exists.
  *
  * ALL OF THE DECIDING HAPPENS IN lib/discordRole.ts — including which verdicts
  * deny, what gets audited and whether the session is torn down — so that the
@@ -192,14 +215,17 @@ export async function authorize(
  * `toast.promise` all hold one), so a slow Discord costs a longer spinner and
  * then the real outcome — not a frozen page and not a spurious failure.
  */
-async function discordGate(scope: Scope, actor: audit.Actor): Promise<void> {
+async function discordGate(
+  action: ActionLabel,
+  actor: audit.Actor,
+): Promise<void> {
   const jar = await cookies()
 
   try {
     await enforceDiscordAdmin({
       discordId: actor.discordId,
       actor,
-      scope,
+      action,
       deps: {
         check: checkAdminRole,
         endSession: async () => {

@@ -27,7 +27,7 @@ import { thresholdFor } from '@/lib/xp'
  * WHY IT EXISTS. Almost everything interesting on this page is a state you
  * cannot reach by looking at it: match history (#153) has four states and three
  * of them are absences, the incidents table has an empty tab and a page
- * boundary, and the moderation buttons change shape depending on a grant. All
+ * boundary, and the moderation buttons change shape with the player's state. All
  * of those ship wrong behind a green build, because `tsc` and `next build` are
  * both perfectly happy with markup that renders as literal text — the last one
  * cost a visible `$<LocalTime ms={x} />` on a production page. The only way to
@@ -57,8 +57,9 @@ import { thresholdFor } from '@/lib/xp'
  *                `admin-offline` does the same job for Spectate (#192) — it
  *                holds the ADMIN out of the game with the player still in it,
  *                which is the only way to see that both halves of that rule are
- *                live. There is no scope case beside it any more: Spectate has
- *                no scope, so it has no greyed state to review
+ *                live. There is no scope case beside it any more: nothing in
+ *                this bar has a permission behind it, so nothing has a greyed
+ *                state to review
  *   ?names=      the names the "Other names" row is built from: never renamed,
  *                renamed twice, and enough to fill the line
  *   ?discord=    the Discord chrome: absent, loading, timed out, full, the two
@@ -695,7 +696,7 @@ const RAW_TAKEN: ActedRow[] = [
     targetLicense: null,
     targetName: null,
     reason: 'Discord answered 500',
-    detail: { scope: 'ban', allowed: true },
+    detail: { attempted: 'ban', allowed: true },
   },
 
   // ---- INC_D: a closure from before verdicts existed. No chip. ----
@@ -798,15 +799,19 @@ type BackKey = keyof typeof BACK_CASES
  * `adminOnline` from the expression leaves every case below looking correct
  * except `admin-offline`, which exists for exactly that reason.
  *
- * `canSpectate` IS GONE FROM EVERY CASE, and so is the `spectate-noscope` case
- * that existed to hold it false. Spectate has no scope any more — there is no
- * greyed state left to review, only drawn or absent.
+ * NO CASE HERE CARRIES A SCOPE ANY MORE, and two have been deleted outright
+ * rather than adjusted: `spectate-noscope` first, then `noscope`, which held
+ * `canBan: false` to review Kick and Ban greyed with a sentence on hover.
+ *
+ * THERE IS NO GREYED STATE LEFT ANYWHERE ON THIS BAR. Scopes are gone
+ * (lib/grants.ts) — anyone who can open this profile can act from it — so every
+ * control is drawn-or-absent, and a fixture holding a permission false would
+ * depict a state the console cannot produce.
  */
 const MOD_CASES = {
   online: {
     online: true,
     adminOnline: true,
-    canBan: true,
     ban: null,
   },
   /**
@@ -821,7 +826,6 @@ const MOD_CASES = {
   offline: {
     online: false,
     adminOnline: true,
-    canBan: true,
     ban: null,
   },
   /**
@@ -839,19 +843,16 @@ const MOD_CASES = {
   'admin-offline': {
     online: true,
     adminOnline: false,
-    canBan: true,
     ban: null,
   },
   banned: {
     online: false,
     adminOnline: true,
-    canBan: true,
     ban: ACTIVE_BAN,
   },
   'banned-temp': {
     online: false,
     adminOnline: true,
-    canBan: true,
     ban: TEMP_BAN,
   },
   /**
@@ -877,30 +878,12 @@ const MOD_CASES = {
   'banned-online': {
     online: true,
     adminOnline: true,
-    canBan: true,
     ban: ACTIVE_BAN,
   },
   served: {
     online: true,
     adminOnline: true,
-    canBan: true,
     ban: SERVED_BAN,
-  },
-  /**
-   * NO `ban` GRANT: Kick and Ban are drawn and greyed, Spectate is untouched.
-   *
-   * `spectate-noscope` USED TO SIT BELOW THIS CASE and has been removed with
-   * the scope it described. It held `canBan: true, canSpectate: false` — an
-   * account holding one grant and not the other — and the state it depicted can
-   * no longer occur: `/api/spectate` authorises `view` (dba5a6a), so anybody
-   * who can open this page can press the button. A fixture for an unreachable
-   * state is a harness asserting something about a feature nobody ships.
-   */
-  noscope: {
-    online: true,
-    adminOnline: true,
-    canBan: false,
-    ban: null,
   },
 } as const
 
@@ -1525,7 +1508,6 @@ async function Preview({
         moderation={{
           online: MOD_CASES[mod].online,
           adminOnline: MOD_CASES[mod].adminOnline,
-          canBan: MOD_CASES[mod].canBan,
         }}
       />
     </div>

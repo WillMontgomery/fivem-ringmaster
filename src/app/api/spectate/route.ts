@@ -22,32 +22,31 @@ import { spectatePlayer, sshConfigured } from '@/lib/ssh'
  * there. A second transport to the same box would be a second thing to secure,
  * a second thing to audit and a second thing to get wrong.
  *
- * ═══ THE SCOPE IS `view`, AND A SEPARATE `spectate` SCOPE WAS THE WRONG CALL ═══
+ * ═══ THIS ROUTE IS WHERE THE SCOPES STARTED COMING DOWN ═══
  *
- * This route first required a `spectate` scope. The reasoning was sound in the
- * abstract — watching somebody is strictly less destructive than removing them,
- * so it is a thing a trainee moderator could be trusted with far earlier, which
- * is the same argument that keeps `kick` and `ban` apart.
+ * It first required a `spectate` scope. The reasoning was sound in the abstract
+ * — watching somebody is strictly less destructive than removing them, so it is
+ * a thing a trainee moderator could be trusted with far earlier, which was the
+ * same argument that kept `kick` and `ban` apart.
  *
- * IT WAS STILL WRONG, FOR A REASON THAT HAS NOTHING TO DO WITH THE ARGUMENT.
- * `spectate` is one of the scopes that had never been checked anywhere, and
- * NOTHING IN THIS CONSOLE CAN GRANT ONE. There is no scopes UI; the only way to
- * add a scope to a grant row is to edit DynamoDB by hand, and the owner has
- * said plainly that they do not do that. So requiring it built a wall with no
- * door — the feature shipped unreachable by the only person able to use it.
+ * IT WAS STILL WRONG, FOR A REASON THAT HAD NOTHING TO DO WITH THE ARGUMENT.
+ * `spectate` was one of the scopes that had never been checked anywhere, and
+ * NOTHING IN THIS CONSOLE COULD GRANT ONE. There was no scopes UI; the only way
+ * to add a scope to a grant row was to edit DynamoDB by hand, and the owner said
+ * plainly that they do not do that. So requiring it built a wall with no door —
+ * the feature shipped unreachable by the only person able to use it.
  *
  * The owner, on hitting it: "in console it says I need a permission that I
  * don't have. That should not even exist."
  *
- * SO IT IS `view`, THE SCOPE THAT ALREADY MEANS "may open this console". Every
- * signed-in admin can spectate. What controls it is not a permission gate but
- * the audit row this route writes on every press: watching a player who has not
- * been told is the one console action with no other trace, and that row is the
- * reason it does not need to be rationed.
+ * THAT SENTENCE EVENTUALLY TOOK EVERY SCOPE IN THE CONSOLE (lib/grants.ts).
+ * Anyone who can sign in is a full admin. What controls spectating is not a
+ * permission gate but the audit row this route writes on every press: watching a
+ * player who has not been told is the one console action with no other trace,
+ * and that row is the reason it does not need to be rationed.
  *
- * IF A GRANULAR SCOPE IS EVER WANTED, THE PREREQUISITE IS A WAY TO GRANT ONE,
- * not this line. Reintroducing the check before that exists reintroduces the
- * wall.
+ * IF LEVELS ARE EVER WANTED, THE PREREQUISITE IS A WAY TO GRANT ONE, not this
+ * line. Reintroducing the check before that exists reintroduces the wall.
  *
  * ═══ NO PRESENCE CHECK HERE, AND THAT IS A DECISION ═══
  *
@@ -65,9 +64,9 @@ import { spectatePlayer, sshConfigured } from '@/lib/ssh'
  *   `/api/kick` DOES NOT RE-CHECK EITHER. It sends, and `kick.lua` answers "not
  *   connected". One transport, one place that knows who is on the server.
  *
- * What is emphatically NOT skipped is authorisation: the grant is read live
- * from DynamoDB and Discord is re-checked, because `authorize(..., 'write')`
- * does both. Hiding a button is a courtesy; that is the boundary.
+ * What is emphatically NOT skipped is authorisation: Discord is re-checked live
+ * at the moment of action, because `authorize(..., 'write')` does that. Hiding a
+ * button is a courtesy; that is the boundary.
  */
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -105,15 +104,23 @@ export async function POST(req: Request): Promise<Response> {
      * THE ADMIN'S OWN LICENSE IS AN ARGUMENT HERE, WHICH IT IS NOT FOR A KICK.
      *
      * A kick names one person; this names two, because the camera has to be
-     * pointed FROM somewhere. `authorize` has already established that this
-     * license holds the `spectate` grant — `requireScope` refuses a null one —
-     * so reaching this line with nothing in hand is impossible. The narrowing
-     * is for `tsc`, and it fails loudly rather than sending the string "null"
-     * to the game host if that ever stops being true.
+     * pointed FROM somewhere.
+     *
+     * THIS GUARD IS REACHABLE NOW AND IT DID NOT USE TO BE. `requireScope`
+     * refused a null license before anything got this far, so the narrowing was
+     * for `tsc` and the branch was dead. Scopes are gone, and the grants row is
+     * a Discord-to-license LINK rather than a permission (lib/grants.ts) — so an
+     * admin who has never joined the game server has no row, no license, and
+     * every other power in this console. They land here.
+     *
+     * IT IS NOT A PERMISSION REFUSAL. There is no character on the server to
+     * look through, which is the same reason the profile page hides the button
+     * for them; this is the boundary saying so rather than sending the string
+     * "null" to the game host.
      */
     if (!admin.license) {
       throw new ActionError(
-        'This account has no license on its grant row, so there is nobody to put the camera on.',
+        'This account is not linked to a game license, so there is nobody to put the camera on.',
         403,
       )
     }

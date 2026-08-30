@@ -7,17 +7,18 @@ import {
   licenseSchema,
 } from '@/lib/actions'
 import * as audit from '@/lib/audit'
-import { can } from '@/lib/grants'
 import * as incidents from '@/lib/incidents'
 import { kickPlayer, sshConfigured } from '@/lib/ssh'
 
 /**
  * Remove a connected player, without banning them.
  *
- * SEPARATE SCOPE FROM BANNING. `kick` is the reversible one — they can
- * reconnect a second later — so a moderator can be trusted with it long before
- * they are trusted to keep somebody out permanently. That split is the entire
- * reason scopes are granular rather than one admin bit.
+ * IT USED TO TAKE A SCOPE OF ITS OWN, on the grounds that kicking is the
+ * reversible act — they can reconnect a second later — so a moderator could be
+ * trusted with it long before being trusted to keep somebody out permanently.
+ * That was the whole argument for granular scopes, and the scopes are gone
+ * (lib/grants.ts): nobody could issue them, so nobody ever held a partial set.
+ * Whoever can sign in can kick.
  *
  * NO REASON REQUIRED, unlike a ban. A kick is a nudge ("you are AFK in the
  * bus", "stop blocking the door") and demanding a paragraph for it means the
@@ -44,7 +45,7 @@ const kickSchema = z.object({
 
 export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor, admin } = await authorize('kick', 'write')
+    const { actor } = await authorize('kick', 'write')
 
     if (!sshConfigured()) {
       throw new ActionError(
@@ -57,28 +58,6 @@ export async function POST(req: Request): Promise<Response> {
       throw new ActionError('Expected a JSON body.')
     })
     const input = kickSchema.parse(body)
-
-    /**
-     * CLOSING A CASE STILL TAKES THE `ban` SCOPE, even when the action is only
-     * a kick.
-     *
-     * `kick` and `ban` are separate scopes because kicking is the reversible
-     * one — see the note at the top of this file. Resolving an incident is not
-     * reversible at all, so it keeps the heavier scope it has always had
-     * (`/api/incidents/resolve` authorises on `ban` and says why). Without this
-     * check, an admin trusted only to nudge people out of the bus door could
-     * close a cheating report permanently by kicking the subject, and #168
-     * would pay 250 Volts against a verdict they were not trusted to give.
-     *
-     * The kick itself is unaffected: they may still kick, they simply cannot
-     * make it a verdict.
-     */
-    if (input.incidentId && !(await can(admin.license, 'ban'))) {
-      throw new ActionError(
-        'Resolving an incident needs the `ban` scope, which this account does not have.',
-        403,
-      )
-    }
 
     /**
      * A CLOSED CASE MEANS NO KICK, for the same reason `/api/bans` refuses one:

@@ -12,11 +12,12 @@ import * as bans from '@/lib/bans'
 /**
  * Lift a ban.
  *
- * SAME SCOPE AS ISSUING ONE. Splitting `ban` into issue and lift halves was
- * tempting and is wrong: the pair is one responsibility, and an admin trusted
+ * ONE RESPONSIBILITY, NOT TWO. Splitting issuing from lifting was tempting
+ * back when there were scopes to split, and it was wrong then: an admin trusted
  * to remove someone from the server is trusted to admit they were wrong about
- * it. A separate lift scope mostly produces moderators who can ban and cannot
- * undo, which is the worst of both.
+ * it, and a separate lift permission mostly produces moderators who can ban and
+ * cannot undo — the worst of both. There are no permissions now, so the
+ * question is settled by construction.
  *
  * The row survives — see lib/bans.ts. Lifting stamps who and why onto the
  * existing record rather than deleting it.

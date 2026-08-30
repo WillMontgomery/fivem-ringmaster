@@ -14,10 +14,13 @@ import { formatInstant } from '@/lib/time'
 /**
  * Read and schedule the maintenance window.
  *
- * GUARDED BY `process`, not `config`. The scopes were split precisely here: a
- * bad config edit degrades a match, a bad process action ends one for everyone
- * on the box. Scheduling maintenance is the second kind — it will restart the
- * server — so it needs the scope that says so.
+ * SCHEDULING IS A WRITE AND IT RESTARTS THE GAME SERVER. It used to be guarded
+ * by a `process` scope rather than a `config` one, because the scopes were split
+ * precisely here: a bad config edit degrades a match, a bad process action ends
+ * one for everyone on the box. Both scopes are gone (lib/grants.ts) and the
+ * distinction they drew no longer has anywhere to live — anyone who can sign in
+ * can do this. What still guards it is the `write` intent below, which re-checks
+ * Discord before the window is set.
  */
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'

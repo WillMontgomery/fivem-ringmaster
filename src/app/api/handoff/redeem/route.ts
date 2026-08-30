@@ -34,8 +34,8 @@ import {
  * same adapter, into the same table, in the same shape, with the same cookie
  * and the same lifetime as one Discord OAuth produces. Nothing downstream can
  * tell the two apart, and that is the requirement rather than a convenience:
- * `currentAdmin()`, the per-action scope checks, the two-hour idle timeout and
- * the write-time Discord role recheck in `lib/discordRole.ts` all apply to it
+ * `currentAdmin()`, the two-hour idle timeout and the write-time Discord role
+ * recheck in `lib/discordRole.ts` all apply to it
  * unchanged, because none of them can see how it began.
  *
  * NO `ingame` FLAG RIDES ON IT, and its absence is deliberate. #23 wants an

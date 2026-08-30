@@ -7,7 +7,6 @@ import { PageLoading } from '@/components/PageLoading'
 import { probe } from '@/lib/artifactStore'
 import { activeBanFor } from '@/lib/bans'
 import { gameMatchesFor } from '@/lib/gameProfile'
-import { can } from '@/lib/grants'
 import {
   CATEGORY_LABEL,
   KIND_LABEL,
@@ -67,8 +66,8 @@ export default async function IncidentPage({
    * URLs get pasted into Discord and outlive the incidents they name, so that
    * status is worth more than moving one read under the bar.
    *
-   * The scope check and the ban lookup have no such constraint and do sit
-   * below it — see `PageLoading`.
+   * The ban lookup has no such constraint and does sit below it — see
+   * `PageLoading`.
    */
   const [pending, incident] = await Promise.all([queue(), get(id)])
 
@@ -89,7 +88,6 @@ export default async function IncidentPage({
       <Suspense fallback={<PageLoading />}>
         <Body
           incident={incident}
-          license={admin.license}
           players={view.players}
           now={now}
         />
@@ -100,12 +98,10 @@ export default async function IncidentPage({
 
 async function Body({
   incident,
-  license,
   players,
   now,
 }: {
   incident: Incident
-  license: string | null
   /** The live roster, narrowed to the one field the online check reads. */
   players: { license: string | null }[]
   /**
@@ -132,10 +128,12 @@ async function Body({
    *
    * `activeBanFor` needs the subject's license, which used to mean waiting for
    * `get` before it could start. The incident arrives here already resolved, so
-   * it now runs alongside the scope check instead — the same two reads, one
-   * round trip. (The scope check: resolving an incident is a moderation
-   * decision and takes the same scope as acting on a player. Reading one does
-   * not.)
+   * it starts immediately instead.
+   *
+   * `can(license, 'ban')` USED TO SHARE THIS BATCH and decided whether the
+   * Resolve control was drawn. Resolving is a moderation decision and it used to
+   * take the same scope as acting on a player; there are no scopes now, so
+   * whoever can read the case can close it.
    */
   /**
    * THE ARTIFACT PROBE JOINS THIS `Promise.all` RATHER THAN GETTING ITS OWN
@@ -173,8 +171,7 @@ async function Body({
    * IT CANNOT FAIL THE PAGE. `gameMatchesFor` swallows and logs, returning null
    * — which lands on the same em dash.
    */
-  const [canResolve, activeBan, artifacts, history] = await Promise.all([
-    can(license, 'ban'),
+  const [activeBan, artifacts, history] = await Promise.all([
     activeBanFor(incident.subjectLicense),
     probe(incident.incidentId),
     gameMatchesFor(incident.subjectLicense, MATCH_LOOKBACK),
@@ -197,7 +194,6 @@ async function Body({
         pins it.
       */
       matchRecord={matchRecordFor(incident, history)}
-      canResolve={canResolve}
       subjectOnline={subjectOnline}
       subjectBanned={subjectBanned}
       now={now}

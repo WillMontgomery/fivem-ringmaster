@@ -50,13 +50,17 @@ export const WARN_BEFORE_MS = 5 * 60 * 1000
 
 /**
  * NOT A PREFERENCE, and this is a security property rather than a scoping
- * decision. `lib/grants.ts` hands out `process` (restart the FXServer) and
- * `grant` (make other admins). A per-user idle setting lets whoever holds those
- * set their own window to thirty days, and a control its own subject can
- * disable is not a control. It is shown on the settings page and in the
+ * decision. EVERYBODY WHO CAN SIGN IN CAN RESTART THE FXSERVER — there are no
+ * permission levels (lib/grants.ts) — so a per-user idle setting would let any
+ * of them set their own window to thirty days, and a control its own subject
+ * can disable is not a control. It is shown on the settings page and in the
  * first-run dialog because that is where a reader looks for it — stated as
- * policy, not offered as a choice. If it ever does become tunable it belongs
- * behind `requireScope(license, 'grant')`, applied to somebody else.
+ * policy, not offered as a choice.
+ *
+ * THIS USED TO SAY "if it ever becomes tunable it belongs behind
+ * `requireScope(license, 'grant')`, applied to somebody else". There is no such
+ * scope now and no surface that could grant one, so tunability would need a
+ * genuine notion of who administers whom — which this console does not have.
  */
 export const IDLE_POLICY_LABEL = 'You are signed out after 2 hours of inactivity.'
 

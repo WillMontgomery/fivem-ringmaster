@@ -126,7 +126,6 @@ export function IncidentDetail({
   artifacts,
   artifactSrcOverride,
   matchRecord,
-  canResolve,
   subjectOnline,
   subjectBanned,
   now,
@@ -162,7 +161,6 @@ export function IncidentDetail({
    * three render as an em dash; see `IncidentMatchRecord`.
    */
   matchRecord: ProfileMatch | null
-  canResolve: boolean
   /**
    * On the server right now. Decides whether Kick is even offered — the console
    * already knows this from the live roster, so the admin should not have to
@@ -306,7 +304,7 @@ export function IncidentDetail({
             `justify-between` WAS ALREADY HERE with one child in it. This is the
             thing it was left waiting for.
           */}
-          {pending && canResolve && (
+          {pending && (
             <div className="flex shrink-0 flex-wrap items-center gap-2">
               {/*
                 BAN IS DISABLED RATHER THAN HIDDEN while one is already in force,
