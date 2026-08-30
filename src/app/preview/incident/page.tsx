@@ -709,6 +709,51 @@ const BACKFILLED: MatchFields = {
     { at: FILED + 18_000, kind: 'weapon_strip', weapon: 'WEAPON_RAILGUN' },
     /* In play now, and the strip is the same fact it was two minutes ago. */
     { at: WARMUP_STARTED + 47_000, kind: 'weapon_strip', weapon: '-1357824103' },
+    /*
+      ═══ THE CHAT SCREEN, AND THE ONLY PLAYER-AUTHORED TEXT ON THIS PAGE ═══
+
+      Three of them, because the row has three things worth looking at and one
+      of each is the only way to see them:
+
+        · AN ORDINARY ADVERT, which is what this actually catches all day.
+        · A LONG UNBROKEN URL, which is the whole reason the text wraps. Nothing
+          else on this timeline needs to: a weapon label and a display name are
+          short by construction, and this one is chosen by the person it is
+          evidence against. Without `break-words` this token runs past the card
+          and is clipped, taking the end of the evidence with it — so a fixture
+          that only carried short messages would make the bug invisible here.
+        · MARKUP AND AN ENTITY, verbatim. It must appear on the page as the
+          characters typed — `<b>` visible as text, `&amp;` not collapsed to
+          `&` — which is what says React escaped it and that nothing on the
+          path unescapes. A fixture of tame strings would let a
+          `dangerouslySetInnerHTML` slip in here unnoticed.
+
+      `reason` and `channel` ride along unrendered, exactly as a real row
+      carries them: the owner asked for the label and the message and nothing
+      else, and they are here so that the day he wants them the shape is already
+      right.
+    */
+    {
+      at: WARMUP_STARTED + 61_000,
+      kind: 'chat_block',
+      text: 'come play on 51.68.204.11:30120, way better loot',
+      reason: 'link',
+      channel: 'global',
+    },
+    {
+      at: WARMUP_STARTED + 73_000,
+      kind: 'chat_block',
+      text: 'https://discord.gg/aVeryLongVanityInviteCodeThatDoesNotBreakAnywhere',
+      reason: 'invite',
+      channel: 'squad',
+    },
+    {
+      at: WARMUP_STARTED + 88_000,
+      kind: 'chat_block',
+      text: '<b>join us</b> &amp; leave this server',
+      reason: 'social',
+      channel: 'global',
+    },
     {
       at: WARMUP_STARTED + 4 * MIN,
       kind: 'kill',

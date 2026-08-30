@@ -27,7 +27,9 @@ import {
   CONSOLE_EVENT_LABEL,
   MATCH_EVENT_LABEL,
   MATCH_PROGRESS_LABEL,
+  chatText,
   isBracket,
+  isChatBlock,
   isCaseBracket,
   isResolution,
   killDiscrepancy,
@@ -444,6 +446,8 @@ function MatchRow({
         <TimelineTitle>
           {entry.kind === 'kill' ? (
             <Kill entry={entry} from={from} />
+          ) : isChatBlock(entry) ? (
+            <ChatBlock entry={entry} />
           ) : (
             <span className="font-medium">
               {labelFor(MATCH_EVENT_LABEL, entry.kind)}
@@ -456,6 +460,59 @@ function MatchRow({
         </TimelineMeta>
       </TimelineContent>
     </TimelineItem>
+  )
+}
+
+/**
+ * A chat line the gamemode refused to deliver, and what it said.
+ *
+ * ═══ THE MESSAGE IS THE ROW ═══
+ *
+ * The owner, #244: "Ideally I'd just like to see chat block in the timeline, and
+ * the content of said blocked message." Before this the row said `Chat block`
+ * and nothing else, and the text -- which the game has been storing all along --
+ * was readable nowhere.
+ *
+ * THE LABEL IS THE MECHANICAL ONE. `labelFor` humanises `chat_block` to `Chat
+ * block`, which is the owner's own phrase, so there is no map entry and no
+ * second copy of the word. See MATCH_EVENT_LABEL.
+ *
+ * ═══ IT IS QUOTED, AND THAT IS A JUDGEMENT RATHER THAN DECORATION ═══
+ *
+ * This is the only place on this console where a PLAYER'S words appear inside a
+ * sentence the console wrote. Unquoted, `Chat block — join my server` reads as
+ * the console describing what happened; quoted, it reads as the player saying
+ * it. On a moderation record that difference is the whole point of storing the
+ * text, so the quotation marks are load-bearing.
+ *
+ * ═══ ESCAPING IS STRUCTURAL, NOT A SANITISER ═══
+ *
+ * `{text}` is a React text child, so `<script>` and `&` arrive on the page as
+ * the characters the player typed and nothing is ever parsed as markup. There
+ * is no `dangerouslySetInnerHTML` anywhere on this path and nothing here should
+ * introduce one. The game deliberately does not pre-escape, so nothing here
+ * unescapes.
+ *
+ * ═══ break-words ═══
+ *
+ * A URL is one unbroken token and this text can be 200 bytes of it. Nothing
+ * else on this timeline wraps, because nothing else on it is player-chosen --
+ * a weapon label and a display name are short by construction. Without this the
+ * token runs past the card, which clips it under the card's own overflow rule
+ * and takes the end of the evidence with it.
+ */
+function ChatBlock({ entry }: { entry: MatchTimelineEntry }) {
+  const text = chatText(entry)
+
+  return (
+    <>
+      <span className="font-medium">{labelFor(MATCH_EVENT_LABEL, entry.kind)}</span>
+      {text ? (
+        <span className="text-muted-foreground break-words">
+          {' — '}&ldquo;{text}&rdquo;
+        </span>
+      ) : null}
+    </>
   )
 }
 
