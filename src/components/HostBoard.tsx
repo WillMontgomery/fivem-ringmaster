@@ -2,21 +2,27 @@
 
 import {
   ArrowUpCircle,
+  Cable,
   Check,
   Database,
   GitCommitHorizontal,
   HardDrive,
   Package,
   Power,
-  Wifi,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 
+import { FaultDialog } from '@/components/DdbHealth'
 import { HostCharts } from '@/components/HostCharts'
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { BUNDLE_LABEL, REACH_LABEL } from '@/lib/ddbHealth'
+import {
+  DISPATCH_LABEL,
+  dispatchFaults,
+  machineSaid,
+} from '@/lib/dispatchHealth'
 import { commitUrl } from '@/lib/github'
 import {
   behindMainNow,
@@ -51,14 +57,22 @@ function StatCard({
   label,
   children,
   tone,
+  className,
 }: {
   icon: React.ComponentType<React.SVGProps<SVGSVGElement>>
   label: string
   children: React.ReactNode
   tone?: string
+  /**
+   * ONE CARD COMPONENT, STILL. Added so the dispatch card can take the whole
+   * row — see the grid note below for why it has to. Nothing else passes it,
+   * and the padding, the label treatment and the value size stay shared so the
+   * row cannot drift into two kinds of card.
+   */
+  className?: string
 }) {
   return (
-    <Card className="surface-edge gap-0 px-4 py-3.5">
+    <Card className={cn('surface-edge gap-0 px-4 py-3.5', className)}>
       <div className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wider text-muted-foreground">
         <Icon className="size-3.5" style={{ color: tone }} />
         {label}
@@ -70,6 +84,12 @@ function StatCard({
 
 export function HostBoard({ initial }: { initial: View }) {
   const [view, setView] = useState<View>(initial)
+
+  /**
+   * The fix popup, opened from the dispatch card. Above the early return
+   * because hooks are, and because the card it belongs to is below it.
+   */
+  const [faultOpen, setFaultOpen] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -89,6 +109,14 @@ export function HostBoard({ initial }: { initial: View }) {
     }
   }, [])
 
+  /**
+   * `unconfigured` IS THE ONE DISPATCH STATE THAT DOES NOT REACH THE CARD, and
+   * it is because this page already had a surface for it that the owner
+   * approved — "Until then this is the correct display, not an error". The
+   * reading agrees with it (`dispatchNow` answers `unconfigured`, and
+   * `dispatchFaults` raises nothing, so the chrome stays silent too); what it
+   * does not do is duplicate it. Nothing below here renders in this state.
+   */
   if (!view.configured) {
     return (
       <Card className="surface-edge items-center px-6 py-16 text-center">
@@ -118,6 +146,16 @@ export function HostBoard({ initial }: { initial: View }) {
    * that is a state this card must render as silence rather than as a verdict.
    */
   const update = behindMainNow(s) ?? refBehindNow(s?.deployedRef, view.refUpdate)
+
+  /**
+   * THE CHANNEL EVERY OTHER READING ON THIS PAGE ARRIVED OVER.
+   *
+   * Derived from the same `dispatchFaults` the chip and the strip render, so
+   * the card, the header and the popup cannot disagree about which of the five
+   * states this is. Empty on `ok`, on `unknown` and on `unconfigured` — the
+   * card still shows those, because a reading is not an alarm.
+   */
+  const dispatchList = dispatchFaults(view.dispatch)
 
   // The window's span used to be computed here for the sparkline captions.
   // `HostCharts` derives it from the samples it is handed, so it is no longer
@@ -202,6 +240,96 @@ export function HostBoard({ initial }: { initial: View }) {
         it lands directly under it. Either way they are read together.
       */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {/*
+          ═══ THE CHANNEL, AND IT GOES FIRST BECAUSE EVERYTHING BELOW RIDES IT ═══
+
+          THE INCIDENT THIS CARD EXISTS FOR. Every tile on this page went to an
+          em-dash, the footer said "last update failed", the branch picker 502'd,
+          and `GET /api/host` returned 200 the whole time with the cause in its
+          own body — ssh could not read the private key, because the unit runs as
+          one user and the key was mode 600 owned by another. An hour of
+          two-machine debugging, ended by `chown`, found only by opening devtools
+          and reading the raw JSON. The DynamoDB card beside it stayed green
+          throughout and made it worse: br_ddb reaches AWS from the GAME box on
+          its own transport and does not care whether this console can log in.
+          Two transports, and only one of them had an indicator.
+
+          FIVE STATES, NOT A LIGHT, because the next action is a different
+          machine each time: `Not configured` is this box's .env.local, `Key
+          unreadable` is this box's filesystem, `Unreachable` is the network,
+          `Key refused` is the game box's authorized_keys, `No answer` is its
+          dispatch.sh. A single red word would have left the operator exactly
+          where the blank tiles did.
+
+          ═══ IT TAKES THE WHOLE ROW, AND THAT IS THE GRID RULE RATHER THAN AN
+          EXCEPTION TO IT ═══
+
+          The six cards below divide into two columns exactly — three full rows,
+          no card stranded on a half-empty one — which is the property this grid
+          was chosen for and which a seventh half-width card would destroy. A
+          full-width card is one complete row, so the parity holds at 4 rows the
+          same way it held at 3.
+
+          THE WIDTH IS ALSO EARNED RATHER THAN BORROWED. This is the only card
+          on the page whose failing state carries a MESSAGE — a multi-line ssh
+          error — and the line below the value is the whole point of the change:
+          the operator reads what the machine said without clicking anything.
+          The other six carry a word or a number and would waste the row.
+        */}
+        <StatCard
+          icon={Cable}
+          label="Dispatch"
+          className="lg:col-span-2"
+          tone={
+            view.dispatch === 'ok'
+              ? 'var(--live)'
+              : dispatchList.length > 0
+                ? 'var(--danger)'
+                : undefined
+          }
+        >
+          <span
+            className={
+              view.dispatch === 'ok'
+                ? 'text-live'
+                : dispatchList.length > 0
+                  ? 'text-danger'
+                  : 'text-muted-foreground'
+            }
+          >
+            {DISPATCH_LABEL[view.dispatch]}
+          </span>
+
+          {/*
+            THE STRING THE APP ALREADY HAD, ON THE PAGE, WITHOUT A CLICK.
+
+            `machineSaid` drops `execFile`'s `Command failed: ssh -i …` framing —
+            our own arguments, and the first thing in the message — so the line
+            leads with what ssh and the far side actually said. One line,
+            truncated, because it can run to several hundred characters; the
+            whole of it, command line included, is in the popup this opens,
+            since reproducing the call by hand is the next thing an operator
+            does.
+
+            IT IS A BUTTON RATHER THAN TEXT WITH A LINK BESIDE IT. The old
+            footer put "last update failed" in a corner with nothing to press
+            and no message; making the message itself the target means the thing
+            you are reading is the thing you can open.
+          */}
+          {dispatchList.length > 0 && view.lastError && (
+            <button
+              type="button"
+              onClick={() => setFaultOpen(true)}
+              aria-haspopup="dialog"
+              className="mt-1.5 block w-full min-w-0 text-left"
+            >
+              <span className="block truncate font-mono text-xs text-muted-foreground underline decoration-dotted underline-offset-4">
+                {machineSaid(view.lastError)}
+              </span>
+            </button>
+          )}
+        </StatCard>
+
         <StatCard icon={Power} label="FXServer" tone={s?.running ? 'var(--live)' : 'var(--danger)'}>
           {s ? (
             <span className={s.running ? 'text-live' : 'text-danger'}>
@@ -388,18 +516,46 @@ export function HostBoard({ initial }: { initial: View }) {
 
       <HostCharts samples={samples} />
 
+      {/*
+        `last update failed` USED TO SIT HERE AND IT IS GONE.
+
+        It was the console's entire account of an hour-long outage: five words
+        in the footer, in warn rather than danger, with no message, no state and
+        nothing to press — beside an em-dash on every tile and a green DynamoDB
+        card. It was not too quiet; it was the wrong SURFACE. A transport that
+        is down is not a footnote about the freshness of a sample.
+
+        WHAT REPLACED IT IS STRICTLY MORE: the Dispatch card at the top of the
+        page names which of the five failures it is, prints what the machine
+        said, and opens the steps — and the header chip and the strip say it on
+        every other page. Keeping this line as well would have been the same
+        fault reported twice, once uselessly.
+
+        THE SAMPLE COUNT AND THE AGE STAY. They are facts about the WINDOW, they
+        are what this footer is for, and they were never the problem.
+      */}
       <div className="flex items-center justify-between text-xs text-muted-foreground/60">
         <span>
           {samples.length} sample{samples.length === 1 ? '' : 's'}
           {view.statusAgeMs !== null && ` · updated ${Math.round(view.statusAgeMs / 1000)}s ago`}
         </span>
-        {view.lastError && (
-          <span className={cn('flex items-center gap-1.5 text-warn')}>
-            <Wifi className="size-3" />
-            last update failed
-          </span>
-        )}
       </div>
+
+      {/*
+        THE SAME POPUP THE CHIP AND THE STRIP OPEN — imported from DdbHealth
+        rather than rebuilt here, so there is one place that decides how a fault,
+        its steps and a long ssh command line are rendered.
+
+        OUTSIDE THE CARD GRID DELIBERATELY. It is a portal with no layout of its
+        own, and a grid child that renders nothing is still a grid child — which
+        is exactly how a measured row picks up a phantom cell.
+      */}
+      <FaultDialog
+        open={faultOpen}
+        onOpenChange={setFaultOpen}
+        list={dispatchList}
+        lastError={view.lastError}
+      />
     </div>
   )
 }

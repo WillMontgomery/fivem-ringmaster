@@ -18,6 +18,7 @@ import {
   type Fault,
   type Reach,
 } from '@/lib/ddbHealth'
+import { dispatchFaults, type Dispatch } from '@/lib/dispatchHealth'
 import { cn } from '@/lib/utils'
 
 /**
@@ -68,6 +69,28 @@ import { cn } from '@/lib/utils'
  * A console that has not polled, a game build with no probe, a dispatcher with
  * no bundle block — all render nothing at all in the chrome. The Host page's
  * two cards carry the quiet states; this is only ever the alarm.
+ *
+ * ═══ AND THE SSH CHANNEL IS IN HERE TOO, RATHER THAN BESIDE IT ═══
+ *
+ * `lib/dispatchHealth` reads a second subsystem — the one wire this console has
+ * to the game box, which carries telemetry, the branch list and every deploy —
+ * and it earns exactly the treatment the owner specified for br_ddb: a card, a
+ * chip, a strip and a popup, ending when the fault ends. That is this file, so
+ * it renders here.
+ *
+ * WHAT REUSE BUYS, CONCRETELY, is not fewer lines. It is that `faults` and
+ * `dispatchFaults` are the same shape, both surfaces are a render of a pure
+ * function of a current reading, both share ONE poll of `/api/host`, and
+ * `check-ddb-health.mjs`'s sweep of this file for `localStorage`, a `dismissed`
+ * flag, a snooze and an import of `chipCluster` now protects the new alarm
+ * without a line being added to it. A second file would have been a second
+ * place for "undismissable" to be re-argued.
+ *
+ * THEY STAY TWO SUBJECTS, THOUGH, and never merge into one list. The chip says
+ * which subsystem it is about, because `br_ddb` and `dispatch` are two
+ * different afternoons: one is the game box's route to AWS, the other is this
+ * box's route to the game box. That is the same anti-collapse rule
+ * `lib/ddbHealth` keeps between reachability and the bundle, one level up.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -78,9 +101,27 @@ interface Reading {
   reach: Reach
   bundle: BundleState
   probe: DdbProbe | null
+  /** The SSH channel to the game box. See lib/dispatchHealth. */
+  dispatch: Dispatch
+  /**
+   * THE POLLER'S OWN ERROR TEXT, CARRIED VERBATIM AND UNPARSED.
+   *
+   * It is the counterpart of `probe` above and it exists for the same stated
+   * reason: an AccessDenied and a timeout are two different afternoons. Here it
+   * matters more, because this string is the one that was already in
+   * `/api/host`'s body throughout the outage, naming the key path and the
+   * failure, while every surface showed the operator nothing.
+   */
+  lastError: string | null
 }
 
-const IDLE: Reading = { reach: 'unknown', bundle: 'unknown', probe: null }
+const IDLE: Reading = {
+  reach: 'unknown',
+  bundle: 'unknown',
+  probe: null,
+  dispatch: 'unknown',
+  lastError: null,
+}
 
 /**
  * ONE STORE FOR TWO COMPONENTS, AT MODULE SCOPE — the same shape as
@@ -108,7 +149,9 @@ function publish(next: Reading): void {
   if (
     next.reach === value.reach &&
     next.bundle === value.bundle &&
-    next.probe?.error === value.probe?.error
+    next.probe?.error === value.probe?.error &&
+    next.dispatch === value.dispatch &&
+    next.lastError === value.lastError
   ) {
     return
   }
@@ -125,6 +168,8 @@ async function tick(): Promise<void> {
       configured?: boolean
       ddb?: { reach?: Reach; probe?: DdbProbe | null } | null
       bundle?: BundleState
+      dispatch?: Dispatch
+      lastError?: string | null
     }
 
     /**
@@ -133,6 +178,11 @@ async function tick(): Promise<void> {
      * host connection is set up — the Host page renders "not configured yet"
      * for exactly this — and a red database alarm across the chrome of a
      * console that was never pointed at a server is a false critical.
+     *
+     * IT COVERS THE DISPATCH ALARM TOO, and it is the same judgement rather
+     * than a shortcut: `dispatchNow` already answers `unconfigured` for this
+     * case and `dispatchFaults` already raises nothing for it, so the line
+     * below is belt and braces on a state that is a setup step, not a fault.
      */
     if (!v.configured) {
       publish(IDLE)
@@ -151,6 +201,8 @@ async function tick(): Promise<void> {
       reach: v.ddb?.reach ?? 'unknown',
       bundle: v.bundle ?? 'unknown',
       probe: v.ddb?.probe ?? null,
+      dispatch: v.dispatch ?? 'unknown',
+      lastError: v.lastError ?? null,
     })
   } catch {
     /* leave the last value; a dropped poll is not news, and it is not a fault */
@@ -190,6 +242,16 @@ function subscribe(cb: () => void): () => void {
 export type DdbSeed = { reach: Reach; bundle: BundleState; probe?: DdbProbe | null }
 
 /**
+ * The same, for the channel. See `AppShell`'s `dispatch` prop.
+ *
+ * IT CARRIES THE ERROR TEXT because the popup renders it verbatim, and a
+ * fixture that omitted it could not review the one thing this feature is for —
+ * the difference between a card that says `Key unreadable` and a card that also
+ * hands the operator `Load key "…": Permission denied`.
+ */
+export type DispatchSeed = { dispatch: Dispatch; lastError?: string | null }
+
+/**
  * SERVER SNAPSHOT IS `IDLE`, NOT THE LAST VALUE. The third argument to
  * `useSyncExternalStore` is what the server renders and what the client
  * hydrates against; returning the live store there would let a value that
@@ -199,11 +261,33 @@ export type DdbSeed = { reach: Reach; bundle: BundleState; probe?: DdbProbe | nu
  * is still untouched. In the app no seed is passed and this line does nothing;
  * on the harness no poll ever succeeds (`/api/host` is session-guarded) so the
  * fixture stands for as long as the page is open.
+ *
+ * ONE HOOK FOR BOTH SUBJECTS. The two derivations below take the same reading
+ * and each reads only its own fields, which is what keeps the br_ddb chip and
+ * the dispatch chip from being two pollers that can disagree.
  */
-function useFaults(seed?: DdbSeed): { list: Fault[]; probe: DdbProbe | null } {
+function useReading(seed?: Partial<Reading>): Reading {
   const r = useSyncExternalStore(subscribe, () => value, () => IDLE)
-  const live = r === IDLE && seed ? { ...IDLE, ...seed } : r
+  return r === IDLE && seed ? { ...IDLE, ...seed } : r
+}
+
+function useFaults(seed?: DdbSeed): { list: Fault[]; probe: DdbProbe | null } {
+  const live = useReading(seed)
   return { list: faults(live.reach, live.bundle), probe: live.probe ?? null }
+}
+
+/**
+ * `dispatchFaults` TAKES THE READING AND NOTHING ELSE, and the error text is
+ * handed along beside it rather than into it — exactly as `probe` is above. The
+ * words the machine used are worth rendering and are worthless for deciding
+ * WHICH fault this is.
+ */
+function useDispatchFaults(seed?: DispatchSeed): {
+  list: Fault[]
+  lastError: string | null
+} {
+  const live = useReading(seed)
+  return { list: dispatchFaults(live.dispatch), lastError: live.lastError ?? null }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -223,17 +307,36 @@ function useFaults(seed?: DdbSeed): { list: Fault[]; probe: DdbProbe | null } {
  * chip and the banner are rendered from the reading and are still there behind
  * it, which is the distinction between "I have read the instructions" and "the
  * database is fine now".
+ *
+ * ═══ EXPORTED, BECAUSE THE HOST PAGE'S CARD OPENS THIS ONE ═══
+ *
+ * The dispatch card carries the poller's error truncated to a line, and the
+ * full text has to be reachable from there. It opens THIS dialog rather than
+ * one of its own, so the popup an operator reaches from the card, from the chip
+ * and from the strip is the same popup with the same steps — and so there is
+ * one place that decides how a long ssh command line is rendered.
  */
-function FaultDialog({
+export function FaultDialog({
   open,
   onOpenChange,
   list,
-  probe,
+  probe = null,
+  lastError = null,
+  many,
 }: {
   open: boolean
   onOpenChange: (v: boolean) => void
   list: Fault[]
-  probe: DdbProbe | null
+  probe?: DdbProbe | null
+  /** The poller's own error text, for the `dispatch-*` faults. */
+  lastError?: string | null
+  /**
+   * The title when more than one fault is showing. OPTIONAL, AND ABSENT MEANS
+   * THE FIRST FAULT'S OWN TITLE — the dispatch states are mutually exclusive,
+   * so its list is never longer than one and inventing a plural sentence for a
+   * case that cannot happen would be copy nobody asked for.
+   */
+  many?: string
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -241,7 +344,7 @@ function FaultDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <OctagonAlert className="size-4 text-danger" />
-            {list.length === 1 ? list[0]!.title : 'br_ddb has two problems'}
+            {list.length === 1 ? list[0]!.title : (many ?? list[0]?.title)}
           </DialogTitle>
         </DialogHeader>
 
@@ -289,6 +392,41 @@ function FaultDialog({
                     </>
                   ) : null}
                 </dl>
+              )}
+
+              {/*
+                ═══ THE STRING THE APP HAD ALL ALONG ═══
+
+                This is `lastError` out of `/api/host`, rendered exactly as it
+                arrived. During the outage it read
+
+                  Command failed: ssh -i /opt/ringmaster-secrets/dispatch …
+                  Load key "…/dispatch": Permission denied
+                  ubuntu@10.1.148.227: Permission denied (publickey,password).
+
+                and finding it meant opening browser devtools. Everything above
+                this block — the state, the title, the steps — is derived FROM
+                this string, so it is the one thing on the page that cannot be
+                wrong about what happened.
+
+                `whitespace-pre-wrap` RATHER THAN THE `<dl>` TREATMENT ABOVE.
+                The probe error is one AWS sentence; this is several lines, and
+                ssh puts the cause on its own line. Collapsing it would run
+                `Load key "…": Permission denied` into the middle of a hundred
+                characters of command line, which is precisely how it went
+                unread the first time. `break-all` keeps the unbroken key path
+                inside the dialog; `max-h-48` keeps a long command line from
+                pushing the steps off the bottom of the screen, and it scrolls.
+
+                IT IS HERE AND NOT IN THE CHROME'S STRIP, deliberately: it
+                contains a key path and the game box's private address. This
+                console's audience already has both, so the constraint is not
+                secrecy — it is that a full ssh command line is not a headline.
+              */}
+              {f.id.startsWith('dispatch-') && lastError && (
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-muted/40 p-3 font-mono text-xs">
+                  {lastError}
+                </pre>
               )}
 
               <ol className="list-decimal space-y-1.5 pl-5 text-sm">
@@ -363,7 +501,13 @@ export function DdbHealthChip({ seed }: { seed?: DdbSeed }) {
         <OctagonAlert className="size-3" />
         <span className="sr-only xl:not-sr-only xl:whitespace-nowrap">br_ddb</span>
       </button>
-      <FaultDialog open={open} onOpenChange={setOpen} list={list} probe={probe} />
+      <FaultDialog
+        open={open}
+        onOpenChange={setOpen}
+        list={list}
+        probe={probe}
+        many="br_ddb has two problems"
+      />
     </>
   )
 }
@@ -435,7 +579,128 @@ export function DdbHealthBanner({ seed }: { seed?: DdbSeed }) {
           </span>
         </div>
       </button>
-      <FaultDialog open={open} onOpenChange={setOpen} list={list} probe={probe} />
+      <FaultDialog
+        open={open}
+        onOpenChange={setOpen}
+        list={list}
+        probe={probe}
+        many="br_ddb has two problems"
+      />
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------------------- */
+/* the same two surfaces, for the channel                                      */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The header chip for the SSH channel. Silent unless the channel is stated
+ * broken, exactly like the one above.
+ *
+ * ═══ A SEPARATE CHIP RATHER THAN A SECOND ENTRY IN THE br_ddb ONE ═══
+ *
+ * They are two subsystems on two transports and the chip is where the operator
+ * learns WHICH. `br_ddb` is the game box's route to DynamoDB, measured by the
+ * game and pushed here; `dispatch` is this box's route to the game box, and
+ * when it is down the console cannot read telemetry, list branches or deploy.
+ * A single chip covering both would be the "one light for two facts" defect
+ * `lib/ddbHealth` was written against, one level up.
+ *
+ * IN PRACTICE THEY RARELY BOTH SPEAK. Reachability rides the ingest push and
+ * the bundle rides the `status` verb — so when this channel dies the bundle
+ * reading goes `unknown` and falls silent by itself, which is the correct
+ * behaviour and not a coincidence: it is the same rule that an absence is never
+ * a failure.
+ *
+ * ICON-ONLY BELOW `xl`, FOLLOWING THE br_ddb CHIP, AND FOR ITS MEASURED REASON.
+ * At 375px the header cluster has no room for a word, and this chip is never
+ * the only statement of the fault — the strip below is saying it in words at
+ * every width, and the Host page carries the message itself.
+ */
+export function DispatchHealthChip({ seed }: { seed?: DispatchSeed }) {
+  const { list, lastError } = useDispatchFaults(seed)
+  const [open, setOpen] = useState(false)
+
+  if (list.length === 0) return null
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
+        className={cn(
+          'inline-flex items-center gap-1.5 rounded-md bg-danger/10 px-2 py-1',
+          'text-xs font-semibold uppercase tracking-wider text-danger',
+          'ring-1 ring-inset ring-danger/30 transition-colors hover:bg-danger/20',
+        )}
+      >
+        <OctagonAlert className="size-3" />
+        <span className="sr-only xl:not-sr-only xl:whitespace-nowrap">dispatch</span>
+      </button>
+      <FaultDialog
+        open={open}
+        onOpenChange={setOpen}
+        list={list}
+        lastError={lastError}
+      />
+    </>
+  )
+}
+
+/**
+ * The critical notification for the channel: the same strip, under the br_ddb
+ * one on the vanishingly rare page load where both are up.
+ *
+ * WHY IT IS SECOND. br_ddb being down means bans are not checked at connect and
+ * match results are not being saved — players are affected while nobody acts.
+ * This being down means the console is blind and cannot deploy, which is
+ * serious and is a tool, not a live service. The order is the same judgement
+ * that put br_ddb above the off-main banner.
+ *
+ * IT CARRIES THE TITLE AND NOT THE ERROR TEXT. The strip is on every page and
+ * the error is a multi-line ssh command line naming a key path and the game
+ * box's address — a headline it is not. The full text is one click away in the
+ * popup, and it is printed on the Host page itself, which is where somebody
+ * looking at this problem is going next.
+ *
+ * NOTHING HERE IS DISMISSIBLE, for the reason the br_ddb strip is not: it is a
+ * render of `dispatchFaults(reading)`, so it ends when the channel comes back
+ * and returns if it goes again. There is no close control because there is no
+ * state to close.
+ */
+export function DispatchHealthBanner({ seed }: { seed?: DispatchSeed }) {
+  const { list, lastError } = useDispatchFaults(seed)
+  const [open, setOpen] = useState(false)
+
+  if (list.length === 0) return null
+
+  return (
+    <div role="alert" className="border-b border-danger/30 bg-danger/10">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-haspopup="dialog"
+        /* `/20` for the reason the br_ddb strip uses it: it is already in the
+           CEF 103 override block, and a tint that is not collapses to an opaque
+           red bar with its own text invisible inside it in the pause menu. */
+        className="block w-full px-5 py-2.5 text-left transition-colors hover:bg-danger/20"
+      >
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <OctagonAlert className="size-4 shrink-0 text-danger" />
+          <span className="font-medium text-danger">{list[0]!.title}</span>
+          <span className="text-muted-foreground underline decoration-dotted underline-offset-4">
+            What went wrong, and how to fix it
+          </span>
+        </div>
+      </button>
+      <FaultDialog
+        open={open}
+        onOpenChange={setOpen}
+        list={list}
+        lastError={lastError}
+      />
     </div>
   )
 }

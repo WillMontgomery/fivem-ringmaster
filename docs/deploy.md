@@ -291,6 +291,33 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload && sudo systemctl enable --now ringmaster
 ```
 
+> **UNRESOLVED: `User=` above, the user this box actually runs as, and who owns
+> `GAME_SSH_KEY` are three statements and at least two of them disagree.** This
+> document has said `User=ubuntu` for as long as there have been boxes.
+> Production has been observed running as `will`. The dispatch private key was
+> mode `600` owned by `ubuntu`.
+>
+> That combination is what took the Host page down for an hour: `ssh -i` could
+> not open the key, so every verb failed — telemetry, the branch list, deploys —
+> while the console kept serving pages and reporting DynamoDB healthy. The fix
+> was one `chown`; finding it was the hour.
+>
+> **This note does not say which of the three is correct**, because that is a
+> decision about the box rather than about this file, and writing a guess here
+> would produce a fourth statement. What it does say is that they must agree.
+> Read the live one and reconcile the other two against it:
+>
+> ```bash
+> systemctl show ringmaster -p User
+> ls -l "$(grep -oP '(?<=^GAME_SSH_KEY=).*' /opt/ringmaster/.env.local)"
+> ```
+>
+> The console now checks this itself at startup and writes both numbers to the
+> journal — `journalctl -u ringmaster | grep '\[dispatch\]'` — so the next
+> occurrence is a log line rather than an hour. It does **not** refuse to boot
+> over it: a console that will not start because it cannot reach the game box is
+> one you cannot use to find out why.
+
 ```bash
 systemctl status ringmaster --no-pager && journalctl -u ringmaster -n 30 --no-pager
 ```

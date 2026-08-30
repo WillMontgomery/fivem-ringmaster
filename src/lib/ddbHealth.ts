@@ -185,8 +185,26 @@ export const BUNDLE_LABEL: Record<BundleState, string> = {
  * anything.
  */
 export interface Fault {
-  /** Stable id, so a surface can key on it without matching on English. */
-  id: 'ddb-unreachable' | 'bundle-mismatch'
+  /**
+   * Stable id, so a surface can key on it without matching on English.
+   *
+   * THE `dispatch-*` IDS ARE NOT br_ddb's, AND THEY ARE HERE ON PURPOSE. The
+   * SSH channel health added in `lib/dispatchHealth` is a different subsystem
+   * with a different transport, but it is the SAME KIND of statement and it
+   * earns the same four surfaces the owner asked for here — a card, a chip, a
+   * strip and a popup that ends when the fault does. Copying this interface
+   * into that module would have given the console two fault contracts, two
+   * dialogs and two ways for "undismissable" to be re-litigated. It imports
+   * this type instead, so `components/DdbHealth.tsx` renders both and
+   * `check-ddb-health.mjs`'s sweep for dismissal machinery covers both.
+   */
+  id:
+    | 'ddb-unreachable'
+    | 'bundle-mismatch'
+    | 'dispatch-key-unreadable'
+    | 'dispatch-unreachable'
+    | 'dispatch-rejected'
+    | 'dispatch-verb-failed'
   title: string
   /** What went wrong. */
   detail: string
