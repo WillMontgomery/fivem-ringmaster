@@ -148,11 +148,19 @@ const BASE_INCIDENT: Incident = {
       DRAWS WITHIN — so this row carries no offset by a single millisecond, and
       that is the rule rather than a bug in the fixture. Worth knowing before
       reading `?match=none`, where it is the only row on the list with a blank
-      column. `banned-fast` below is where a note inside the reach can be seen.
+      column. `banned-fast` below is where a row inside the reach can be seen.
+
+      AND IT IS A CORROBORATION, WHICH IT ALWAYS WAS. This row is what
+      `incidents.corroborate` writes when the game reports that a subject is
+      still at it — the System attribution and the sentence are both its
+      output. It carried `kind: 'note'` until 2026-08-29, which is exactly the
+      defect the owner reported ("corroboration doesn't show on the incident
+      timeline"): it was on the list, wearing an admin's word. Only the kind
+      changed here; the text is the ingest route's own.
     */
     {
       at: BASE - 2 * HOUR,
-      kind: 'note',
+      kind: 'corroborated',
       byLicense: null,
       byName: 'System',
       text: 'Refusals doubled to 8 across 2 matches.',
