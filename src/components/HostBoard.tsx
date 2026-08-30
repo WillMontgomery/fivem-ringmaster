@@ -128,6 +128,23 @@ export function HostBoard({ initial }: { initial: View }) {
           live process, CPU, memory and network metrics appear here. Until then
           this is the correct display, not an error.
         </p>
+        {/*
+          THE TWO NAMES, BECAUSE THIS PANEL IS THE ONLY SURFACE `unconfigured`
+          HAS. Every other dispatch state reaches the card below, which prints
+          the machine's own message; this one returns before the card row
+          exists, so whatever is actionable about it has to be here.
+
+          THE VARIABLES AND THE FILE, AND NOTHING ELSE. The owner asked for the
+          panel to "name those" — so it names them. It does not explain what SSH
+          is for, what the channel carries, or what to put in them: the
+          paragraph above already says what appears once it is set up, and a
+          sentence of background would be the invented copy this console does
+          not write. The names ARE the actionable content, and they are the one
+          thing an operator cannot guess.
+        */}
+        <p className="mx-auto mt-3 font-mono text-xs text-muted-foreground/60">
+          GAME_HOST and GAME_SSH_KEY in .env.local on this box
+        </p>
       </Card>
     )
   }
