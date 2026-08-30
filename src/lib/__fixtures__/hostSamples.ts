@@ -399,9 +399,12 @@ export const HOST_DDB: Record<string, DdbFixture> = {
  *
  *   ok              the channel works. One green word, no chip, no strip.
  *   unknown         the poll timer has not run. An em-dash — the cold console.
- *   unconfigured    GAME_HOST/GAME_SSH_KEY unset. NOTE: on `/host` this is the
- *                   whole-page "not configured yet" panel instead; this key is
- *                   how the card's own fallback stays reviewable.
+ *   unconfigured    GAME_HOST/GAME_SSH_KEY unset. THE ONLY KEY THAT REPLACES
+ *                   THE WHOLE PAGE rather than colouring the card: the harness
+ *                   drops `configured` for it, because `HostBoard` returns the
+ *                   "not configured yet" panel before the card row exists and
+ *                   that panel — carrying the two variable names — is the real
+ *                   surface for this state.
  *   key-unreadable  THE INCIDENT. The key on this box cannot be loaded.
  *   unreachable     no session opened at all.
  *   rejected        the game box answered and refused the key. The state that

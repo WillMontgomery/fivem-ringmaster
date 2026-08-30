@@ -476,6 +476,34 @@ if (dispatchNow(true, '', true) !== 'ok') {
     )
   }
 
+  /**
+   * ═══ AND `unconfigured`'s ONLY SURFACE NAMES WHAT TO SET ═══
+   *
+   * This is the one dispatch state that never reaches the card: `HostBoard`
+   * returns the whole-page "not configured yet" panel before the card row
+   * exists, so the panel IS the surface and there is no message to fall back
+   * on. The owner, asked whether it should name the variables: "'not
+   * configured' panel should name those yes."
+   *
+   * PINNED BECAUSE IT IS THE KIND OF LINE THAT GETS TIDIED. It reads like
+   * incidental copy sitting under two sentences of prose, and it is the only
+   * actionable content on the page — the one thing an operator cannot guess.
+   */
+  if (!/GAME_HOST/.test(board) || !/GAME_SSH_KEY/.test(board)) {
+    fail(
+      'the "not configured" panel no longer names GAME_HOST and GAME_SSH_KEY. ' +
+        'That panel is the only surface the `unconfigured` state has — every ' +
+        'other state reaches the card, which prints the machine\'s own message ' +
+        'and this one has none.',
+    )
+  }
+  if (!/\.env\.local/.test(board)) {
+    fail(
+      'the "not configured" panel names the variables but not the file they go ' +
+        'in. Both halves were asked for.',
+    )
+  }
+
   /** The vague line it replaced must not quietly come back beside it. */
   if (/last update failed/.test(board)) {
     fail(

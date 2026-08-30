@@ -124,7 +124,24 @@ async function Preview({
   const dispatchFixture = HOST_DISPATCH[dispatchKey]!
 
   const initial: ReturnType<typeof hostView> = {
-    configured: true,
+    /**
+     * THE ONE AXIS VALUE THAT MOVES THIS FLAG, so the harness shows what the
+     * real console shows.
+     *
+     * `unconfigured` is the only dispatch state that does NOT reach the card:
+     * `HostBoard` returns the whole-page "not configured yet" panel first. With
+     * this hardcoded `true` the harness rendered that key as a card reading
+     * `Not configured` — a shape the app cannot produce — and the panel, which
+     * is the real surface and now carries the two variable names the owner
+     * asked for, was not reviewable anywhere at all.
+     *
+     * THAT IS THE SAME DEFECT THE FIXTURES EXIST TO PREVENT, one level up: a
+     * harness that reviews a state the app never renders is worse than no
+     * harness, because it is believed. The card's own fallback loses its
+     * preview and keeps its reason — `DISPATCH_LABEL` is a total map over
+     * `Dispatch` — which is the cheaper of the two losses.
+     */
+    configured: dispatchKey !== 'unconfigured',
     status: fixture.status,
     // An age is a fact about a reading. There is no reading in the `none` case,
     // so there is nothing for the footer to have measured.
