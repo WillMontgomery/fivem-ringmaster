@@ -40,7 +40,7 @@ Create ten tables. For every one of them:
 | Table name | Partition key | Sort key | Notes |
 |---|---|---|---|
 | `ringmaster-grants` | `license` (String) | — | Maps a Discord account to a game license. **Needs a secondary index — see below.** The game server reads its `scopes` attribute for in-game admin powers; **Ringmaster no longer does** — it has no permission levels. |
-| `ringmaster-bans` | `license` (String) | — | Active and lifted bans. Ringmaster writes; the game server only reads. |
+| `ringmaster-bans` | `license` (String) | — | Active and lifted bans. **The key is a qualified identifier, normally a license** — blitz-bot files a `discord:<snowflake>` placeholder for somebody the game has never seen. Ringmaster and blitz-bot write; the game server reads two keys per connect and writes nothing. |
 | `ringmaster-audit` | `pk` (String) | `ts` (Number) | Every admin action. **Ringmaster only.** |
 | `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations. The game appends and updates five named attributes at match end; both sides read. Verdicts are written only by Ringmaster. |
 | `ringmaster-sessions` | `pk` (String) | `sk` (String) | Auth.js writes this. **Needs a secondary index *and* TTL — see below** |
@@ -280,6 +280,16 @@ console under your username, or run `aws sts get-caller-identity`.
 
 Name the policy `RingmasterTableAccess` and save.
 
+> **`dynamodb:DeleteItem` on `ringmaster-bans` has a caller now, and it is the
+> only one.** `bans.reconcileDiscordBan` moves a `discord:`-keyed placeholder ban
+> onto the license it turns out to belong to and then deletes the placeholder —
+> the owner's ruling, and the one exception to `src/lib/bans.ts`'s first rule
+> that a ban is a record rather than a deletion. Nothing is lost: the delete
+> happens only after the same ban has been written to the license row, carrying
+> its original `at`, issuer, reason and expiry, and it is conditional on the row
+> still being the one that was read. **No action was added to this policy** —
+> `DeleteItem` was already in it. See the gamemode's `docs/ban-contract.md`.
+
 > **⚠ The policy above does not cover everything this box reads, and the gap is
 > not written into it here on purpose.**
 >
@@ -430,18 +440,31 @@ Verify it with **`brddb`** in the game server's console (`brddb` is registered b
 `br_ddb/server/debug.lua`). It looks up a license that will never exist, so a
 successful lookup returning nothing proves credentials, route and permission
 together without depending on any row being present. `brban <license>` is the
-same check against a license you care about.
+same check against a license you care about, and
+`brban <license> discord:<id>` — or `brban - discord:<id>` for somebody with no
+license at all — is the two-key check the gate now actually performs (#38).
 
 **Why this policy is shaped the way it is** — this is the single most important
 security control in the whole design, so it is worth understanding rather than
 pasting:
 
-- **`GetItem` only, on named tables.** Enough to answer "is *this* license
+- **`GetItem` only, on named tables.** Enough to answer "is *this* identifier
   banned?", "what scopes does *this* license hold?" and "are we draining?" —
   each about one specific key the box already has in hand. (A `PutItem` was
   added alongside it on 2026-08-14, a fourth table on 2026-08-17 and an
   attribute-scoped `UpdateItem` on 2026-08-21; all three are the sections
   below.)
+
+  **The connect gate asks that first question twice per connect since #38, and
+  this statement did not change.** `ringmaster-bans` is keyed on a *qualified
+  identifier*, and blitz-bot files a ban under `discord:<snowflake>` for
+  somebody an admin banned in Discord whom the game has never met. The gate now
+  looks up the connecting license **and** the `discord:` identifier FiveM
+  reported on the same connection — two point lookups on two keys it was handed,
+  issued together, on the table it already reads. **No action and no ARN was
+  added**, which is the property to check when reviewing this: a verb learned a
+  second argument, the policy did not widen. See the gamemode's
+  `docs/ban-contract.md`.
 - **No `ringmaster-audit`, at all.** The audit log is the record of what admins
   did. A compromised game host must not be able to read — still less rewrite —
   the account of its own compromise. **This is the line that does not move**,

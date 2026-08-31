@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
+import * as bans from '@/lib/bans'
 import { env } from '@/lib/env'
 import { ingestEnvelope } from '@/lib/ingest'
 import * as incidents from '@/lib/incidents'
@@ -150,12 +151,66 @@ async function persistIdentity(
     }
     if (!d.license) continue
 
+    const identifiers = (d.identifiers ?? {}) as Partial<Record<players.IdKind, string>>
+
     const { sharedWith } = await players.recordConnect({
       license: d.license,
       name: d.name ?? 'Unknown',
-      identifiers: (d.identifiers ?? {}) as Partial<Record<players.IdKind, string>>,
+      identifiers,
       now,
     })
+
+    /**
+     * RECONCILE A DISCORD-KEYED BAN ONTO THE LICENSE IT BELONGS TO (#38).
+     *
+     * THIS EVENT IS THE MAPPING. blitz-bot files a ban under
+     * `discord:<snowflake>` when the game has never met the person an admin
+     * banned in Discord, and there is exactly one moment at which that stops
+     * being true: the connect that carries both identifiers in the same
+     * payload. Nothing here reads the reverse index, because the answer it
+     * would go and look up has already arrived in this request.
+     *
+     * AND THE CONNECT WE ARE ACTING ON WAS ALMOST CERTAINLY REFUSED. The
+     * gamemode's ban gate and its identity capture are two handlers on the same
+     * `playerConnecting` event; capture emits `player_seen` synchronously and
+     * the gate turns the connection away a moment later, over the network. So
+     * the first thing a banned stranger does — get refused — is also the thing
+     * that hands us their license. Enforcement does not wait for this; the gate
+     * reads the `discord:` row directly. See lib/bans.ts.
+     *
+     * AFTER `recordConnect`, DELIBERATELY. That call is what writes the reverse
+     * index entry the bot will need to find this ban again on an unban, and a
+     * reconciliation that ran first would move the row while the only other
+     * route to it did not yet exist.
+     *
+     * IT AWAITS, LIKE EVERYTHING ELSE IN THIS LOOP, AND THAT IS FREE: the whole
+     * function already runs behind `void` after the 202 went out, so the game's
+     * five-second budget is not in play here. What it costs is one `GetItem`
+     * per player_seen carrying a Discord identifier, on a path that already does
+     * several.
+     *
+     * A THROW HERE MUST NOT COST THE REST OF THE BATCH. The events after this
+     * one are other players' sessions, and losing them to a DynamoDB blip in a
+     * ban lookup would be a much larger failure than the one it reports.
+     */
+    if (identifiers.discord) {
+      try {
+        const outcome = await bans.reconcileDiscordBan({
+          discordId: identifiers.discord,
+          license: d.license,
+          now,
+        })
+        if (outcome !== 'no-placeholder') {
+          console.warn('[registry] discord ban reconciliation', {
+            license: d.license,
+            discordId: identifiers.discord,
+            outcome,
+          })
+        }
+      } catch (e) {
+        console.error('[registry] discord ban reconciliation failed', e)
+      }
+    }
 
     /**
      * An identifier that already belongs to somebody else.
