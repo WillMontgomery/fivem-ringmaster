@@ -36,9 +36,15 @@
  *      refusal.
  *   E. THE SCOPE, WALKED — the routes on disk that call `authorizeWrite` and
  *      the paths in `SERVICE_ROUTES` are the same set, in BOTH directions, and
- *      `/api/maintenance/force` and `/api/maintenance/cancel` are in neither.
- *      A walk rather than a list, because a list only holds what somebody
- *      remembered.
+ *      `/api/maintenance/force` is in neither. A walk rather than a list,
+ *      because a list only holds what somebody remembered.
+ *
+ *      AND THE SET IS NAMED AS WELL AS WALKED, which the walk on its own cannot
+ *      do. Two halves that agree are still two halves that agree if a path
+ *      leaves BOTH of them — a route reverted to `authorize` and quietly struck
+ *      off the list — and that is precisely the state `/api/maintenance/cancel`
+ *      was in while `/drain cancel` answered `Not signed in`. So the four paths
+ *      are written down here too, and a route that stops being covered fails.
  *   F. THE WIRING — that `lib/actions.ts` still branches through `isServiceCall`
  *      into `serviceGate`, that nothing else in `src/` calls the gate, and that
  *      the role question is still delegated to `enforceDiscordAdmin` rather than
@@ -61,8 +67,10 @@
  * whenever Discord has a bad minute", and it is the owner's ruling on #42.
  * Putting `SERVICE_CALLER` into the actor fails D. Adding
  * `/api/maintenance/force` to `SERVICE_ROUTES` without a route change fails E in
- * the other direction. Collapsing a refusal and a dead link back into one error
- * fails H.
+ * the other direction, and taking `/api/maintenance/cancel` off the list AND out
+ * of its route — the tidy-looking revert that would put `/drain cancel` back to
+ * `Not signed in` — fails E on the named set. Collapsing a refusal and a dead
+ * link back into one error fails H.
  */
 
 process.env.DISCORD_CLIENT_ID ??= 'check-client-id'
@@ -254,12 +262,14 @@ async function main(): Promise<void> {
     ['kick is in scope', { path: '/api/kick', action: 'kick' }, {}, 'allowed'],
     ['maintenance is in scope', { path: '/api/maintenance', action: 'process' }, {}, 'allowed'],
     /**
-     * THE FORCE DEPLOY IS THE CASE THIS LIST EXISTS FOR. It skips the drain and
-     * restarts the box now, and a prefix match on `/api/maintenance` would hand
-     * it over on the strength of a shared string.
+     * CANCEL IS IN SCOPE AND FORCE IS NOT, WHICH IS THE PAIR THIS LIST EXISTS
+     * FOR. They sit under one path prefix and are opposite actions: cancel stops
+     * a restart, force skips the drain and performs one now. An exact match is
+     * what lets the credential open the first without opening the second, and
+     * these two cases are what would notice a prefix test creeping back in.
      */
+    ['maintenance cancel is in scope', { path: '/api/maintenance/cancel', action: 'process' }, {}, 'allowed'],
     ['force deploy is NOT in scope', { path: '/api/maintenance/force' }, {}, '403 scope'],
-    ['maintenance cancel is NOT in scope', { path: '/api/maintenance/cancel' }, {}, '403 scope'],
     ['ban lift is NOT in scope', { path: '/api/bans/lift' }, {}, '403 scope'],
     ['incident resolve is NOT in scope', { path: '/api/incidents/resolve' }, {}, '403 scope'],
     ['spectate is NOT in scope', { path: '/api/spectate' }, {}, '403 scope'],
@@ -406,7 +416,6 @@ async function main(): Promise<void> {
    */
   for (const path of [
     '/api/maintenance/force',
-    '/api/maintenance/cancel',
     '/api/bans/lift',
     '/api/incidents/resolve',
     '/api/incidents/artifact',
@@ -720,9 +729,76 @@ async function main(): Promise<void> {
     }
 
     /** The specific regressions, named so they fail with the right sentence. */
-    for (const path of ['/api/maintenance/force', '/api/maintenance/cancel', '/api/bans/lift']) {
+    for (const path of ['/api/maintenance/force', '/api/bans/lift']) {
       if (wired.has(path)) {
         fail('scope', `${path} now goes through the command credential; it must not`)
+      }
+    }
+
+    /**
+     * AND THE SET ITSELF, WRITTEN DOWN — the one thing the walk above cannot
+     * assert about itself.
+     *
+     * The walk proves the two halves AGREE. It cannot prove they are right,
+     * because a path removed from `SERVICE_ROUTES` and from its route in the
+     * same commit leaves them agreeing perfectly about a smaller door — which is
+     * exactly the state cancel was in: `/api/maintenance/cancel` was on neither
+     * side, everything here passed, and `/drain cancel` answered `Not signed
+     * in`. A check that cannot fail on the bug it was written for is decoration.
+     *
+     * SO THE COMMANDS ARE NAMED, NOT JUST THE PATHS. Each entry says which
+     * blitz-bot command stops working when that route stops being covered, so
+     * the failure is read as "the bot loses X" rather than as a list that needs
+     * bringing into line with the code.
+     */
+    const EXPECTED: Array<[string, string]> = [
+      ['/api/kick', "the live kick blitz-bot relays when Discord's own /kick or /ban fires"],
+      /**
+       * ON THE LIST FOR `/brban`, WHICH BLITZ-BOT NO LONGER HAS. That command
+       * was designed and then cut — Discord's own `/ban` fires an audit event
+       * the bot already listens for, so a slash command would have been a second
+       * trigger for one listener — and the ban row is written straight to
+       * DynamoDB by the bot today. So this path is open and unused.
+       *
+       * LEFT OPEN RATHER THAN CLOSED HERE, DELIBERATELY. Narrowing the
+       * credential is the same kind of decision as widening it and belongs to
+       * whoever owns the bot's roadmap, not to a check being edited for an
+       * unrelated route. It is written down so it is a known state rather than a
+       * discovery.
+       */
+      ['/api/bans', '/brban — designed, then cut from blitz-bot; open and unused'],
+      ['/api/maintenance', '/drain start'],
+      ['/api/maintenance/cancel', '/drain cancel'],
+    ]
+
+    for (const [path, command] of EXPECTED) {
+      if (!allowed.has(path)) {
+        fail(
+          'scope',
+          `${path} is no longer on SERVICE_ROUTES — ${command} is refused 403 \`scope\``,
+        )
+      }
+      if (!wired.has(path)) {
+        fail(
+          'scope',
+          `${path} no longer calls authorizeWrite() — ${command} is answered ` +
+            `\`Not signed in\`, which is fivem-ringmaster#42's cancel bug again`,
+        )
+      }
+    }
+
+    /**
+     * AND NOTHING BEYOND THEM. The other direction of the same assertion:
+     * widening the credential is a decision, and a decision leaves a diff in
+     * THIS file as well as in lib/service.ts.
+     */
+    for (const path of allowed) {
+      if (!EXPECTED.some(([p]) => p === path)) {
+        fail(
+          'scope',
+          `${path} was added to SERVICE_ROUTES without being added here — say ` +
+            `which blitz-bot command needs it, or take it back off`,
+        )
       }
     }
 
@@ -730,7 +806,7 @@ async function main(): Promise<void> {
      * A FLOOR ON WHAT WAS FOUND, for the reason `origin.check.ts` states: a
      * detector that silently stopped matching would report perfect scoping of
      * nothing. There were 10 state-changing routes when this was written, of
-     * which 3 take the credential.
+     * which 4 take the credential.
      */
     if (writeRoutes < 8) {
       fail(
@@ -739,7 +815,7 @@ async function main(): Promise<void> {
           `this was written, so the detector has probably stopped detecting`,
       )
     }
-    expect('scope: exactly the three routes are wired', wired.size, SERVICE_ROUTES.length)
+    expect('scope: exactly the four routes are wired', wired.size, SERVICE_ROUTES.length)
   }
 
   // =========================================================================

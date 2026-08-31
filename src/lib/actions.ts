@@ -219,8 +219,8 @@ export interface WriteContext {
  * caller in lib/service.ts.
  *
  * ONE BRANCH, IN ONE PLACE, for the reason every other choke point in this file
- * exists: three routes each writing their own version of "is this the bot or a
- * person" is three chances to get it wrong, and this repository has shipped the
+ * exists: four routes each writing their own version of "is this the bot or a
+ * person" is four chances to get it wrong, and this repository has shipped the
  * same one-line omission across five routes before now.
  *
  * THE HEADER PICKS THE DOOR AND OPENS NOTHING. Presenting
@@ -235,9 +235,9 @@ export interface WriteContext {
  * already-scheduled guard, "that license is already banned", the closed-case
  * refusals — runs exactly as it did, because none of them is here.
  *
- * ONLY THE THREE ROUTES IN `SERVICE_ROUTES` MAY CALL THIS, and `serviceGate`
+ * ONLY THE FOUR ROUTES IN `SERVICE_ROUTES` MAY CALL THIS, and `serviceGate`
  * refuses on the path rather than trusting the import: wiring this into a
- * fourth route gets a 403, not a fourth entrance. `service.check.ts` asserts
+ * fifth route gets a 403, not a fifth entrance. `service.check.ts` asserts
  * that the routes calling this and the paths on that list are the same set, in
  * both directions.
  */

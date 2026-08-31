@@ -457,12 +457,19 @@ console changes.
 
 The credential `blitz-bot` presents when it asks this console to do something a
 bot cannot do itself. There are two such things. **The live kick** is tmux over
-SSH and only the CONSOLE box holds that channel. **Starting a maintenance
-window** is `POST /api/maintenance`, because `nothingToDeploy`, the
-branch-eligibility gate and the already-scheduled refusal live in that route and
-nowhere else — and the maintenance driver deploys any `scheduled` row it finds,
-so a bot writing that row straight into DynamoDB would start a restart no gate
-had looked at.
+SSH and only the CONSOLE box holds that channel. **A maintenance window** is
+`POST /api/maintenance` to start one and `POST /api/maintenance/cancel` to call
+it off, because `nothingToDeploy`, the branch-eligibility gate and the
+already-scheduled refusal live in those routes and nowhere else — and the
+maintenance driver deploys any `scheduled` row it finds, so a bot writing that
+row straight into DynamoDB would start a restart no gate had looked at.
+
+**Both halves of `/drain`, and it took a bug to get there.** The credential
+shipped wired to the kick, the ban and the maintenance POST, and the cancel
+route was missed — so `/drain cancel` was answered `Not signed in` while
+`/drain start` worked, leaving an admin able to start a window and unable to
+stop one. If a future command needs a route that is not in the table below, that
+is the symptom it shows.
 
 **It authorises the caller, not the action.** Every check the route already
 makes still runs, on the same code, in the same order: the closed-case refusal
@@ -474,7 +481,7 @@ never a way around what is in the room.
 
 ### How the bot presents it
 
-Two headers, on a POST to one of three paths:
+Two headers, on a POST to one of four paths:
 
 | Header | Carries |
 |---|---|
@@ -485,13 +492,16 @@ Two headers, on a POST to one of three paths:
 |---|---|
 | `POST /api/kick` | `/brkick` |
 | `POST /api/bans` | `/brban` |
-| `POST /api/maintenance` | `/drain` |
+| `POST /api/maintenance` | `/drain start` |
+| `POST /api/maintenance/cancel` | `/drain cancel` |
 
 **Nothing else.** `/api/maintenance/force` — the button that skips the drain and
-restarts the box now — and `/api/maintenance/cancel` and `/api/bans/lift` are
-deliberately not on that list, and the console refuses them whatever the secret
-says. `src/lib/service.check.ts` fails the build if the routes and the list ever
-stop agreeing.
+restarts the box now — and `/api/bans/lift` are deliberately not on that list,
+and the console refuses them whatever the secret says. Cancel and force sit
+under one path prefix and are opposite actions, which is why the console matches
+these paths exactly and never as a prefix. `src/lib/service.check.ts` fails the
+build if the routes and the list ever stop agreeing, and names which command
+breaks when one of them stops being covered.
 
 > **`x-ringmaster-actor` is why the audit log is still worth reading.** The row
 > names the admin who ran the command — their license, their name, their Discord

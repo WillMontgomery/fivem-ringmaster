@@ -409,6 +409,34 @@ export async function tick(): Promise<void> {
 
     if (!maint.isLive(w)) return
 
+    /**
+     * A WINDOW THAT OUTLIVED ITS EXPIRY IS CANCELLED, NOT HONOURED.
+     *
+     * Only host-patch windows carry `expiresAt`. What clears them normally is a
+     * systemd unit on a box that has just finished rebooting; if that unit
+     * fails, nothing else in the system has any reason to touch the row, and
+     * the game turns away every player indefinitely while every health check
+     * stays green. That failure is silent, which is what earns it a dead-man's
+     * switch rather than a log line.
+     *
+     * NOT DYNAMODB TTL, which was the obvious answer and the wrong one: TTL
+     * deletion is best-effort within 48 hours, so it would reopen the door long
+     * after the outage had stopped being an outage.
+     */
+    if (typeof w.expiresAt === 'number' && now >= w.expiresAt) {
+      await maint.cancel({ by: null, byName: 'system' }).catch(() => {})
+      await refresh()
+      await audit
+        .begin({
+          action: 'maintenance.cancel',
+          actor: { license: null, name: 'system', discordId: null },
+          reason: 'Host-patch window expired without being cleared',
+          detail: { expiresAt: w.expiresAt, automatic: true },
+        })
+        .catch(() => {})
+      return
+    }
+
     // scheduled -> draining, once the clock passes.
     if (w.state === 'scheduled' && now >= w.drainStartsAt) {
       await maint.markDraining().catch(() => {})
@@ -427,6 +455,28 @@ export async function tick(): Promise<void> {
     }
 
     if (w.state !== 'draining') return
+
+    /**
+     * A HOST-PATCH WINDOW DRAINS AND THEN STOPS. IT NEVER DEPLOYS.
+     *
+     * This row was written by the SSM patch runbook on the game box, which
+     * wants exactly two things from the console: the door shut and no new
+     * matches started. It reboots the machine itself once the server is empty,
+     * and it watches its own local player count to decide when that is — so
+     * nothing below this line is work it asked for.
+     *
+     * FALLING THROUGH WOULD BE THE WHOLE BUG. `runDeploy` fires the moment the
+     * last player leaves, which during a patch window is precisely when apt is
+     * partway through an upgrade: Ringmaster would SSH in, `reset --hard` the
+     * game box onto whatever the branch tip happened to be at 4am, and restart
+     * FXServer under a kernel that is about to be replaced. Two automations,
+     * one box, nobody watching.
+     *
+     * PARKING IN `draining` IS DELIBERATE. The gate refuses connections for the
+     * whole of it, the runbook clears the row on the way back up, and
+     * `expiresAt` above recovers the case where it never does.
+     */
+    if (w.hostPatch) return
 
     /**
      * The live view is read ONCE here and used twice: the player count that

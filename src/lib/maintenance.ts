@@ -76,6 +76,32 @@ export interface MaintenanceWindow {
   /** Only for `at-time`. Absolute, so nothing has to re-derive it. */
   deployAt: number | null
 
+  /**
+   * This window exists so SSM can patch and REBOOT the game host. It is not a
+   * deploy.
+   *
+   * Written by the patch runbook on the box itself rather than by anybody in
+   * the console, and it means one specific thing to the driver: drain the
+   * server, then stop. See the guard in `maintenanceDriver` — without it the
+   * console would SSH in and run `royale-deploy` the instant the last player
+   * left, in the middle of an apt upgrade.
+   *
+   * The game side needs no knowledge of this at all. `isDraining` already
+   * closes the door on `draining`, which is where such a window parks.
+   */
+  hostPatch?: boolean
+
+  /**
+   * When an unattended window stops being believable. Only host-patch windows
+   * set it.
+   *
+   * What clears a host-patch window normally is a systemd unit on a machine
+   * that has just rebooted. If that unit never runs, the row sits in `draining`
+   * forever and the server refuses every player while looking perfectly
+   * healthy — so something has to be able to give up on it.
+   */
+  expiresAt?: number | null
+
   drainStartedAt?: number | null
   deployStartedAt?: number | null
   completedAt?: number | null

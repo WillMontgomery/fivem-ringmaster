@@ -96,10 +96,12 @@ export async function POST(req: Request): Promise<Response> {
      * deploys. A bot writing that row straight into DynamoDB would start an
      * unreviewed restart of the game server with none of this consulted.
      *
-     * THE GET ABOVE IS UNTOUCHED AND STAYS SESSION-BOUND, as do
-     * `/api/maintenance/cancel` and `/api/maintenance/force` — the force-deploy
-     * button skips the drain, and it is deliberately not one of the paths this
-     * credential opens (see `SERVICE_ROUTES`).
+     * THE GET ABOVE IS UNTOUCHED AND STAYS SESSION-BOUND, as does
+     * `/api/maintenance/force` — the force-deploy button skips the drain, and it
+     * is deliberately not one of the paths this credential opens (see
+     * `SERVICE_ROUTES`). `/api/maintenance/cancel` IS one of them: `/drain`
+     * starts a window here and calls it off there, and a bot that could only do
+     * the first was the whole of fivem-ringmaster#42's miss.
      */
     const { actor } = await authorizeWrite('process', req)
 

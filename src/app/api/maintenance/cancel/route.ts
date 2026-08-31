@@ -1,4 +1,4 @@
-import { authorize, errorResponse } from '@/lib/actions'
+import { authorizeWrite, errorResponse } from '@/lib/actions'
 import * as audit from '@/lib/audit'
 import * as maint from '@/lib/maintenance'
 
@@ -17,9 +17,28 @@ import * as maint from '@/lib/maintenance'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function POST(): Promise<Response> {
+export async function POST(req: Request): Promise<Response> {
   try {
-    const { actor } = await authorize('process', 'write')
+    /**
+     * EITHER DOOR — a session, or `blitz-bot`'s `/drain cancel` presenting the
+     * service credential and the Discord id of the admin who ran it
+     * (lib/service.ts).
+     *
+     * THE PAIR IS THE POINT: `/drain` schedules through `POST /api/maintenance`
+     * and calls off through here, and a bot that can start a window but not stop
+     * one leaves the admin who started it with no way back — which is the state
+     * this route was in until now, answering `Not signed in` to the bot.
+     *
+     * NOTHING BELOW MOVES. The credential authorises the CALLER, not the action:
+     * the "no window to cancel" 404 and the "already deploying" 409 run exactly
+     * as they did, on the same code, in the same order, and the audit row names
+     * the human the bot relayed for.
+     *
+     * `req` IS TAKEN ONLY TO BE READ AS A CREDENTIAL. This handler still parses
+     * no body — there is nothing to say about cancelling but which window, and
+     * there is only ever one.
+     */
+    const { actor } = await authorizeWrite('process', req)
 
     const w = await maint.current()
     if (!maint.isLive(w)) {

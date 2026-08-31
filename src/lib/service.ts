@@ -22,7 +22,8 @@ import { grantsForDiscordId } from './grants'
  * cookie belongs to. There is no machine caller anywhere in the console, and
  * `blitz-bot` now has three commands that need one: `/brkick` and `/brban` need
  * the live kick, which is tmux over SSH and only this box can do it, and
- * `/drain` needs `POST /api/maintenance`.
+ * `/drain` needs `POST /api/maintenance` — and, since it is one command that
+ * both starts a window and calls one off, `POST /api/maintenance/cancel` too.
  *
  * `/drain` HAS TO GO THROUGH THE ROUTE, and that is the whole reason this file
  * exists rather than a DynamoDB grant for the bot. `nothingToDeploy` and the
@@ -117,12 +118,18 @@ import { grantsForDiscordId } from './grants'
  *
  * ═══ SCOPED, SO WIDENING IT IS A DECISION ═══
  *
- * {@link SERVICE_ROUTES} is a closed list of three exact paths and the gate
+ * {@link SERVICE_ROUTES} is a closed list of four exact paths and the gate
  * refuses anything else, whatever the secret says. Wiring `authorizeWrite` into
- * a fourth route does not open it; adding the path here does, in a diff with the
+ * a fifth route does not open it; adding the path here does, in a diff with the
  * word `SERVICE_ROUTES` in it. `service.check.ts` asserts the two halves agree
  * in both directions, by walking the routes on disk rather than by holding a
  * list somebody has to remember to update.
+ *
+ * THE LIST GREW ONCE AND THAT IS WHAT IT LOOKS LIKE WHEN IT DOES. `/drain
+ * cancel` was refused for as long as this list said three, because #42 wired the
+ * routes that were known to need the credential and cancel was not one of them.
+ * The fix was this list and one route's `authorize`, which is the whole cost of
+ * a deliberate scope — and the reason it is worth the friction.
  */
 
 /**
@@ -159,13 +166,22 @@ export const SERVICE_CALLER = 'blitz-bot'
 /**
  * The only paths this credential opens. Exact matches, never prefixes.
  *
- * `/api/maintenance` IS HERE AND `/api/maintenance/cancel` AND
- * `/api/maintenance/force` ARE NOT, which is precisely why the match is exact:
- * a prefix test would hand the bot the force-deploy button — the one that skips
- * the drain and restarts the box now — on the strength of a shared string.
+ * `/api/maintenance/cancel` IS HERE AND `/api/maintenance/force` IS NOT, which
+ * is precisely why the match is exact rather than a prefix: the two sit under
+ * one path and are not one kind of thing. Cancel STOPS a restart; force is the
+ * button that skips the drain and restarts the box NOW, and a prefix test would
+ * hand the bot the second on the strength of a string it shares with the first.
+ *
+ * CANCEL IS HERE BECAUSE `/drain` IS ONE COMMAND WITH TWO HALVES. It schedules
+ * through `/api/maintenance` and calls off through `/api/maintenance/cancel`,
+ * and #42 wired only the first — so the bot could start a window and then had
+ * no way to stop one, which is what the console was saying when it answered
+ * `Not signed in` to `/drain cancel`. Opening it is exactly as narrow as opening
+ * the schedule was: the route's own refusals — no live window, and a deploy
+ * already under way — are untouched, because none of them is authorisation.
  *
  * READS ARE NOT ON THIS LIST EITHER, and they are excluded structurally rather
- * than by policy: only the POST handlers of these three routes go through
+ * than by policy: only the POST handlers of these four routes go through
  * `authorizeWrite`, so `GET /api/bans` and `GET /api/maintenance` stay exactly
  * as session-bound as they were.
  */
@@ -173,6 +189,7 @@ export const SERVICE_ROUTES = [
   '/api/bans',
   '/api/kick',
   '/api/maintenance',
+  '/api/maintenance/cancel',
 ] as const
 
 /**
