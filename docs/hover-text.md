@@ -97,27 +97,39 @@ did: what was removed was the trigger, so there was nothing left to hang a popup
 on. The count each pip stood for is still the `matches` figure they sat next to,
 and the phase each one was coloured by is spelled out on the match cards.
 
-**Thirteen `Tooltip` sites remain outside `src/components/ui/`.** It read twelve
-— down from thirteen, when `ServerStrip`'s pips went — and #192's Spectate button
-takes it back to thirteen. A grep for `<Tooltip>` returns one line more than the
-count, and the extra one is prose inside `ProfileView`'s own comment.
+**Twelve `Tooltip` sites remain outside `src/components/ui/`.** A grep for
+`<Tooltip>` returns fourteen lines: the twelve, plus two lines of prose inside
+comments — one in `ProfileView`, one in `PlayerActions` — so read the hits rather
+than counting them.
 
-**The new one is the first site in `PlayerActions.tsx` that satisfies this rule
-rather than appearing under Known gaps for breaking it**, and it is worth reading
-before the next disabled control is built:
+**The Spectate button was the thirteenth and is now the worked example of rule 8
+instead of this one.** It is written down rather than deleted because the removal
+is the lesson:
 
-- **The popup is conditional and the button is not.** `<Tooltip>` wraps the
-  Spectate button whenever it is drawn; `TooltipContent` renders only while the
-  button is disabled. There is no enabled-state sentence at all, because the only
-  honest one would explain what spectating is — rule 8, and the standing
-  instruction on the issue that built it. A pill repeating a button's own label
-  is not a fallback for anything. (`ProfileView`'s dead-first badge makes the
-  same move one level up, conditioning the whole `<Tooltip>`; both spellings are
-  fine, and the comment at `ProfileView.tsx:507` says why that one goes further.)
-- **The sentence exists twice**, as `NO_SPECTATE_SCOPE` — once in the popup and
-  once in an `sr-only` span beside it, the `Face` conversion. The trigger is an
-  inert `<span>` around a disabled button, so without the second copy the fact
-  would live on hover alone for a mouse and nowhere at all for anybody else.
+- **It satisfied this rule and still had to go.** `<Tooltip>` wrapped the button
+  whenever it was drawn, `TooltipContent` rendered only while the button was
+  disabled, and the sentence existed twice — as `NO_SPECTATE_SCOPE`, once in the
+  popup and once in an `sr-only` span beside it, the `Face` conversion. Rule 4
+  was met on every count.
+- **The state it explained stopped existing.** The nine grant scopes were deleted
+  on 2026-08-29, so nothing in this console can grant or withhold Spectate: the
+  button is shown or it is absent, and `disabled` on it is now only the
+  double-click guard. A popup with one branch, in a state that can no longer
+  occur, renders nothing on every path — so the whole `<Tooltip>` went rather
+  than being left wrapping a button with an empty popup. `PlayerActions.tsx`'s
+  header comment records the sentence and why it was wrong even while it was
+  true: it asked every admin to acquire something no surface hands out.
+- **What is left is shown-or-absent with no third state**, and there is
+  deliberately no enabled-state sentence, because the only honest one would
+  explain what spectating is — rule 8, and the standing instruction on the issue
+  that built it. A pill repeating a button's own label is not a fallback for
+  anything.
+
+**The conditional-popup pattern itself is still the right one and still has a
+live example**: `ProfileView`'s dead-first badge makes the same move one level
+up, conditioning the whole `<Tooltip>` rather than its content, and the comment
+at `ProfileView.tsx:502` says why that one goes further. `actionBar.check.ts`
+now fails the build if `NO_SPECTATE_SCOPE` comes back.
 
 ### 5. `HoverCard` = content with real internal structure
 
@@ -232,11 +244,18 @@ never fires on touch. A machine value belongs in a machine-readable attribute �
 > palette dialog** and looks more like a tooltip than anything that actually was
 > one.
 >
-> **As of this sweep the grep returns 29 hits outside `src/components/ui/`: 28
-> component props and one sentence of prose** (`PrefsProvider.tsx`, describing
-> this very rule). None is a DOM attribute, so the rule currently has no
-> violations — and the two chart components were missing from the list above,
-> which made the grep look like it had unexplained hits.
+> **As of this sweep the grep returns 31 hits outside `src/components/ui/`: 28
+> component props, two sentences of prose** (`PrefsProvider.tsx` and `time.ts`,
+> both describing this very rule) **and one regular expression inside a gate
+> script** (`matchTimeline.check.ts`, which greps two files for the banned
+> attribute — see Known gaps). None is a DOM attribute, so the rule still has no
+> violations.
+>
+> **The count read 29 and named one prose hit until this sweep.** The 28 props
+> did not move; what grew is the number of places that talk *about* the rule,
+> which is the failure mode of counting a grep rather than reading it. The two
+> chart components were also missing from the list above, which made the grep
+> look like it had unexplained hits.
 
 ### 7. Delays are per-trigger, not global
 
@@ -295,6 +314,19 @@ re-punctuated, not expanded into two sentences, not given a second one
 explaining why. Where wording is given, it is used as given. The reason it is
 true — `screenshot-basic` captures the game's framebuffer, and the NUI layer is
 composited afterwards — lives in that constant's comment and stays off the page.
+
+**The Host page's "not configured" panel is the second instance, and it shows
+what "asked for" buys you** (2026-08-30). Asked whether that panel should name
+the variables, the owner said *"'not configured' panel should name those yes"* —
+so it carries one mono line under the prose that was already there,
+`GAME_HOST and GAME_SSH_KEY in .env.local on this box`, and nothing else. It does
+not explain what SSH is for or what the channel carries: **the names are the
+actionable content, and they are the one thing an operator cannot guess.** That
+state is also the one dispatch state with no machine message to fall back on —
+every other one reaches the health card, which prints what the far side said —
+so if it is not in the panel it is nowhere. `check:dispatchhealth` fails if the
+panel stops naming either variable or drops the file, because a line like that is
+exactly what gets tidied away as incidental copy.
 
 ---
 
@@ -356,12 +388,16 @@ two-sentence paragraphs in a single-line pill.
 - **`PlayerRow.tsx`** uses a `Tooltip` as a copy-confirmation toast on a
   `setTimeout`, invisible to the keyboard user who just pressed Enter. `sonner`
   is already mounted in the root layout.
-- **`PlayerActions.tsx`** has the disabled-button defect twice, worked
-  around with a bare wrapper `<span>` that restores the mouse case and nothing
-  else. **It is two rather than three**: the Spectate button added by #192 uses
-  the same wrapper and also carries the sentence as `sr-only`, which is the fix
-  those two still need — see rule 4. Doing it there did not fix them, because the
-  string is different at each site and Kick's enabled branch has a second one.
+- **`PlayerActions.tsx` no longer has the disabled-button defect at all**, and it
+  was not fixed — the states that produced it stopped existing. This entry read
+  "twice, worked around with a bare wrapper `<span>`", each wrapper standing in
+  for a control greyed out because the admin lacked a scope. With the scopes gone
+  (2026-08-29) **every control in that file is drawn or absent, never greyed**:
+  Kick is not rendered when there is nobody to kick, Spectate is not rendered
+  unless both people are in-game, and the only `disabled` left in the file is
+  Spectate's double-click guard, which carries no tooltip. There are no wrapper
+  spans and no `sr-only` copy left in it. `actionBar.check.ts` fails the build on
+  a `bar.<x>.enabled` read, so the greyed state cannot come back by accident.
 - **The incident page's Ban button is disabled with nothing saying why**, and
   that is rule 8 outranking the trap above rather than an oversight. The resolve
   buttons moved into the player-report bar at the owner's request — *"No helper
@@ -371,19 +407,30 @@ two-sentence paragraphs in a single-line pill.
   is the one control left greyed and unexplained. It was **not** converted to a
   tooltip, which would have been the same words in the one place a disabled
   button cannot show them; `/preview/incident?subject=banned` is the state.
-- **There is no lint rule behind any of this, and `npm run lint` is not one
-  either.** The script exists in `package.json` and there is no ESLint config
-  file and no `eslint` dependency anywhere in the repo, so it is a name rather
-  than a gate — and it is *not* part of `npm run verify`, which is what actually
-  runs (read the `verify` script for the current list; it has gained
-  `check:artifacts`, `check:handoff`, `check:origin`, `check:framed`,
-  `check:timeline` and `check:cef` since this paragraph was written, which is
-  why it now points at the script rather than copying it). An ESLint rule
-  banning the `title` JSX
-  attribute on DOM elements — allowlisting `<iframe>`/`<svg>`, never matching
-  component props — is what would keep this from decaying, but standing ESLint
-  up at all is the bootstrap task in front of it.
+- **There is still no lint rule behind any of this — but the bootstrap task in
+  front of it is done, and this bullet said otherwise for too long.** It read:
+  *"The script exists in `package.json` and there is no ESLint config file and no
+  `eslint` dependency anywhere in the repo, so it is a name rather than a gate —
+  and it is not part of `npm run verify`."* **All three of those are now false.**
+  `eslint.config.mjs` has been in the repo since 2026-08-22, `eslint` and
+  `eslint-config-next` are devDependencies, and `npm run lint` is the last step
+  of `npm run verify` (read the `verify` script for the current list rather than
+  copying it here).
 
-  Until then the check is a grep, and rule 6's caveat is the whole difficulty:
-  `title=` returns both banned DOM attributes and legitimate component props,
-  and every hit has to be read and classified by hand.
+  **What is still missing is the rule itself.** `next/core-web-vitals` and
+  `next/typescript` do not ban the `title` JSX attribute on DOM elements; a rule
+  that did — allowlisting `<iframe>`/`<svg>`, never matching component props — is
+  what would keep this from decaying, and it is now an afternoon's work against a
+  config that exists rather than a config that does not.
+
+  **One narrow gate does exist and is worth knowing about**, because it is the
+  shape the general rule would take: `check:timeline` (`src/lib/matchTimeline.check.ts`)
+  asserts that `IncidentTimeline.tsx` and `ui/timeline.tsx` contain no
+  ` title="` or ` title={` at all. Two files, chosen because they were the two
+  that task touched — so it protects almost nothing and demonstrates the whole
+  method.
+
+  Everywhere else the check is a grep, and rule 6's caveat is the whole
+  difficulty: `title=` returns banned DOM attributes, legitimate component props,
+  prose about this rule, and now that regex, and every hit has to be read and
+  classified by hand.

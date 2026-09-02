@@ -444,6 +444,30 @@ same check against a license you care about, and
 `brban <license> discord:<id>` — or `brban - discord:<id>` for somebody with no
 license at all — is the two-key check the gate now actually performs (#38).
 
+> **⚠ BOTH OF THOSE ARE DEV-ONLY SINCE 2026-09-01, so on a production box they
+> print a refusal and do nothing.** The gamemode now wraps `RegisterCommand`
+> itself (`br_lib/shared/devgate.lua`, gamemode commit `e8171dd`), so every
+> console command in the project — client and server, roughly a hundred and
+> thirty of them — is gated behind one switch and a new one is gated by
+> construction rather than by anybody remembering. The switch is either
+> **`br_devMode true`** or **`sv_devMode true`** in the game box's `server.cfg`,
+> and a refused command says exactly that on the server console rather than
+> failing silently.
+>
+> **Three verbs are exempt, by name, and they are the only three**: **`brkick`**,
+> **`brspectate`** and **`brring`**. The first two are Ringmaster's Kick and
+> Spectate buttons — `tools/dispatch.sh` types them into the FXServer console
+> over `tmux send-keys` — and `brring` is the health dump this document sends you
+> to after an IAM change. `docs/deploy.md` §7 has the constraint that keeps them
+> exempt.
+>
+> **So the checks in this section are dev-box checks now.** On the live box the
+> reading you can still get is `brring`, whose `ddb` line reports `reachable` or
+> `FAILED` from `br_ddb`'s last selftest — which is what the game is *telling the
+> console*, not a fresh probe, and `br_ddb/server/debug.lua`'s own comment draws
+> that distinction. To run `brddb` or `brban` against real credentials, run them
+> on a box started with the switch on.
+
 **Why this policy is shaped the way it is** — this is the single most important
 security control in the whole design, so it is worth understanding rather than
 pasting:
@@ -615,7 +639,9 @@ So one of two things is true, and only the live role says which:
 **`BR.Ring.incidentStats().closeFailed` distinguishes them** — `brring` in the
 FXServer console prints it, and on a healthy server it is zero. A non-zero
 counter here means the policy is short two attributes, not that the code is
-wrong.
+wrong. **`brring` still answers on the production box**: it is one of the three
+verbs the gamemode's dev gate exempts by name, and this diagnostic is the reason
+it is on that list — see the warning in §3.
 
 The attribute list, once confirmed, is:
 
@@ -778,6 +804,29 @@ It should print an ARN containing `assumed-role/<the role name>`. If it says
 credentials could not be found, the role is not attached — or the AWS CLI is not
 installed, which is fine and does not mean the role is missing (the SDK reads it
 from instance metadata regardless).
+
+### The game box's two Discord convars are NOT in this document, deliberately
+
+**Named here so nobody comes looking for them under an IAM heading.** Since
+2026-08-31 the game box reads two convars of its own — **`br_discord_bot_token`**
+and **`br_discord_guild_id`** — which decide whether the in-game Discord card is
+hidden from players Discord itself says are already in the guild
+(`br_core/server/guild.lua`). With neither set the feature is simply off, and a
+token with no guild id, or a guild id with no token, is off as well: there is
+deliberately no half-configured state.
+
+They are **not AWS**. They need **no IAM statement, no table and no bucket**, and
+nothing in this file changes because of them, which is why the setup steps live
+in the game repo's `server.cfg.example` and in Infradocs rather than being copied
+here — a second copy of a credential's setup instructions is a second thing to
+get out of date. **The token is a real credential**: it belongs in `server.cfg`,
+which is gitignored for exactly that reason, and **no value of it goes into any
+document, this one included.**
+
+**They are separate from Ringmaster's own `DISCORD_BOT_TOKEN`** (`docs/deploy.md`
+§1), which is worth saying because the two may well hold the same string and are
+still two settings on two machines. The game asks Discord directly rather than
+asking this console — the console may depend on the game and never the reverse.
 
 ---
 

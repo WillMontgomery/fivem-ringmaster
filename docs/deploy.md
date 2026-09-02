@@ -97,12 +97,19 @@ and Discord rejects a mismatch.
 > anyway. An `http://` origin here is therefore not merely insecure; it is a
 > pause-menu Admin tab that can never hold a session.
 
-Three are genuinely optional and the app starts without them —
-`DISCORD_BOT_TOKEN` and `GAME_HOST` / `GAME_SSH_KEY` (without the latter two the
-Host page says "not configured" rather than erroring; `GAME_SSH_USER` defaults
-to `ubuntu`). `src/lib/env.ts` is the authority on which are which: it validates
-the whole environment at first use and names **every** missing variable at once
-rather than one per restart.
+**Four are genuinely optional** and the app starts without them —
+`DISCORD_BOT_TOKEN`, `COMMAND_SECRET`, and `GAME_HOST` / `GAME_SSH_KEY`. Without
+the last two the Host page says "not configured" rather than erroring, and that
+panel names both variables and the file they go in, because it is the only
+surface that state has; `GAME_SSH_USER` defaults to `ubuntu`. `src/lib/env.ts`
+is the authority on which are which: it validates the whole environment at first
+use and names **every** missing variable at once rather than one per restart.
+
+> **This paragraph said "three" until `COMMAND_SECRET` shipped on 2026-08-30**,
+> and it is corrected rather than quietly renumbered because the fourth is the
+> one an operator is most likely to think is required. It is not: unset, the
+> Discord bot's door is simply shut and nothing else about the console changes.
+> §6 is the whole of it.
 
 > **`DISCORD_BOT_TOKEN` now does two jobs, and this document used to name only
 > the first.** It used to say the token's absence meant "every player shows a
@@ -122,6 +129,19 @@ rather than one per restart.
 > before the check existed: job 1 works from outside your server, job 2 requires
 > **the bot to be a member of the guild** in `DISCORD_GUILD_ID`. Invite it with
 > no permissions at all — it needs none, and no privileged intents.
+
+> **THE GAME BOX HAS A DISCORD CREDENTIAL OF ITS OWN NOW, AND IT IS NOT THIS
+> ONE.** Since 2026-08-31 the FXServer host reads two convars — `br_discord_bot_token`
+> and `br_discord_guild_id` — to decide whether the in-game Discord card is shown
+> to a player, and it asks Discord directly rather than asking this console.
+> **They may well hold the same two values as `DISCORD_BOT_TOKEN` and
+> `DISCORD_GUILD_ID` here, and they are still two settings on two machines**:
+> filling them in on this box does nothing for the game, and filling them in
+> there does nothing for the console. Their setup lives in the game repo's
+> `server.cfg.example` and in Infradocs, and `docs/aws-setup.md` §3 records why
+> it is not repeated in this estate. **The token is a real credential and its
+> value goes in no document, this one included** — it belongs in the game box's
+> `server.cfg`, which is gitignored for exactly that.
 
 **`DISCORD_ADMIN_ROLE_ID` is required, not optional.** Guild membership stopped
 meaning anything once the guild became the player community, so the role is the
@@ -449,9 +469,9 @@ starts refusing commands, for rotating the value, and for rebuilding either
 side — not a step to come back and do later.
 
 `src/lib/env.ts` keeps it optional and the console still starts without it.
-Unset, the door is simply shut: `/brkick`, `/brban` and `/drain` are refused
-with a line in the journal naming this variable, and nothing else about the
-console changes.
+Unset, the door is simply shut: the kick the bot relays out of Discord, and both
+halves of `/drain`, are refused with a line in the journal naming this variable,
+and nothing else about the console changes.
 
 ### What it is
 
@@ -488,12 +508,29 @@ Two headers, on a POST to one of four paths:
 | `x-ringmaster-service` | the value of `COMMAND_SECRET` |
 | `x-ringmaster-actor` | the **Discord id of the admin who typed the command** |
 
-| Path | Command |
+| Path | What uses it |
 |---|---|
-| `POST /api/kick` | `/brkick` |
-| `POST /api/bans` | `/brban` |
+| `POST /api/kick` | the live kick the bot relays when Discord's own `/kick` or `/ban` fires |
+| `POST /api/bans` | nothing today — see below |
 | `POST /api/maintenance` | `/drain start` |
 | `POST /api/maintenance/cancel` | `/drain cancel` |
+
+> **THIS TABLE'S RIGHT-HAND COLUMN USED TO READ `/brkick` AND `/brban`, AND
+> NEITHER SLASH COMMAND EXISTS.** Both were designed and then cut, in the owner's
+> words: *"we do not need /brkick or /brban if the default discord /kick and /ban
+> do the same thing, since we have event listeners"* — a slash command would have
+> been a second trigger for the one audit-log listener the bot already runs, so
+> either it duplicated the mirror's work or it did nothing the listener was not
+> about to do. `blitz-bot`'s registered commands are `/drain`, `/help`,
+> `/profile` and `/sticky`, and its only two calls into this console are
+> `KICK_PATH` and the two maintenance paths (`src/ringmaster.ts` there).
+>
+> **So `/api/bans` is open and unused, which is a known state rather than a
+> discovery.** The bot writes its ban rows straight to DynamoDB. The path stays
+> on the list deliberately: narrowing this credential is the same kind of
+> decision as widening it, and belongs to whoever owns the bot's roadmap.
+> `src/lib/service.check.ts` says so beside the entry, and fails the build if the
+> path is removed from `SERVICE_ROUTES` without that decision being made.
 
 **Nothing else.** `/api/maintenance/force` — the button that skips the drain and
 restarts the box now — and `/api/bans/lift` are deliberately not on that list,
@@ -616,6 +653,87 @@ configured".
 
 ---
 
+## 7. The three console commands the game box must never gate — no box, nothing to run
+
+**This is a constraint on the other machine, written down here because this
+console is what breaks when somebody forgets it.** There is no step in this
+section to carry out; the two commands in the table below are typed by the
+dispatcher, never by a person.
+
+Ringmaster reaches the game box through exactly one channel: the forced-command
+SSH link into `tools/dispatch.sh`, which switches on a fixed set of eight verbs
+— `status`, `telemetry`, `configreport`, `kick`, `spectate`, `deploy`,
+`branches`, `switchref`. Six of those are shell work on the game host: reading
+files, listing refs, writing the branch pin, and — for `deploy` alone — starting
+the systemd unit that restarts FXServer. None of the six types anything into the
+game's console. **Two of them do**, through `tmux send-keys` into the live
+FXServer console:
+
+| Ringmaster | dispatcher verb | what is typed into the FXServer console |
+|---|---|---|
+| the Kick button, and the kick `blitz-bot` relays out of Discord — both via `POST /api/kick` | `kick` | `brkick <license> "<base64 reason>" <command-id>` |
+| the Spectate button, `POST /api/spectate` | `spectate` | `brspectate <admin-license> <target-license> <command-id>` |
+
+### Since 2026-09-01 every console command in the gamemode is dev-gated, and exactly three are exempt
+
+The gamemode wraps `RegisterCommand` once, in `br_lib/shared/devgate.lua`
+(commit `e8171dd`), so all ~130 console commands in the project — client and
+server — refuse unless the box was started with **`br_devMode true`** or
+**`sv_devMode true`**, and a command written next month is gated by construction
+rather than by anybody remembering to gate it.
+
+**Three verbs pass through ungated, by name, and they are the only three:**
+
+| verb | why it is exempt |
+|---|---|
+| `brkick` | `dispatch.sh` types it. It **is** this console's Kick button. |
+| `brspectate` | `dispatch.sh` types it. It **is** this console's Spectate button. |
+| `brring` | the health dump `docs/aws-setup.md` sends an operator to on the live box after an IAM change. Nothing types it for them. |
+
+`tools/verify.sh` in the gamemode parses that exemption list and fails if the set
+is anything other than those three, so the constraint is enforced rather than
+remembered — but a rule a build checks is still a rule somebody has to know
+exists before they argue with it, and that is what this section is for.
+
+> **GATING EITHER OF THE FIRST TWO WOULD BREAK MODERATION IN COMPLETE SILENCE,
+> and that is the whole reason this is in a deploy document.** Read the chain:
+> the button posts, the route calls `runVerb`, `dispatch.sh` answers `ok`, the
+> keystrokes land in the console — and the gate prints its refusal to the game
+> box's own stdout, where no part of this console is looking. Every step this
+> side can see succeeded.
+>
+> **This console cannot tell you otherwise, by design.** `src/lib/commandOutcome.ts`
+> classifies four outcomes and no more — `not-configured`, `unreachable`,
+> `refused`, `dispatched` — and it says out loud that there is deliberately **no
+> fifth state for "the player was actually removed"**, because nothing reports one
+> back: `/api/ingest` has no handler for a command outcome, so `dispatched`
+> carries `confirmed: false` and every `player.kick` audit row stays `pending`.
+> The bot's answer is "sent to the server" and never "done". So a gated `brkick`
+> reads, everywhere a human can look on this side, exactly like a kick that
+> worked — and the player stays where they are.
+>
+> **The gate fails open on purpose**, which is the other half of the protection:
+> if `devgate.lua` ever falls out of a resource's manifest, that resource's
+> commands register ungated. Wrong for a security gate, right here — a gate that
+> can take `brkick` off the public box by failing to load is worse than one that
+> leaves a dev command on it.
+
+### Checking, from this console, whether the live box is in dev mode
+
+The `configreport` verb already reads `br_devMode` and `sv_devMode` off the
+deployed `server.cfg`, so the **Config page** (`/config`) shows both without
+anybody SSHing in. It also shows `onesync`, which the gamemode requires to be
+`on` — `legacy` silently costs a shipped fix, and the game repo's deploy
+documentation is the authority on that, not this file.
+
+**Read what that page shows precisely.** `configreport` greps the deployed
+`server.cfg` and reports the line it found; a convar the file never mentions
+comes back `null` with a source of `default`, which means *nobody wrote it
+down*, not *the engine is running the default*. A value set some other way — a
+command-line argument, another cfg — will not appear there at all.
+
+---
+
 ## Checks
 
 ### On the CONSOLE box
@@ -677,14 +795,29 @@ which loads the public origin over 443 from inside the game client — if the fe
 works and the pause menu still opens signed out, the peering is not the problem.
 
 ```
-brddb
+brring
 ```
 
-In the **FXServer console** (not a shell), which confirms the game box's own
-DynamoDB access — credentials, route and IAM permission — independently of
-anything on the CONSOLE box. See `docs/aws-setup.md` §3. It is listed here only
-so that a failure gets attributed to the right machine: **the console being
-down does not affect it, and it does not affect the console.**
+In the **FXServer console** (not a shell), which reports the game box's own side
+of things — including a `ddb` line reading `reachable` or `FAILED` — independently
+of anything on the CONSOLE box. It is listed here only so that a failure gets
+attributed to the right machine: **the console being down does not affect it, and
+it does not affect the console.**
+
+> **This said `brddb` until 2026-09-01, and on a production box that command now
+> refuses.** Every console command in the gamemode is dev-gated (§7); `brddb` is
+> not one of the three exemptions, so on the live server it prints
+> `brddb is dev-mode only` and does nothing. Anyone who ran it, saw no lookup and
+> concluded the game box had lost its AWS credentials would be chasing a fault
+> that is not there.
+>
+> **`brring` is not the same check and this document should not pretend it is.**
+> `brddb` probes DynamoDB *now*; `brring`'s `ddb` line reports what `br_ddb` last
+> told `br_ringmaster` — the cached selftest verdict, which is also what the
+> console's own DynamoDB card is drawn from. That makes it the right reading for
+> "is this machine's story consistent with what the console shows", and the wrong
+> one for "is IAM working this second". For the second question, run `brddb` on a
+> box started with `br_devMode true`. See `docs/aws-setup.md` §3.
 
 ---
 
