@@ -108,8 +108,16 @@ use and names **every** missing variable at once rather than one per restart.
 > **This paragraph said "three" until `COMMAND_SECRET` shipped on 2026-08-30**,
 > and it is corrected rather than quietly renumbered because the fourth is the
 > one an operator is most likely to think is required. It is not: unset, the
-> Discord bot's door is simply shut and nothing else about the console changes.
-> §6 is the whole of it.
+> Discord bot's door is simply shut, and no page, feed or command changes
+> behaviour. §6 is the whole of it.
+>
+> **"And nothing else about the console changes" was true when that was written
+> and stopped being true when `GET /api/health` shipped**, because that route is
+> behind the same variable. Unset, it answers every caller
+> `503 {"ok":false,"error":"not-configured"}` — which is the correct answer and
+> is also indistinguishable, to an external check watching only the status code,
+> from the console reporting itself unwell. If a check is wired up, this variable
+> is required in practice whatever `src/lib/env.ts` says.
 
 > **`DISCORD_BOT_TOKEN` now does two jobs, and this document used to name only
 > the first.** It used to say the token's absence meant "every player shows a
@@ -461,22 +469,33 @@ curl -s https://www.cloudflare.com/ips-v4
 
 ---
 
-## 6. `COMMAND_SECRET` — the Discord bot's door — CONSOLE box
+## 6. `COMMAND_SECRET` — the Discord bot's door, and the one read behind it — CONSOLE box
 
 **The value is already set on this box**, in `/opt/ringmaster/.env.local`, and
 the same string is in `/opt/blitz-bot/.env`. This section is for the day the bot
-starts refusing commands, for rotating the value, and for rebuilding either
-side — not a step to come back and do later.
+starts refusing commands, for rotating the value, for rebuilding either side,
+and for wiring up an external health check — not a step to come back and do
+later.
 
 `src/lib/env.ts` keeps it optional and the console still starts without it.
 Unset, the door is simply shut: the kick the bot relays out of Discord, and both
-halves of `/drain`, are refused with a line in the journal naming this variable,
-and nothing else about the console changes.
+halves of `/drain`, are refused with a line in the journal naming this variable.
+
+> **UNSET NOW COSTS ONE MORE THING THAN IT USED TO, AND THIS PARAGRAPH USED TO
+> END "and nothing else about the console changes".** It does not. `GET
+> /api/health` is behind the same variable, so an unset secret also closes the
+> route an external check reads, which answers `503` with
+> `{"ok":false,"error":"not-configured"}` to everybody. **Its refusal is NOT a
+> line per call**, unlike the two above it: a route designed to be polled every
+> thirty seconds forever writes one `[health]` line per process and then goes
+> quiet, so an operator reading the journal for the reason will find one line
+> near the last restart and nothing since. See the subsection below.
 
 ### What it is
 
-The credential `blitz-bot` presents when it asks this console to do something a
-bot cannot do itself. There are two such things. **The live kick** is tmux over
+**The bot's half first, because it is what the credential was made for.** It is
+what `blitz-bot` presents when it asks this console to do something a bot cannot
+do itself, and there are two such things. **The live kick** is tmux over
 SSH and only the CONSOLE box holds that channel. **A maintenance window** is
 `POST /api/maintenance` to start one and `POST /api/maintenance/cancel` to call
 it off, because `nothingToDeploy`, the branch-eligibility gate and the
@@ -498,6 +517,13 @@ on a kick and on a ban, the refusal to ban a license that is already banned,
 any of them through, because nothing it does runs after them — the gate hands
 back the acting human and stops. It is a second door into the same room, and
 never a way around what is in the room.
+
+**And the half that is not the bot's at all: one read, `GET /api/health`.** The
+bot never calls it and no admin is behind it — it is how something outside a
+browser asks this console how it is doing at an hour when nobody is signed in.
+It is on this credential because there is only one, which is a cost rather than
+a design: it has its own subsection below, and the sentence to read there is the
+one about who ends up holding this string.
 
 ### How the bot presents it
 
@@ -839,6 +865,13 @@ game server, so whoever runs the check holds that.
 | `401`, body `{"ok":false}` | the header is missing, or the secret does not match `.env.local`. **Nothing is logged** — see §6 |
 | `503`, body `{"ok":false,"error":"not-configured"}` | `COMMAND_SECRET` is unset on this box (§6) |
 | `503`, body with the three readings | **the console answered and is reporting itself unwell** — read `dispatch` |
+
+**THE TWO `503`s ARE TOLD APART BY THE `error` FIELD AND BY NOTHING ELSE**, so
+anything parsing this — a checker, a script, a person — reads `error` before it
+reads the status. Present and equal to `not-configured`, the console declined to
+answer and the body holds no readings. Absent, the body is the full payload from
+a console that looked and found something wrong. Treating every `503` alike
+discards the second one, which is the only thing that says which machine to open.
 
 **The last row is the one to understand, because a `503` there is a real answer
 rather than a failure to answer.** `ok` is derived from the three readings, and

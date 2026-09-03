@@ -1,5 +1,5 @@
 /**
- * THE FIVE RULES `GET /api/health` MAY NOT BREAK.
+ * THE SEVEN RULES `GET /api/health` MAY NOT BREAK.
  *
  * ═══ WHY THIS IS A GATE ═══
  *
@@ -41,6 +41,32 @@
  *      the thing it is pointing at is the stale-instruction failure that
  *      document warns about twice in its own text.
  *
+ *   6. THE STATUS CODES ARE A CLOSED SET, AND THE TWO `503`s ARE TOLD APART BY
+ *      `error`. The route answers 200, 401 and 503 and nothing else; the
+ *      not-configured 503 carries `error: 'not-configured'` and no readings,
+ *      and an unhealthy 503 carries the FULL payload and no `error` at all.
+ *
+ *   7. THE FIELD NAMES AND THEIR TYPES DO NOT MOVE. `ok` boolean, `ingestAgeMs`
+ *      milliseconds-or-null, `dispatch` the whole `Dispatch` union, `ddb` the
+ *      whole `Reach` union and never a boolean.
+ *
+ * ═══ WHY 6 AND 7 ARE WORTH A GATE RATHER THAN A CODE REVIEW ═══
+ *
+ * BECAUSE THE CONSUMER IS NOT IN THIS REPOSITORY AND IS NOT RECOMPILED WITH IT.
+ * An external checker parses this payload BY FIELD NAME and branches on the
+ * status BY NUMBER, so `typecheck` has nothing to say about it: rename
+ * `ingestAgeMs`, hand the millisecond age out in seconds, collapse `ddb` to a
+ * boolean or add a fourth status code, and every check in this repo still
+ * passes while the thing watching at four in the morning reads a field that is
+ * no longer there. That is this route's original defect in a second costume —
+ * a green light nothing on disk can see through.
+ *
+ * IT HAS ALREADY COST SOMEBODY AN OUTAGE'S WORTH OF DATA ONCE. A consumer
+ * treating every 503 alike discarded the body of the unhealthy 503 — which is
+ * the full payload, and the only thing that says which of three machines to go
+ * and open — and reported the endpoint itself as down. Rule 6 is why that
+ * distinction can no longer be softened by accident on this side.
+ *
  * A PLAIN SCRIPT, matching `check-dispatch-health.mjs` and `check-ddb-health.mjs`
  * — this repo has no test framework and adding one for this would be the larger
  * change. It runs in `npm run verify`.
@@ -54,8 +80,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { faults } from '../src/lib/ddbHealth.ts'
-import { dispatchFaults } from '../src/lib/dispatchHealth.ts'
+import { faults, REACH_LABEL } from '../src/lib/ddbHealth.ts'
+import { dispatchFaults, DISPATCH_LABEL } from '../src/lib/dispatchHealth.ts'
 import { feedNow, DEAD_MS, STALE_MS } from '../src/lib/feedHealth.ts'
 import { verdictNow } from '../src/lib/healthVerdict.ts'
 
@@ -92,6 +118,37 @@ const REACH_STATES = ['connected', 'unreachable', 'unknown']
 
 /** The four words `feedNow` resolves to. */
 const FEED_STATES = ['live', 'stale', 'dead', 'offline']
+
+/**
+ * The four keys of the payload a healthy — or an unwell — console answers with,
+ * in the order the route writes them.
+ *
+ * WRITTEN OUT RATHER THAN READ OFF THE ROUTE, because a list derived from the
+ * thing it is checking agrees with it by construction. This is the external
+ * consumer's copy: the names it has compiled into itself, kept here so that
+ * changing one of them has to be done twice and deliberately.
+ */
+const PAYLOAD_FIELDS = ['ok', 'ingestAgeMs', 'dispatch', 'ddb']
+
+/**
+ * The `error` value that distinguishes the two 503s, verbatim as the consumer
+ * matches it.
+ */
+const NOT_CONFIGURED = 'not-configured'
+
+/** The whole set of status codes this route is allowed to answer with. */
+const STATUS_CODES = ['200', '401', '503']
+
+/**
+ * THE SENTENCE EVERY RULE 6 AND 7 FAILURE ENDS WITH. It is the reason none of
+ * these is a matter of taste: the reader of this payload is not in this
+ * repository, was not rebuilt when the change was made, and will go on parsing
+ * the old names until somebody notices it has been wrong for a week.
+ */
+const BY_NAME =
+  'An external consumer parses these by name — the field names, their types ' +
+  'and the status codes are its interface, it is not recompiled with this ' +
+  'repo, and it fails silently rather than loudly when one of them moves.'
 
 /* ------------------------------------------------------------------ */
 /* RULE 1 (FIRST, BECAUSE IT IS THE DEFECT) — the verdict is derived   */
@@ -377,6 +434,339 @@ const WELL = { dispatch: 'ok', ddb: 'connected', feed: 'live' }
           'from either which is right.',
       )
     }
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* READING THE ROUTE'S OWN RESPONSES, RATHER THAN GREPPING FOR WORDS   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A SMALL SCANNER, AND IT EARNS ITS KEEP OVER A REGEX. Rules 6 and 7 are about
+ * the WHOLE set of responses — that there are exactly three of them, that each
+ * carries exactly these keys and no others, and that no fourth status code has
+ * appeared. A regex can say "503 is present somewhere"; it cannot say "and
+ * nothing else is", which is the half of the assertion that catches an added
+ * status code or a quietly appended field.
+ *
+ * It walks the comment-stripped source, so no prose in this repo — including
+ * the paragraph in the route that documents these very codes — can satisfy it.
+ */
+
+/** Skip to the character after a string literal opened at `i`. */
+function endOfString(text, i) {
+  const quote = text[i]
+  for (let j = i + 1; j < text.length; j++) {
+    if (text[j] === '\\') j++
+    else if (text[j] === quote) return j
+  }
+  return text.length
+}
+
+/** The text between `(` at `from` and its matching `)`. */
+function callArgs(text, from) {
+  let depth = 0
+  for (let i = from; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === "'" || ch === '"' || ch === '`') {
+      i = endOfString(text, i)
+      continue
+    }
+    if (ch === '(' || ch === '{' || ch === '[') depth++
+    else if (ch === ')' || ch === '}' || ch === ']') {
+      depth--
+      if (depth === 0) return text.slice(from + 1, i)
+    }
+  }
+  return null
+}
+
+/** Split on commas at nesting depth zero, so `ok ? 200 : 503` stays one piece. */
+function topLevelParts(text) {
+  const parts = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === "'" || ch === '"' || ch === '`') {
+      i = endOfString(text, i)
+      continue
+    }
+    if (ch === '(' || ch === '{' || ch === '[') depth++
+    else if (ch === ')' || ch === '}' || ch === ']') depth--
+    else if (ch === ',' && depth === 0) {
+      parts.push(text.slice(start, i))
+      start = i + 1
+    }
+  }
+  parts.push(text.slice(start))
+  return parts.map((p) => p.trim()).filter((p) => p.length > 0)
+}
+
+/** An object literal's own keys, mapped to the expression each is given. */
+function fieldsOf(literal) {
+  const inner = literal.trim().replace(/^\{/, '').replace(/\}$/, '')
+  const fields = new Map()
+  for (const entry of topLevelParts(inner)) {
+    const pair = /^([A-Za-z_$][\w$]*)\s*:([\s\S]*)$/.exec(entry)
+    if (pair) fields.set(pair[1], pair[2].trim())
+    // `ok,` — shorthand, whose value is the identifier itself.
+    else if (/^[A-Za-z_$][\w$]*$/.test(entry)) fields.set(entry, entry)
+  }
+  return fields
+}
+
+/** Every `Response.json(body, init)` the route makes. */
+function responsesIn(text) {
+  const found = []
+  const NEEDLE = 'Response.json('
+  for (let at = text.indexOf(NEEDLE); at !== -1; at = text.indexOf(NEEDLE, at + 1)) {
+    const args = callArgs(text, at + NEEDLE.length - 1)
+    if (args === null) continue
+    const [body = '', init = ''] = topLevelParts(args)
+    const status = fieldsOf(init).get('status') ?? ''
+    found.push({
+      fields: fieldsOf(body),
+      status,
+      codes: status.match(/\b\d{3}\b/g) ?? [],
+    })
+  }
+  return found
+}
+
+const named = (fields) => [...fields.keys()]
+const same = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
+
+/* ------------------------------------------------------------------ */
+/* RULE 6 — the status codes are closed, and the two 503s differ       */
+/* ------------------------------------------------------------------ */
+
+const answers = responsesIn(routeCode)
+
+/**
+ * THE THREE ARMS, CLASSIFIED BY WHAT THEY CARRY RATHER THAN BY WHERE THEY SIT.
+ * Identifying them by position would make this check fail on a reordering that
+ * changes nothing a consumer can see, and pass on the one thing it must catch:
+ * an `error` field appearing in — or vanishing from — a body it does not belong
+ * in.
+ */
+const armOf = (r) =>
+  r.fields.has('error') ? 'refused' : r.fields.has('dispatch') ? 'verdict' : 'auth'
+
+const arms = new Map()
+for (const r of answers) {
+  const arm = armOf(r)
+  if (arms.has(arm)) {
+    fail(
+      `${ROUTE} has two responses of the same kind (\`${arm}\`). Each of the ` +
+        `three answers this route can give must be written once, or a consumer ` +
+        `hits whichever one it happens to reach. ${BY_NAME}`,
+    )
+  }
+  arms.set(arm, r)
+}
+
+{
+  if (answers.length !== 3) {
+    fail(
+      `${ROUTE} makes ${answers.length} responses; the contract has exactly ` +
+        `three — 200 with the readings, 401 without a credential, and the two ` +
+        `503s. Adding a fourth is a new case for something outside this repo ` +
+        `to handle, and it will not handle it. ${BY_NAME}`,
+    )
+  }
+
+  const codes = [...new Set(answers.flatMap((r) => r.codes))].sort()
+  if (!same(codes, STATUS_CODES)) {
+    fail(
+      `${ROUTE} answers with status codes [${codes.join(', ')}]; the pinned set ` +
+        `is [${STATUS_CODES.join(', ')}]. A status nobody was told about is a ` +
+        `branch the checker does not have. ${BY_NAME}`,
+    )
+  }
+
+  /**
+   * THE NOT-CONFIGURED 503, WHICH IS THE ONE THAT CARRIES NO READINGS. Its
+   * `error` string is the ONLY thing separating "this console declines to
+   * answer" from "this console answered, and the answer is bad".
+   */
+  const refused = arms.get('refused')
+  if (!refused) {
+    fail(
+      `${ROUTE} has no response carrying an \`error\` field. The unset-secret ` +
+        `503 must be distinguishable from an unhealthy 503, and \`error\` is ` +
+        `the field that does it. ${BY_NAME}`,
+    )
+  } else {
+    if (!same(refused.codes, ['503'])) {
+      fail(
+        `the \`error\` response in ${ROUTE} answers [${refused.codes.join(', ')}] ` +
+          `rather than 503. ${BY_NAME}`,
+      )
+    }
+    if (!new RegExp(`^['"\`]${NOT_CONFIGURED}['"\`]$`).test(refused.fields.get('error') ?? '')) {
+      fail(
+        `the not-configured 503 in ${ROUTE} no longer carries the literal ` +
+          `\`error: '${NOT_CONFIGURED}'\`. That exact string is what a consumer ` +
+          `compares against to tell this 503 from the one that carries a full ` +
+          `payload. ${BY_NAME}`,
+      )
+    }
+    if (!same(named(refused.fields).sort(), ['error', 'ok'])) {
+      fail(
+        `the not-configured 503 in ${ROUTE} carries ` +
+          `[${named(refused.fields).join(', ')}]; it must carry \`ok\` and ` +
+          `\`error\` and nothing else. A reading in this body would be a reading ` +
+          `from a console that did not look. ${BY_NAME}`,
+      )
+    }
+  }
+
+  /**
+   * THE UNHEALTHY 503, WHICH IS A FULL ANSWER AND NOT A FAILURE TO ANSWER. It
+   * must come out of the SAME `Response.json` as the 200 — that is what makes
+   * "503 carries the whole payload" true by construction rather than by two
+   * bodies that have to be kept in step.
+   */
+  const verdict = arms.get('verdict')
+  if (!verdict) {
+    fail(
+      `${ROUTE} has no response carrying the readings. ${BY_NAME}`,
+    )
+  } else {
+    if (verdict.fields.has('error')) {
+      fail(
+        `the payload response in ${ROUTE} carries an \`error\` field. \`error\` ` +
+          `is what marks the OTHER 503 — the one with no readings in it — and a ` +
+          `consumer that finds it here will discard a body that answered its ` +
+          `question in full. ${BY_NAME}`,
+      )
+    }
+    if (!same([...verdict.codes].sort(), ['200', '503'])) {
+      fail(
+        `the payload response in ${ROUTE} answers ` +
+          `[${verdict.codes.join(', ')}]; the same body must be able to come ` +
+          `back 200 or 503, because an unhealthy console answers 503 WITH every ` +
+          `reading populated. ${BY_NAME}`,
+      )
+    }
+  }
+
+  /**
+   * THE 401 SAYS NOTHING ELSE. It is the one answer a caller with no credential
+   * can provoke, so anything in it is a fact handed to the unauthenticated.
+   */
+  const auth = arms.get('auth')
+  if (auth && !same(named(auth.fields), ['ok'])) {
+    fail(
+      `the 401 in ${ROUTE} carries [${named(auth.fields).join(', ')}]; it must ` +
+        `carry \`ok\` alone. Anything else is a reading given to a caller who ` +
+        `presented nothing. ${BY_NAME}`,
+    )
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* RULE 7 — the field names, and what each one carries                 */
+/* ------------------------------------------------------------------ */
+
+{
+  const verdict = arms.get('verdict')
+  const keys = verdict ? named(verdict.fields) : []
+
+  if (verdict && !same(keys, PAYLOAD_FIELDS)) {
+    fail(
+      `${ROUTE} answers with [${keys.join(', ')}]; the contract is ` +
+        `[${PAYLOAD_FIELDS.join(', ')}]. ${BY_NAME}`,
+    )
+  }
+
+  /**
+   * `ok` IS A BOOLEAN AND IS THE VERDICT'S OWN RETURN VALUE. A consumer's
+   * commonest assertion after the status code is `.ok == true`; a truthy string
+   * or a number would satisfy it in every state including the broken ones.
+   */
+  if (typeof verdictNow(WELL) !== 'boolean') {
+    fail(`verdictNow does not return a boolean, so \`ok\` is not one. ${BY_NAME}`)
+  }
+
+  /**
+   * `ingestAgeMs` IS MILLISECONDS AND IS NULLABLE, and both halves of that
+   * sentence are load-bearing in opposite directions. Divide it to seconds
+   * without renaming and every threshold downstream is a thousand times too
+   * large; coalesce the null to a zero and a console the game has NEVER pushed
+   * to reports the freshest possible feed.
+   */
+  if (verdict && verdict.fields.get('ingestAgeMs') !== 'live.ageMs') {
+    fail(
+      `${ROUTE} no longer hands out \`liveView().ageMs\` verbatim as ` +
+        `\`ingestAgeMs\` — it carries \`${verdict.fields.get('ingestAgeMs')}\`. ` +
+        `The field is milliseconds, it is null when the game has never pushed, ` +
+        `and both facts are in the name and the value rather than anywhere a ` +
+        `consumer could look them up. ${BY_NAME}`,
+    )
+  }
+  if (/ageMs\s*(\?\?|\|\||\/)/.test(routeCode)) {
+    fail(
+      `${ROUTE} coalesces or divides \`ageMs\`. A \`?? 0\` renders "there has ` +
+        `never been a feed" as "the feed is perfectly fresh"; a division makes ` +
+        `the field seconds while its name still says milliseconds. ${BY_NAME}`,
+    )
+  }
+  if (feedNow(null) !== 'offline') {
+    fail(`feedNow(null) is not \`offline\`, so a null age is no longer a fault. ${BY_NAME}`)
+  }
+
+  /**
+   * `ddb` IS THREE WORDS AND NEVER A BOOLEAN. `unknown` is not `unreachable`,
+   * and a boolean has nowhere to put the difference — `false` would mean both
+   * "the game says it cannot reach its store" and "nobody has told this console
+   * anything", which are a page and a shrug respectively.
+   */
+  const reachStates = Object.keys(REACH_LABEL).sort()
+  if (!same(reachStates, [...REACH_STATES].sort())) {
+    fail(
+      `the \`Reach\` union is now [${reachStates.join(', ')}] and this check ` +
+        `pins [${REACH_STATES.join(', ')}]. \`ddb\` carries these words ` +
+        `verbatim. ${BY_NAME}`,
+    )
+  }
+  if (reachStates.some((s) => typeof s !== 'string' || s === 'true' || s === 'false')) {
+    fail(`\`ddb\` is not a three-state string. ${BY_NAME}`)
+  }
+  if (verdict && verdict.fields.get('ddb') !== 'host.ddb.reach') {
+    fail(
+      `${ROUTE} carries \`ddb: ${verdict.fields.get('ddb')}\` rather than the ` +
+        `resolved \`host.ddb.reach\`. Anything that reduces it — a comparison, a ` +
+        `\`Boolean()\`, a truthiness test — throws away the distinction between ` +
+        `\`unreachable\` and \`unknown\`. ${BY_NAME}`,
+    )
+  }
+
+  /**
+   * `dispatch` IS THE WHOLE UNION, ASKED OF THE LABEL MAP RATHER THAN COUNTED
+   * BY HAND. `DISPATCH_LABEL` is a `Record<Dispatch, string>`, so TypeScript
+   * makes it exhaustive and an eighth state cannot be added without appearing
+   * here — which is what turns "the route's comment said five when there were
+   * seven" into a build failure rather than a checker with two missing arms.
+   */
+  const dispatchStates = Object.keys(DISPATCH_LABEL).sort()
+  if (!same(dispatchStates, [...DISPATCH_STATES].sort())) {
+    fail(
+      `the \`Dispatch\` union is now [${dispatchStates.join(', ')}] and this ` +
+        `check pins [${DISPATCH_STATES.join(', ')}]. Add the new word here and ` +
+        `name it in the route, then tell whoever runs the check: an unhandled ` +
+        `\`dispatch\` value is either a false page every poll or a fault read as ` +
+        `fine. ${BY_NAME}`,
+    )
+  }
+  if (verdict && verdict.fields.get('dispatch') !== 'host.dispatch') {
+    fail(
+      `${ROUTE} carries \`dispatch: ${verdict.fields.get('dispatch')}\` rather ` +
+        `than the resolved \`host.dispatch\`. The word is the whole value of the ` +
+        `field: it is what says which of three machines to go and open. ` +
+        `${BY_NAME}`,
+    )
   }
 }
 

@@ -8,6 +8,36 @@ import { liveView } from '@/lib/state'
 import { ensurePolling, hostView } from '@/lib/telemetry'
 
 /**
+ * ═══ THE BODY BELOW IS A STABLE CONTRACT, PARSED BY NAME OUTSIDE THIS REPO ═══
+ *
+ * An external consumer reads these fields by name and these status codes by
+ * number, and it is not recompiled when this file changes. Renaming a field,
+ * changing what one of them carries, or adding a status code is therefore a
+ * breaking change to something that will keep running and keep answering — it
+ * will simply answer wrongly, quietly, at the hour nobody is watching. That is
+ * the same silence the verdict itself exists to break, so the shape is pinned:
+ * `scripts/check-health-route.mjs` asserts the field names, their types and the
+ * exact set of status codes, and fails the build on any change to them.
+ *
+ *   200  the console is well, and the body carries the four fields below
+ *   401  the credential is missing or wrong; the body is `{ ok: false }`
+ *   503  TWO DIFFERENT ANSWERS — see the next paragraph
+ *
+ * ═══ THE TWO 503s ARE TOLD APART BY THE `error` FIELD, AND ONLY BY IT ═══
+ *
+ * `503` WITH `error: 'not-configured'` is this route declining to answer at
+ * all, because `COMMAND_SECRET` is unset on this console. That body carries no
+ * readings and says nothing whatever about the estate.
+ *
+ * `503` WITH NO `error` FIELD IS A REAL ANSWER — the full payload, every field
+ * populated, from a console that looked and found something wrong. A consumer
+ * that branches on the status alone and discards the body of everything
+ * non-2xx throws away precisely the readings it asked the question to get, and
+ * reports "the health endpoint is down" about a console that answered it in
+ * full. Branch on `error` first; then read `dispatch`.
+ */
+
+/**
  * An operator health endpoint, for something outside a browser to ask this
  * console how it is doing.
  *
