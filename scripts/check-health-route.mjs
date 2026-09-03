@@ -24,7 +24,12 @@
  *      alarm for must make the verdict false, and every state they deliberately
  *      do NOT raise for must leave it true. This is checked by ASKING those
  *      functions rather than against a list written here, so a sixth dispatch
- *      state added tomorrow is covered on the day it is added.
+ *      state added tomorrow is covered on the day it is added. AND THE DEPLOY
+ *      PHASE WITH THEM, asked of `silenceIsExplained` — the same function rung 1
+ *      of the header's chip cluster consults. A deploy this console ordered
+ *      restarts the game server, so the feed goes quiet on purpose, and the
+ *      endpoint answered 503 through every planned deploy while the header
+ *      showed one calm `Updating` chip about the same silence.
  *
  *   3. THE STATUS CODE CARRIES THE VERDICT. Next answers HEAD out of the GET
  *      handler with no body, so a checker can be looking at nothing but the
@@ -48,7 +53,17 @@
  *
  *   7. THE FIELD NAMES AND THEIR TYPES DO NOT MOVE. `ok` boolean, `ingestAgeMs`
  *      milliseconds-or-null, `dispatch` the whole `Dispatch` union, `ddb` the
- *      whole `Reach` union and never a boolean.
+ *      whole `Reach` union and never a boolean, `deploy` the whole `DeployPhase`
+ *      union and the SAME reading the verdict was handed.
+ *
+ * TWO ASSERTIONS BELOW REACH OUTSIDE THIS ROUTE'S OWN SUBJECT, on purpose,
+ * because both things they guard have a second copy nobody in this repo can see.
+ * `DEAD_MS` is duplicated as a hardcoded `MAX > 30` seconds in the external
+ * collector's alarm, so its VALUE is pinned here and not only its consistency.
+ * And the `attended` gate this route introduced into `lib/telemetry` has an
+ * else-branch whose job is to leave no reading standing unrefreshed — a
+ * property no other check in the repo covers, on a code path no other caller can
+ * reach. Both sit beside the rule that made them this route's business.
  *
  * ═══ WHY 6 AND 7 ARE WORTH A GATE RATHER THAN A CODE REVIEW ═══
  *
@@ -84,6 +99,7 @@ import { faults, REACH_LABEL } from '../src/lib/ddbHealth.ts'
 import { dispatchFaults, DISPATCH_LABEL } from '../src/lib/dispatchHealth.ts'
 import { feedNow, DEAD_MS, STALE_MS } from '../src/lib/feedHealth.ts'
 import { verdictNow } from '../src/lib/healthVerdict.ts'
+import { silenceIsExplained } from '../src/lib/serverPhase.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (p) => readFileSync(resolve(ROOT, p), 'utf8')
@@ -119,16 +135,35 @@ const REACH_STATES = ['connected', 'unreachable', 'unknown']
 /** The four words `feedNow` resolves to. */
 const FEED_STATES = ['live', 'stale', 'dead', 'offline']
 
+/** The five words the payload's `deploy` field can carry — `DeployPhase`. */
+const DEPLOY_PHASES = ['idle', 'deploying', 'confirming', 'failed', 'unconfirmed']
+
 /**
- * The four keys of the payload a healthy — or an unwell — console answers with,
+ * The five keys of the payload a healthy — or an unwell — console answers with,
  * in the order the route writes them.
  *
  * WRITTEN OUT RATHER THAN READ OFF THE ROUTE, because a list derived from the
  * thing it is checking agrees with it by construction. This is the external
  * consumer's copy: the names it has compiled into itself, kept here so that
  * changing one of them has to be done twice and deliberately.
+ *
+ * ═══ THE BUILD FAILING ON A NEW KEY IS THE FEATURE, NOT AN OBSTACLE ═══
+ *
+ * Worth saying plainly, because two more fields are already spoken for and
+ * whoever adds one meets this line first and can reasonably read it as "the
+ * payload is closed, do not do this". It is not closed. `ingestSenders` and
+ * `doorShutSeconds` are both planned, the external collector already parses
+ * both names and drops them while they are absent, and adding either is a
+ * perfectly good change — it just has to be made HERE too, in the same commit,
+ * so the consumer's copy of the names and the route's copy cannot drift apart
+ * quietly. `deploy` was added in exactly that way.
+ *
+ * A NEW KEY IS THE SAFE KIND OF CHANGE AND A RENAMED ONE IS NOT, which is why
+ * this list is compared in order and by length: a by-name parser that has never
+ * heard of a field simply does not read it, while one whose field was renamed
+ * under it goes on reporting confidently about a value that is no longer there.
  */
-const PAYLOAD_FIELDS = ['ok', 'ingestAgeMs', 'dispatch', 'ddb']
+const PAYLOAD_FIELDS = ['ok', 'ingestAgeMs', 'dispatch', 'ddb', 'deploy']
 
 /**
  * The `error` value that distinguishes the two 503s, verbatim as the consumer
@@ -266,6 +301,88 @@ const WELL = { dispatch: 'ok', ddb: 'connected', feed: 'live' }
   }
   if (!verdictNow({ ...WELL, feed: feedNow(STALE_MS + 1) })) {
     fail(`a feed only ${STALE_MS + 1}ms behind pages somebody — that is most nights`)
+  }
+
+  /**
+   * ═══ A DEPLOY THIS CONSOLE ORDERED EXPLAINS THE SILENCE IT CAUSES ═══
+   *
+   * THIS IS THE CASE THAT SHIPPED WRONG AND NOTHING COULD SEE IT.
+   * `royale-deploy` restarts FXServer; `lib/maintenanceDriver` says outright
+   * that this "is exactly the window in which the feed goes quiet";
+   * `RESTART_GRACE_MS` allows five minutes of it. Thirty seconds in, `feedNow`
+   * said `dead` and the endpoint answered `503 {"ok":false}` for the rest of the
+   * restart — to a monitor `docs/deploy.md` tells the operator to wire up —
+   * while an admin looking at the header saw one calm `Updating` chip, because
+   * `chipCluster` rung 1 hides the feed chip during a deploy for precisely this
+   * reason. The endpoint and the page contradicted each other about the same
+   * fact, which is the failure both modules say they exist to prevent.
+   *
+   * ASKED OF `silenceIsExplained`, NOT OF A LIST WRITTEN HERE, for the reason
+   * rule 2 asks `dispatchFaults`: that function is what rung 1 of the header's
+   * chip cluster consults, so this asserts the endpoint and the page cannot
+   * disagree — including about a sixth phase added tomorrow.
+   */
+  for (const phase of DEPLOY_PHASES) {
+    const excused = silenceIsExplained(phase)
+
+    for (const feed of FEED_STATES) {
+      const ok = verdictNow({ ...WELL, feed, deploy: phase })
+      const expected = excused ? true : FEED_EXPECT[feed]
+      if (ok !== expected) {
+        fail(
+          `feed \`${feed}\` during deploy phase \`${phase}\` produced ok=${ok}, ` +
+            `expected ${expected}. A restart this console ordered is why the ` +
+            'game is quiet, and paging on it pages the operator on every planned ' +
+            'deploy — which is how they learn to silence the check that matters. ' +
+            'Equally, a phase that is NOT in flight must not buy a dead feed a ' +
+            'green light: `unconfirmed` is a server that never came back.',
+        )
+      }
+    }
+
+    /**
+     * THE EXCUSE IS THE FEED AXIS AND NOTHING ELSE. An SSH key that stopped
+     * loading is a fault whenever it happens, and a deploy is not a reason to
+     * stop reporting it — suppressing the whole verdict would turn a five-minute
+     * window into a five-minute blind spot on the two channels a restart of the
+     * game server has no bearing on.
+     */
+    for (const state of DISPATCH_STATES) {
+      if (dispatchFaults(state).length === 0) continue
+      if (verdictNow({ ...WELL, dispatch: state, deploy: phase })) {
+        fail(
+          `dispatch \`${state}\` raises a fault and the verdict is still ok ` +
+            `during deploy phase \`${phase}\`. Only the FEED axis is excused by ` +
+            'a deploy.',
+        )
+      }
+    }
+    for (const state of REACH_STATES) {
+      if (faults(state, 'unknown').length === 0) continue
+      if (verdictNow({ ...WELL, ddb: state, deploy: phase })) {
+        fail(
+          `ddb \`${state}\` raises a fault and the verdict is still ok during ` +
+            `deploy phase \`${phase}\`. Only the FEED axis is excused by a deploy.`,
+        )
+      }
+    }
+  }
+
+  /**
+   * NOT PASSING A PHASE MUST BEHAVE AS `idle`, EXCUSING NOTHING. A caller that
+   * has not looked at the maintenance window must not be handed a quieter
+   * verdict for not asking, which is the direction a default of "in flight"
+   * would have taken it.
+   */
+  for (const feed of FEED_STATES) {
+    if (
+      verdictNow({ ...WELL, feed }) !== verdictNow({ ...WELL, feed, deploy: 'idle' })
+    ) {
+      fail(
+        `omitting \`deploy\` does not behave as \`idle\` for feed \`${feed}\`. An ` +
+          'absent reading must never excuse anything — see lib/healthVerdict.',
+      )
+    }
   }
 }
 
@@ -410,6 +527,60 @@ const WELL = { dispatch: 'ok', ddb: 'connected', feed: 'live' }
         'banner nobody will look at until morning.',
     )
   }
+
+  /**
+   * ═══ AND THE OTHER HALF OF THAT FLAG: NOT POLLING MUST READ AS AN ABSENCE ═══
+   *
+   * WHAT THE `attended` GATE DID BY ACCIDENT. Before it existed, a box PARKED
+   * off main always took the polling branch, so `refUpdate` was refreshed every
+   * two minutes for the life of the process and could not go stale. The gate
+   * gave `poll` a path where it neither refreshes that reading nor clears it —
+   * and the only other thing that clears it is `if (!parked)`, which by
+   * definition does not fire on a parked box. The value therefore FREEZES at
+   * whatever the last attended tick saw, all night.
+   *
+   * WHY THAT IS WORSE THAN NULL, AND IT IS NOT SYMMETRIC. `refBehindNow` and
+   * `refBlockedNow` apply NO age bound of their own — only `updateTargetNow`
+   * does, through `TARGET_MAX_AGE_MS` — because both were written when this
+   * reading could not be more than two minutes old. A frozen `behind: 0` tells
+   * an operator with a commit in hand that there is nothing to ship; a frozen
+   * `eligible: false` greys the Schedule button on a branch that was fixed at
+   * midnight, against `lib/maintenance`'s stated reasoning that honouring a
+   * stale refusal "costs at most one refresh". Null claims nothing and refuses
+   * nothing, which is the polarity every reader of it already assumes.
+   *
+   * IT IS CHECKED HERE BECAUSE `/api/health` IS WHY THE GATE EXISTS. Nothing
+   * else in this repo passes `attended: false`, so this endpoint is the only
+   * caller that can put the poller into the state above.
+   */
+  const telCode = code(read('src/lib/telemetry.ts'))
+  const gateAt = telCode.indexOf('const attended =')
+  const elseAt = gateAt === -1 ? -1 : telCode.indexOf('else', gateAt)
+  const branch =
+    elseAt === -1 ? null : callArgs(telCode, telCode.indexOf('{', elseAt))
+
+  if (branch === null) {
+    fail(
+      'check-health-route could not find the `attended` gate in lib/telemetry ' +
+        "poll(). The gate is what keeps `git fetch --prune` off an unattended " +
+        'box, and its else-branch is what stops the readings it skips from ' +
+        'freezing. If the shape changed, this check has to change with it — do ' +
+        'not delete it.',
+    )
+  } else {
+    for (const field of ['refUpdate', 'updateTarget', 'refKey', 'refPolledAt']) {
+      if (!new RegExp(`state\\.${field}\\s*=`).test(branch)) {
+        fail(
+          'the unattended branch of lib/telemetry poll() does not clear ' +
+            `\`state.${field}\`. A reading this branch stops refreshing and does ` +
+            'not clear is a claim that stands all night with nothing correcting ' +
+            'it — and `refBehindNow`/`refBlockedNow` apply no age bound, so a ' +
+            'frozen zero reads as "nothing to ship" and a frozen refusal greys a ' +
+            'button on a branch that has since been fixed.',
+        )
+      }
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -434,6 +605,37 @@ const WELL = { dispatch: 'ok', ddb: 'connected', feed: 'live' }
           'from either which is right.',
       )
     }
+  }
+
+  /**
+   * ═══ AND THE VALUE IS PINNED, NOT ONLY ITS CONSISTENCY ═══
+   *
+   * EVERY OTHER ASSERTION ABOUT `DEAD_MS` IN THIS FILE IS RELATIVE —
+   * `feedNow(DEAD_MS + 1)` — so it holds whatever the constant happens to be.
+   * That is right for the rules it serves and it is not enough on its own,
+   * because the number ALSO lives outside this repository: the external
+   * collector's `IngestAgeSec` alarm is written as `MAX > 30` seconds,
+   * hardcoded, and nothing on that side imports or derives it from here.
+   *
+   * SO THE SAME THRESHOLD IS IN TWO REPOSITORIES WITH NO GATE BETWEEN THEM —
+   * which is exactly the duplication `lib/feedHealth` was extracted from
+   * `components/FeedStatus` to prevent, reappearing across a boundary where it
+   * is much harder to see. Move this to 60_000 and every check in this repo
+   * still passes, while the console answers `200 {"ok":true}` for a
+   * forty-five-second-old feed and the CloudWatch alarm pages anyway. Two
+   * surfaces disagreeing about the word "dead", with no way to tell from either
+   * which of them is right.
+   *
+   * Moving the number is fine. Moving it ALONE is not, and this line says so.
+   */
+  if (DEAD_MS !== 30_000) {
+    fail(
+      `lib/feedHealth's DEAD_MS is now ${DEAD_MS}ms. The external collector's ` +
+        '`IngestAgeSec` alarm is a hardcoded `MAX > 30` SECONDS in another ' +
+        'repository and does not derive this number. Change both in the same ' +
+        'sitting — the alarm threshold, then this line — or the endpoint and ' +
+        'the alarm disagree about when a feed is dead.',
+    )
   }
 }
 
@@ -767,6 +969,45 @@ for (const r of answers) {
         `field: it is what says which of three machines to go and open. ` +
         `${BY_NAME}`,
     )
+  }
+
+  /**
+   * `deploy` IS THE PHASE `verdictNow` WAS HANDED, AND THE SAME ONE. The rule it
+   * serves is `lib/healthVerdict`'s: every reason the verdict moves must be a
+   * field in the body the checker just received. A `deploy` computed separately
+   * from the one passed to the verdict — a second `deployPhase` call, a second
+   * `maintenanceView()` read — would sample the window twice and could report a
+   * phase that did not produce the `ok` beside it, which is worse than omitting
+   * the field: it would look like an explanation and be a coincidence.
+   */
+  if (verdict && verdict.fields.get('deploy') !== 'deploy') {
+    fail(
+      `${ROUTE} carries \`deploy: ${verdict.fields.get('deploy')}\` rather than ` +
+        `the same \`deploy\` binding handed to verdictNow. It is the field that ` +
+        `explains why a large \`ingestAgeMs\` is answering 200, and an ` +
+        `explanation resolved separately from the thing it explains is not one. ` +
+        `${BY_NAME}`,
+    )
+  }
+  if (!/verdictNow\s*\(\s*\{[^}]*\bdeploy\b/.test(routeCode)) {
+    fail(
+      `${ROUTE} does not pass \`deploy\` to verdictNow. Without it the endpoint ` +
+        `answers 503 for up to five minutes through every deploy this console ` +
+        `itself scheduled, while the header shows a calm \`Updating\` chip about ` +
+        `the same silence. See lib/healthVerdict.`,
+    )
+  }
+
+  /**
+   * EVERY PHASE NAMED IN THE ROUTE, for the reason every `dispatch` word is:
+   * this file is the only documentation the payload has, and a checker author
+   * with no arm for `unconfirmed` has no arm for the one state that means the
+   * game server was restarted and did not come back.
+   */
+  for (const phase of DEPLOY_PHASES) {
+    if (!routeText.includes(`\`${phase}\``)) {
+      fail(`${ROUTE} never names the \`${phase}\` deploy phase. ${BY_NAME}`)
+    }
   }
 }
 

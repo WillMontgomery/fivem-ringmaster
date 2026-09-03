@@ -840,18 +840,29 @@ observes, because the only question being asked is "is this listening".
 > health handler, and that is fine too.
 
 ```bash
-curl -s -w '\n%{http_code}\n' -H "x-ringmaster-service: $(sudo grep -m1 '^COMMAND_SECRET=' /opt/ringmaster/.env.local | cut -d= -f2- | tr -d '" \r')" http://127.0.0.1:3000/api/health
+printf 'header = "x-ringmaster-service: %s"\n' "$(sudo grep -m1 '^COMMAND_SECRET=' /opt/ringmaster/.env.local | cut -d= -f2- | tr -d '" \r')" | curl -s -w '\n%{http_code}\n' --config - http://127.0.0.1:3000/api/health
 ```
 
 **The body, then `200`** — on a healthy console:
 
 ```json
-{"ok":true,"ingestAgeMs":1840,"dispatch":"ok","ddb":"connected"}
+{"ok":true,"ingestAgeMs":1840,"dispatch":"ok","ddb":"connected","deploy":"idle"}
 ```
 
-The secret is substituted out of the file rather than typed, for the reason §6
-gives for the comparison command there: it keeps the value off your screen and
-out of your shell history.
+The secret is substituted out of the file rather than typed, so it stays off
+your screen and out of your shell history — the reason §6 gives for the
+comparison command there.
+
+**It goes in through `--config -` rather than `-H`, and that is not decoration.**
+A command line is public on the box: `-H "x-ringmaster-service: $(…)"` resolves
+the substitution *before* `curl` is executed, so the plaintext credential that
+can ban players and restart the game server sits in `curl`'s argument vector for
+the life of the request, readable in `ps aux` and `/proc/<pid>/cmdline` by any
+other local account. §6's comparison command has no such gap — it pipes the
+value straight into `sha256sum` and never puts it in an argument — so borrowing
+its justification for a `-H` was borrowing the wrong half. `printf` is a shell
+builtin, so its arguments are never a process either; `curl` reads the header
+off standard input and its own command line carries nothing but the URL.
 
 **This is the check to point a monitor at, and it is a different question from
 the `/api/ingest` one above** — that proves something is listening; this reports
@@ -864,7 +875,7 @@ game server, so whoever runs the check holds that.
 | `200`, `"ok":true` | the console is well |
 | `401`, body `{"ok":false}` | the header is missing, or the secret does not match `.env.local`. **Nothing is logged** — see §6 |
 | `503`, body `{"ok":false,"error":"not-configured"}` | `COMMAND_SECRET` is unset on this box (§6) |
-| `503`, body with the three readings | **the console answered and is reporting itself unwell** — read `dispatch` |
+| `503`, body with the four readings | **the console answered and is reporting itself unwell** — read `dispatch` |
 
 **THE TWO `503`s ARE TOLD APART BY THE `error` FIELD AND BY NOTHING ELSE**, so
 anything parsing this — a checker, a script, a person — reads `error` before it
@@ -874,7 +885,7 @@ a console that looked and found something wrong. Treating every `503` alike
 discards the second one, which is the only thing that says which machine to open.
 
 **The last row is the one to understand, because a `503` there is a real answer
-rather than a failure to answer.** `ok` is derived from the three readings, and
+rather than a failure to answer.** `ok` is derived from the four readings, and
 the status code carries that verdict as well as the body does. It has to: a
 `HEAD` probe — which Next answers out of this same handler with no body at all
 — has nothing but the status to go on, and asserting only `2xx` is the
@@ -883,10 +894,43 @@ commonest way a monitor is configured.
 `dispatch` is the field that says which machine to open: `key-unreadable` is this
 box's filesystem, `rejected` is the game box's `authorized_keys`, `unreachable`
 is the network between them, `verb-failed` is `dispatch.sh` on the game box.
-Two of the seven words are NOT faults and do not make `ok` false — `unknown`,
-which is the first check after a restart before the poll timer has landed a
-reading and clears itself within about fifteen seconds, and `unconfigured`,
-which means this console was never pointed at a game box over SSH at all.
+**Three of the seven words are NOT faults and do not make `ok` false** —
+`ok` itself, which is what a healthy channel reports; `unknown`, which is the
+first check after a restart before the poll timer has landed a reading and
+clears itself within about fifteen seconds; and `unconfigured`, which means this
+console was never pointed at a game box over SSH at all. The other four are
+faults. **Count them from this sentence and nowhere else** — an earlier version
+of it said two, which is a severity map with `ok` wired up as a failure and a
+monitor reporting a perfectly healthy console as a dispatch outage.
+
+### `deploy`, and why a planned restart no longer pages you
+
+`deploy` is the fifth field, and it is the one that explains a large
+`ingestAgeMs` sitting under `"ok":true`. `royale-deploy` restarts FXServer, so
+the game stops pushing for tens of seconds — and this console is usually the
+thing that ordered it, from a maintenance window somebody scheduled.
+
+| `deploy` | The server is | Does it excuse a silent feed |
+|---|---|---|
+| `idle` | up, or nothing is known about any deploy | **no** |
+| `deploying` | going down; the deploy verb is running | yes |
+| `confirming` | expected back; waiting for its first heartbeat | yes |
+| `failed` | untouched — the host refused the deploy, the old code is still running | **no** |
+| `unconfirmed` | **gone** — the restart fired and nothing came back inside five minutes | **no** |
+
+**Before this field existed the endpoint answered `503` through every planned
+deploy**, for up to five minutes, while an admin looking at the console's own
+header saw one calm `Updating` chip. A monitor on the documented thirty-second
+cadence saw several consecutive failures on a routine overnight update, which is
+how an operator learns to silence the check that matters. `unconfirmed` is
+deliberately still a failure: a deploy past its grace is a server that did not
+come back, and that is the one to be woken for.
+
+**A console that has not been told about a deploy reports `idle` and pages
+normally.** That covers a restart somebody fired by typing
+`systemctl start royale-deploy` on the game box: this console never heard about
+it, so it reports the feed as dead — correctly, because "we do not know why the
+game went quiet" is a reason to look, not a reason to stay green.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://ringmaster.example.com/login

@@ -3,6 +3,8 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import { env } from '@/lib/env'
 import { feedNow } from '@/lib/feedHealth'
 import { verdictNow } from '@/lib/healthVerdict'
+import { maintenanceView } from '@/lib/maintenanceDriver'
+import { deployPhase } from '@/lib/serverPhase'
 import { COMMAND_SECRET_HEADER } from '@/lib/service'
 import { liveView } from '@/lib/state'
 import { ensurePolling, hostView } from '@/lib/telemetry'
@@ -19,7 +21,7 @@ import { ensurePolling, hostView } from '@/lib/telemetry'
  * `scripts/check-health-route.mjs` asserts the field names, their types and the
  * exact set of status codes, and fails the build on any change to them.
  *
- *   200  the console is well, and the body carries the four fields below
+ *   200  the console is well, and the body carries the five fields below
  *   401  the credential is missing or wrong; the body is `{ ok: false }`
  *   503  TWO DIFFERENT ANSWERS — see the next paragraph
  *
@@ -56,12 +58,19 @@ import { ensurePolling, hostView } from '@/lib/telemetry'
  * Both already exist, resolved and in memory, and both were reachable only
  * through session-gated pages — so the only way to learn either was to open a
  * browser and sign in, which is precisely what an external check cannot do.
- * Nothing below computes anything new; it reads three readings the console
+ * Nothing below computes anything new; it reads four readings the console
  * already keeps and puts them where something without a cookie can see them.
  *
  *   ingestAgeMs   how long since the game last pushed (`liveView`)
  *   dispatch      the SSH channel, as one word (`dispatchNow`)
  *   ddb           the game's own reachability probe (`reachNow`)
+ *   deploy        where the last deploy has got to (`deployPhase`)
+ *
+ * THE FOURTH ONE IS NOT AN OPERATOR'S QUESTION, IT IS THE ANSWER TO WHY THE
+ * FIRST ONE IS ALLOWED TO BE LARGE. A deploy this console ordered restarts the
+ * game, the feed goes quiet for tens of seconds, and without `deploy` in the
+ * body the endpoint has no way to distinguish that from an outage — nor any way
+ * to explain the 200 it now answers through it. See `lib/healthVerdict`.
  *
  * ═══ THE MULTI-STATE `dispatch` IS THE POINT, NOT A BOOLEAN ═══
  *
@@ -285,10 +294,64 @@ export async function GET(req: Request): Promise<Response> {
   const live = liveView(now)
   const host = hostView()
 
+  /**
+   * ═══ WHERE THE LAST DEPLOY HAS GOT TO, AND WHY A HEALTH ROUTE ASKS ═══
+   *
+   * BECAUSE THIS ENDPOINT PAGED ON EVERY PLANNED DEPLOY. `royale-deploy`
+   * restarts FXServer, the game stops pushing, and thirty seconds later
+   * `feedNow` says `dead` — so the route answered 503 for the rest of the
+   * restart, to a monitor `docs/deploy.md` tells an operator to wire up, about a
+   * window this console scheduled and was itself executing. An admin looking at
+   * the header at that same instant saw one calm `Updating` chip, because
+   * `chipCluster` rung 1 hides the feed chip for exactly this reason. The page
+   * and the endpoint disagreed about the same silence. See `lib/healthVerdict`.
+   *
+   * ═══ IT IS FREE, AND THAT IS WHY IT CAN SIT ON A MACHINE-POLLED ROUTE ═══
+   *
+   * `maintenanceView()` is a property access on the window the driver last read
+   * on its own fifteen-second tick — the same in-memory read `AppShell` makes on
+   * every page render, and the same shape as `hostView()` above. No DynamoDB
+   * round trip is added to a route something polls every thirty seconds forever.
+   *
+   * ═══ AND IT DOES NOT CALL `ensureDriver()`, DELIBERATELY ═══
+   *
+   * `ensurePolling` above is started here because `dispatch` is worthless
+   * without it; the driver is a different case, and starting it would put a
+   * GetItem every fifteen seconds, for the life of the process, on a console
+   * nobody is signed in to — to learn about deploys that, by definition, are not
+   * happening. THE DRIVER IS ALREADY RUNNING DURING ANY DEPLOY THIS CONSOLE
+   * PERFORMS, because the driver is the thing that performs it. A cold cache
+   * therefore means no console-scheduled deploy is in flight.
+   *
+   * A COLD CACHE READS AS `idle`, WHICH SUPPRESSES NOTHING — and for this
+   * endpoint that is the right direction rather than merely the honest one. A
+   * console restarted mid-window, or a deploy somebody fired by typing
+   * `systemctl start royale-deploy` on the game box, leaves this route with no
+   * account of why the game went quiet, and "we do not know why the feed died"
+   * is a reason to page rather than a reason to stay green.
+   *
+   * ONE READING, ONE INSTANT — `mv.window` rather than a second
+   * `maintenanceView()` call, which is the rule `AppShell` states where it
+   * composes these same inputs, and `now` is the `now` every other field on this
+   * response was read at.
+   */
+  const mv = maintenanceView(now)
+  const deploy = deployPhase({
+    state: mv.window?.state,
+    completedAt: mv.window?.completedAt,
+    deployError: mv.window?.deployError,
+    deployBootEpoch: mv.window?.deployBootEpoch,
+    deployConfirmedAt: mv.window?.deployConfirmedAt,
+    bootEpoch: live.bootEpoch,
+    lastPushAt: live.lastPushAt,
+    now,
+  })
+
   const ok = verdictNow({
     dispatch: host.dispatch,
     ddb: host.ddb.reach,
     feed: feedNow(live.ageMs),
+    deploy,
   })
 
   return Response.json(
@@ -362,6 +425,35 @@ export async function GET(req: Request): Promise<Response> {
        * for a payload whose whole job is to be polled by a machine.
        */
       ddb: host.ddb.reach,
+
+      /**
+       * WHERE THE LAST DEPLOY HAS GOT TO — `idle`, `deploying`, `confirming`,
+       * `failed` or `unconfirmed`, from `lib/serverPhase`.
+       *
+       * IT IS IN THE BODY BECAUSE IT MOVES THE VERDICT, and that is the rule
+       * `lib/healthVerdict` keeps rather than a nicety: EVERY REASON `ok` CAN BE
+       * FALSE — OR STAY TRUE — MUST BE A FIELD IN THE BODY THE CHECKER JUST
+       * RECEIVED. `deploying` and `confirming` are the two phases that excuse a
+       * dead feed, so without this field the payload would show `ok: true` above
+       * an `ingestAgeMs` of 47000 and read as the endpoint contradicting itself,
+       * with nothing anywhere to say why it is not.
+       *
+       * IT IS THE FIFTH FIELD AND THE FIRST ONE ADDED SINCE THE CONTRACT WAS
+       * PINNED. An external consumer parses this payload by name, so a NEW key
+       * is the safe kind of change — a parser that has never heard of it simply
+       * does not read it — while renaming or retyping one of the other four is
+       * not. `scripts/check-health-route.mjs` had to be edited to accept it, on
+       * purpose: that list is the consumer's copy of the names, and it exists so
+       * that changing the shape has to be done twice and deliberately.
+       *
+       * `idle` IS NOT A FAULT AND IS NOT A SILENCE, it is the resting state: no
+       * window, or one whose deploy has been confirmed. `failed` and
+       * `unconfirmed` are terminal and neither excuses anything — a deploy the
+       * host refused left the old server running untouched, and a deploy past
+       * its grace is a server that did not come back, which is the one to be
+       * woken for.
+       */
+      deploy,
     },
     { status: ok ? 200 : 503 },
   )

@@ -208,6 +208,46 @@ export function deployPhase(input: DeployPhaseInput): DeployPhase {
 }
 
 /**
+ * DOES A DEPLOY ACCOUNT FOR THE SERVER BEING QUIET RIGHT NOW?
+ *
+ * ═══ THE SENTENCE THREE SURFACES HAVE TO SAY THE SAME WAY ═══
+ *
+ * `royale-deploy` restarts FXServer, so the game stops pushing — for tens of
+ * seconds, and `RESTART_GRACE_MS` above allows five minutes of it. That silence
+ * is not a fault; it is the intended consequence of an act this console ordered.
+ * THREE THINGS NOW HAVE TO KNOW THAT, and they must not each decide it:
+ *
+ *   `chipCluster` rung 1   the header shows one chip, `Updating`, and hides the
+ *                          feed chip — "three chips raising three alarms about
+ *                          one intended act" is the failure it was built for
+ *   `updateInProgress`     the same two phases, read off a raw window
+ *   `lib/healthVerdict`    `GET /api/health` must not answer 503 through a
+ *                          deploy this console scheduled and is executing
+ *
+ * THE THIRD READER IS WHY THIS IS A FUNCTION RATHER THAN AN INLINE COMPARISON.
+ * The endpoint and the page were free to disagree about the same fact, and they
+ * did: the header showed a calm `Updating` chip while `/api/health` answered
+ * `503 {"ok":false,"ingestAgeMs":47000}` to whatever monitor an operator had
+ * wired to it, for the whole of every planned deploy. A checker that pages on
+ * every intended restart is a checker somebody silences — which is how they
+ * come to miss the one that matters, the same argument `lib/feedHealth` makes
+ * about not paging on `stale`.
+ *
+ * NOTE WHAT IS NOT IN IT: `unconfirmed`. A deploy past its grace is not still
+ * updating, and treating it as such is how a console ends up showing a calm
+ * amber spinner — or answering 200 — over a server that is genuinely dead.
+ * `failed` is out for the opposite reason: the deploy verb refused, so the
+ * restart never fired and nothing about the feed was ever expected to change.
+ *
+ * IT TAKES A PHASE AND NOT A WINDOW, because two of its three readers already
+ * hold a resolved phase and only one holds the inputs. `updateInProgress` below
+ * is that one, and it is now this function with `deployPhase` in front of it.
+ */
+export function silenceIsExplained(phase: DeployPhase): boolean {
+  return phase === 'deploying' || phase === 'confirming'
+}
+
+/**
  * IS THE SERVER MID-UPDATE — and therefore, is its silence explained?
  *
  * The header's "Updating" chip, in one expression. Kept as its own function
@@ -215,9 +255,8 @@ export function deployPhase(input: DeployPhaseInput): DeployPhase {
  * asserts against it directly and because two of the five phases mean "in
  * flight" while three do not — a distinction worth naming once.
  *
- * NOTE WHAT IS NOT IN IT: `unconfirmed`. A deploy past its grace is not still
- * updating, and treating it as such is how a console ends up showing a calm
- * amber spinner over a server that is genuinely dead.
+ * IT IS `silenceIsExplained` WITH `deployPhase` IN FRONT OF IT, and it keeps its
+ * own name because its callers hold a window rather than a phase.
  */
 export function updateInProgress(input: {
   state: MaintenanceState | null | undefined
@@ -229,8 +268,7 @@ export function updateInProgress(input: {
   lastPushAt: number | null | undefined
   now: number
 }): boolean {
-  const phase = deployPhase(input)
-  return phase === 'deploying' || phase === 'confirming'
+  return silenceIsExplained(deployPhase(input))
 }
 
 /**
@@ -345,8 +383,16 @@ export function chipCluster(
    */
   const { phase, badge } = polled ?? seed
 
-  /** 1. The deploy is running, or we are waiting for the server to come back. */
-  if (phase === 'deploying' || phase === 'confirming') {
+  /**
+   * 1. The deploy is running, or we are waiting for the server to come back.
+   *
+   * THROUGH `silenceIsExplained`, WHICH IS ALSO WHAT `/api/health` ASKS. This
+   * rung and the endpoint's verdict are the same judgement about the same
+   * silence, and spelling the two phases out in both places is how the header
+   * came to show `Updating` while the endpoint answered 503 about the feed this
+   * rung was deliberately not mentioning.
+   */
+  if (silenceIsExplained(phase)) {
     return { feed: false, update: false, phase: 'updating', window: null }
   }
 

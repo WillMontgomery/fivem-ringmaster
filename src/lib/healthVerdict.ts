@@ -1,6 +1,7 @@
 import { dispatchFaults, type Dispatch } from './dispatchHealth'
 import { faults, type Reach } from './ddbHealth'
 import { feedFailed, type Feed } from './feedHealth'
+import { silenceIsExplained, type DeployPhase } from './serverPhase'
 
 /**
  * IS THIS CONSOLE WELL — the one boolean `GET /api/health` answers with, and
@@ -35,7 +36,43 @@ import { feedFailed, type Feed } from './feedHealth'
  * because it makes the endpoint look like a second opinion.
  *
  * So the rule is exactly: THE VERDICT IS FALSE WHEN THIS CONSOLE IS RAISING A
- * FAULT ANY SIGNED-IN ADMIN WOULD SEE. Nothing new is judged here.
+ * FAULT ANY SIGNED-IN ADMIN WOULD SEE. Nothing new is judged here — the deploy
+ * phase below included, which is `lib/serverPhase`'s judgement and is asked of
+ * it rather than re-derived.
+ *
+ * ═══ A DEPLOY THIS CONSOLE ORDERED EXPLAINS THE SILENCE THAT FOLLOWS ═══
+ *
+ * THIS IS THE ONE THAT SHIPPED WRONG, and it broke the rule above in the most
+ * visible way there is. `royale-deploy` restarts FXServer, so the game stops
+ * pushing; `lib/maintenanceDriver` says outright that this "is exactly the
+ * window in which the feed goes quiet", and `RESTART_GRACE_MS` allows five
+ * minutes of it. Thirty seconds in, `feedNow` said `dead`, `feedFailed` said
+ * yes, and this function answered false — so `/api/health` returned
+ * `503 {"ok":false,"ingestAgeMs":47000,"dispatch":"ok","ddb":"connected"}` for
+ * the rest of the restart, on a window the console itself had scheduled and was
+ * executing.
+ *
+ * AT THAT SAME INSTANT AN ADMIN WITH THE HEADER OPEN SAW ONE CHIP: `Updating`.
+ * `chipCluster` rung 1 suppresses the feed chip during a deploy precisely so
+ * that "three chips raising three alarms about one intended act" cannot happen,
+ * which means the endpoint and the page were reporting opposite things about
+ * the same silence — the disagreement `lib/feedHealth` was extracted to make
+ * impossible, reappearing one layer up. And every planned deploy paged whoever
+ * had wired a monitor to the endpoint `docs/deploy.md` tells them to wire one
+ * to, which is how an operator learns to silence the check that matters.
+ *
+ * SO THE FEED AXIS — AND ONLY THE FEED AXIS — IS SUPPRESSED while
+ * `silenceIsExplained` holds. `dispatch` and `ddb` still page during a deploy:
+ * an SSH channel that has stopped loading its key is a fault whenever it
+ * happens, and a deploy is not an excuse for it. `unconfirmed` is deliberately
+ * NOT suppressed either — a deploy past its grace is a server that did not come
+ * back, and that is the night somebody has to be woken for.
+ *
+ * `idle` IS THE ANSWER WHEN NOTHING IS KNOWN, and it suppresses nothing. A
+ * console whose driver has never ticked, or one restarted mid-window, reports a
+ * dead feed as a fault — which is the right direction for this endpoint
+ * specifically: not knowing why the game is quiet is a reason to page, not a
+ * reason to stay green.
  *
  * ═══ WHAT IS DELIBERATELY NOT A FAULT, AND WHY EACH ONE IS NOT ═══
  *
@@ -68,20 +105,58 @@ import { feedFailed, type Feed } from './feedHealth'
  * THE BODY THE CHECKER JUST RECEIVED — otherwise the alert says "unhealthy"
  * and the payload beside it says nothing is wrong, and the operator's next
  * hour is spent doubting the endpoint. `/api/health` reports `dispatch`,
- * `ddb` and `ingestAgeMs`; it does not report the bundle hash, so it does not
- * get a vote. If the bundle ever belongs in this verdict it belongs in the
- * payload first, in that order.
+ * `ddb`, `ingestAgeMs` and `deploy`; it does not report the bundle hash, so it
+ * does not get a vote. If the bundle ever belongs in this verdict it belongs in
+ * the payload first, in that order.
  *
- * NO RUNTIME IMPORTS, like the three modules it composes — all three are pure
- * and client-safe, and keeping this one that way means `check-health-route.mjs`
- * can load the shipped function rather than re-implementing it.
+ * THE DEPLOY PHASE EARNED ITS FIELD UNDER THAT SAME RULE, read in the direction
+ * it is usually read backwards from: it moves the verdict, so `deploy` is in the
+ * body. Without it an operator reads a 200 beside a 47-second `ingestAgeMs`,
+ * which looks like the endpoint contradicting itself, with no field anywhere
+ * saying why it is not.
+ *
+ * ═══ NO IMPORT THAT REACHES A SERVER MODULE ═══
+ *
+ * The four value imports below are pure and client-safe: `dispatchHealth`,
+ * `ddbHealth` and `feedHealth` have no runtime imports at all, and
+ * `serverPhase` has only a `type` from `lib/maintenance`, erased at compile —
+ * which is why three `'use client'` components already import it. THAT is the
+ * property, and it is not the sentence this comment used to carry. "No runtime
+ * imports" was false the day it was written: there are four of them six lines
+ * above, and a maintainer who reads a stated invariant as already broken treats
+ * it as dead prose and steps over it.
+ *
+ * IT IS LOAD-BEARING TWICE. `scripts/check-health-route.mjs` loads the SHIPPED
+ * function under tsx rather than re-implementing it, which works only while
+ * nothing here pulls in `node:child_process` by way of `lib/ssh`; and the
+ * `feedFailed` chain reaches `components/FeedStatus`, which is a client
+ * component. The obvious way to break both at once is to reach for `hostView()`
+ * to get the deploy phase — which is exactly why the phase arrives as an
+ * ARGUMENT, resolved by the route that already holds a server context.
  */
 export function verdictNow(reading: {
   dispatch: Dispatch
   ddb: Reach
   feed: Feed
+  /**
+   * Where the last deploy has got to, from `lib/serverPhase`.
+   *
+   * OPTIONAL, AND ITS ABSENCE IS `idle`, WHICH EXCUSES NOTHING. A caller that
+   * has not looked at the maintenance window must not thereby claim there is no
+   * deploy running — but it must not be handed a quieter verdict for not asking
+   * either. Absent behaves exactly as a console with no window does.
+   */
+  deploy?: DeployPhase
 }): boolean {
-  if (feedFailed(reading.feed)) return false
+  /**
+   * THE FEED AXIS IS THE ONLY ONE A DEPLOY EXCUSES, and the excuse sits here,
+   * above the three faults, rather than inside one of them. The restart is why
+   * the game is quiet, this console ordered it, and the header chip is already
+   * saying so in words to anybody signed in.
+   */
+  if (!silenceIsExplained(reading.deploy ?? 'idle') && feedFailed(reading.feed)) {
+    return false
+  }
   if (dispatchFaults(reading.dispatch).length > 0) return false
   if (faults(reading.ddb, 'unknown').length > 0) return false
   return true

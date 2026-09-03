@@ -473,6 +473,42 @@ async function poll(): Promise<void> {
     if (attended && (parked || status.behindMain > 0)) {
       void pollDeployedRef(status)
     } else {
+      /**
+       * NOT POLLING IS AN ABSENCE, AND IT HAS TO READ AS ONE.
+       *
+       * ═══ `refUpdate` IS CLEARED HERE AND IT IS THE HALF THAT WAS MISSED ═══
+       *
+       * The clearing above only fires when the box is back ON MAIN, so before
+       * `attended` existed a PARKED box always took the branch above and
+       * `refUpdate` was refreshed every two minutes for as long as the process
+       * ran. Adding the gate created a path where `poll` neither refreshes that
+       * reading nor clears it — so on a box parked on `dev`, which is its normal
+       * state while a branch is tested, the value FREEZES at whatever the last
+       * attended tick saw and nothing ever corrects it.
+       *
+       * WHAT THAT LOOKS LIKE IN THE MORNING. The last admin closes their tab at
+       * 23:00 with `refUpdate = { ref: 'dev', behind: 0 }`; three commits land on
+       * `dev` overnight; at 09:00 the server render of /maintenance reads this
+       * value synchronously and `nothingToDeploy` tells an operator with a
+       * commit in hand that there is nothing to ship. `refBehindNow` and
+       * `refBlockedNow` apply NO age bound of their own — only `updateTargetNow`
+       * does, through `TARGET_MAX_AGE_MS` — because both were written when this
+       * reading could not be more than two minutes old.
+       *
+       * THE REFUSAL DIRECTION IS THE WORSE ONE. A twelve-hour-old
+       * `eligible: false` greys out the Schedule button on a branch that was
+       * fixed at midnight, and `lib/maintenance` justifies honouring a stale
+       * refusal on the grounds that it "costs at most one refresh" — an argument
+       * that assumed a reading minutes old, not one from last night.
+       *
+       * SO IT GOES TO NULL, WHICH IS THE POLARITY EVERY READER ALREADY ASSUMES:
+       * an absence never claims and never refuses. `refPolledAt = 0` below then
+       * forces a re-poll on the first tick after somebody comes back, so the
+       * banner is right within one interval rather than wrong until then.
+       * `POST /api/maintenance` is unaffected either way — it calls
+       * `refreshDeployedRef()` before it reads any of this.
+       */
+      state.refUpdate = null
       state.updateTarget = null
       state.refKey = ''
       state.refPolledAt = 0
