@@ -54,16 +54,20 @@
  *   7. THE FIELD NAMES AND THEIR TYPES DO NOT MOVE. `ok` boolean, `ingestAgeMs`
  *      milliseconds-or-null, `dispatch` the whole `Dispatch` union, `ddb` the
  *      whole `Reach` union and never a boolean, `deploy` the whole `DeployPhase`
- *      union and the SAME reading the verdict was handed.
+ *      union and the SAME reading the verdict was handed, and `feedDeadMs` the
+ *      `DEAD_MS` binding itself rather than a number typed out again.
  *
  * TWO ASSERTIONS BELOW REACH OUTSIDE THIS ROUTE'S OWN SUBJECT, on purpose,
  * because both things they guard have a second copy nobody in this repo can see.
- * `DEAD_MS` is duplicated as a hardcoded `MAX > 30` seconds in the external
- * collector's alarm, so its VALUE is pinned here and not only its consistency.
- * And the `attended` gate this route introduced into `lib/telemetry` has an
- * else-branch whose job is to leave no reading standing unrefreshed — a
- * property no other check in the repo covers, on a code path no other caller can
- * reach. Both sit beside the rule that made them this route's business.
+ * The feed threshold used to be one of them — a hardcoded thirty seconds in the
+ * external consumer, which is why its VALUE was once pinned here — and the fix
+ * was to stop having two copies rather than to police them: the route publishes
+ * `feedDeadMs`, and what is asserted now is that the number it publishes is the
+ * number it judged with. And the `attended` gate this route introduced into
+ * `lib/telemetry` has an else-branch whose job is to leave no reading standing
+ * unrefreshed — a property no other check in the repo covers, on a code path no
+ * other caller can reach. Both sit beside the rule that made them this route's
+ * business.
  *
  * ═══ WHY 6 AND 7 ARE WORTH A GATE RATHER THAN A CODE REVIEW ═══
  *
@@ -139,7 +143,7 @@ const FEED_STATES = ['live', 'stale', 'dead', 'offline']
 const DEPLOY_PHASES = ['idle', 'deploying', 'confirming', 'failed', 'unconfirmed']
 
 /**
- * The five keys of the payload a healthy — or an unwell — console answers with,
+ * The six keys of the payload a healthy — or an unwell — console answers with,
  * in the order the route writes them.
  *
  * WRITTEN OUT RATHER THAN READ OFF THE ROUTE, because a list derived from the
@@ -156,14 +160,14 @@ const DEPLOY_PHASES = ['idle', 'deploying', 'confirming', 'failed', 'unconfirmed
  * both names and drops them while they are absent, and adding either is a
  * perfectly good change — it just has to be made HERE too, in the same commit,
  * so the consumer's copy of the names and the route's copy cannot drift apart
- * quietly. `deploy` was added in exactly that way.
+ * quietly. `deploy` and `feedDeadMs` were both added in exactly that way.
  *
  * A NEW KEY IS THE SAFE KIND OF CHANGE AND A RENAMED ONE IS NOT, which is why
  * this list is compared in order and by length: a by-name parser that has never
  * heard of a field simply does not read it, while one whose field was renamed
  * under it goes on reporting confidently about a value that is no longer there.
  */
-const PAYLOAD_FIELDS = ['ok', 'ingestAgeMs', 'dispatch', 'ddb', 'deploy']
+const PAYLOAD_FIELDS = ['ok', 'ingestAgeMs', 'dispatch', 'ddb', 'deploy', 'feedDeadMs']
 
 /**
  * The `error` value that distinguishes the two 503s, verbatim as the consumer
@@ -608,33 +612,39 @@ const WELL = { dispatch: 'ok', ddb: 'connected', feed: 'live' }
   }
 
   /**
-   * ═══ AND THE VALUE IS PINNED, NOT ONLY ITS CONSISTENCY ═══
+   * ═══ AND THE THRESHOLD LEAVES THIS REPOSITORY WITH THE READING IT JUDGES ═══
    *
-   * EVERY OTHER ASSERTION ABOUT `DEAD_MS` IN THIS FILE IS RELATIVE —
-   * `feedNow(DEAD_MS + 1)` — so it holds whatever the constant happens to be.
-   * That is right for the rules it serves and it is not enough on its own,
-   * because the number ALSO lives outside this repository: the external
-   * collector's `IngestAgeSec` alarm is written as `MAX > 30` seconds,
-   * hardcoded, and nothing on that side imports or derives it from here.
+   * THIS RULE REPLACED A PIN ON THE VALUE, AND THE SWAP IS THE WHOLE POINT.
+   * What stood here was `if (DEAD_MS !== 30_000) fail(…)`, because the external
+   * consumer's own threshold was a hardcoded thirty seconds in another
+   * repository that derived nothing from here: move this constant alone and the
+   * two surfaces disagreed about the word "dead", silently, in whichever
+   * direction was worse. Pinning the value made that loud — at the price of
+   * making a legitimate change to a constant fail a build for a reason that was
+   * not in this repository at all, which is a check somebody eventually deletes
+   * with a shrug.
    *
-   * SO THE SAME THRESHOLD IS IN TWO REPOSITORIES WITH NO GATE BETWEEN THEM —
-   * which is exactly the duplication `lib/feedHealth` was extracted from
-   * `components/FeedStatus` to prevent, reappearing across a boundary where it
-   * is much harder to see. Move this to 60_000 and every check in this repo
-   * still passes, while the console answers `200 {"ok":true}` for a
-   * forty-five-second-old feed and the CloudWatch alarm pages anyway. Two
-   * surfaces disagreeing about the word "dead", with no way to tell from either
-   * which of them is right.
+   * THE PAYLOAD NOW CARRIES THE NUMBER, so the consumer holds no copy to drift
+   * and the value is free to move again. What has to be true instead is that the
+   * PUBLISHED number is the JUDGED number: `feedDeadMs: DEAD_MS`, the same
+   * binding `feedNow` resolved the feed with, and never a literal. A literal
+   * here would be the identical duplication moved twelve lines up the file,
+   * where it would look like documentation.
    *
-   * Moving the number is fine. Moving it ALONE is not, and this line says so.
+   * Every other assertion about `DEAD_MS` in this file is relative —
+   * `feedNow(DEAD_MS + 1)` — so all of them hold whatever the constant becomes.
+   * That is now true of the consumer as well.
    */
-  if (DEAD_MS !== 30_000) {
+  const routeImports = /import\s*\{[^}]*\bDEAD_MS\b[^}]*\}\s*from\s*'@\/lib\/feedHealth'/.test(
+    routeCode,
+  )
+  if (!routeImports) {
     fail(
-      `lib/feedHealth's DEAD_MS is now ${DEAD_MS}ms. The external collector's ` +
-        '`IngestAgeSec` alarm is a hardcoded `MAX > 30` SECONDS in another ' +
-        'repository and does not derive this number. Change both in the same ' +
-        'sitting — the alarm threshold, then this line — or the endpoint and ' +
-        'the alarm disagree about when a feed is dead.',
+      `${ROUTE} does not import DEAD_MS from lib/feedHealth. The payload has to ` +
+        'carry the threshold this console judged the feed against, and it has to ' +
+        'be that module\'s constant rather than a number typed into the route — ' +
+        'a second copy here is the same two-places-one-fact the module exists to ' +
+        'close, at a distance where nobody can see both halves.',
     )
   }
 }
@@ -995,6 +1005,32 @@ for (const r of answers) {
         `answers 503 for up to five minutes through every deploy this console ` +
         `itself scheduled, while the header shows a calm \`Updating\` chip about ` +
         `the same silence. See lib/healthVerdict.`,
+    )
+  }
+
+  /**
+   * `feedDeadMs` IS THE CONSTANT ITSELF — `DEAD_MS`, not `30_000`, not
+   * `DEAD_MS / 1000`, not a second reading of anything.
+   *
+   * THE FIELD EXISTS SO THAT NOBODY DOWNSTREAM HOLDS A COPY OF THIS NUMBER, and
+   * a literal written here would recreate the copy inside the very payload that
+   * was supposed to retire it — with the added cruelty that it would then be
+   * WRONG rather than merely duplicated the day `lib/feedHealth` moved and this
+   * line did not. Pinning the expression is what makes "the published threshold
+   * is the judged threshold" true by construction.
+   *
+   * MILLISECONDS, LIKE `ingestAgeMs` BESIDE IT. The two are compared directly by
+   * whatever is reading them, so a division here would be a unit mismatch a
+   * thousand-fold wide, in a comparison nothing in this repository ever runs.
+   */
+  if (verdict && verdict.fields.get('feedDeadMs') !== 'DEAD_MS') {
+    fail(
+      `${ROUTE} carries \`feedDeadMs: ${verdict.fields.get('feedDeadMs')}\` rather ` +
+        `than lib/feedHealth's \`DEAD_MS\` itself. The field is the threshold this ` +
+        `console judged \`ingestAgeMs\` with; anything but the binding is a second ` +
+        `copy of the number, and a consumer comparing an age against a stale copy ` +
+        `of the threshold reports on a rule this console is no longer using. ` +
+        `${BY_NAME}`,
     )
   }
 

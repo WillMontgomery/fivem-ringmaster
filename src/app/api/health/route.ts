@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
 import { env } from '@/lib/env'
-import { feedNow } from '@/lib/feedHealth'
+import { DEAD_MS, feedNow } from '@/lib/feedHealth'
 import { verdictNow } from '@/lib/healthVerdict'
 import { maintenanceView } from '@/lib/maintenanceDriver'
 import { deployPhase } from '@/lib/serverPhase'
@@ -21,7 +21,7 @@ import { ensurePolling, hostView } from '@/lib/telemetry'
  * `scripts/check-health-route.mjs` asserts the field names, their types and the
  * exact set of status codes, and fails the build on any change to them.
  *
- *   200  the console is well, and the body carries the five fields below
+ *   200  the console is well, and the body carries the six fields below
  *   401  the credential is missing or wrong; the body is `{ ok: false }`
  *   503  TWO DIFFERENT ANSWERS — see the next paragraph
  *
@@ -65,12 +65,18 @@ import { ensurePolling, hostView } from '@/lib/telemetry'
  *   dispatch      the SSH channel, as one word (`dispatchNow`)
  *   ddb           the game's own reachability probe (`reachNow`)
  *   deploy        where the last deploy has got to (`deployPhase`)
+ *   feedDeadMs    the age at which this console calls a feed dead (`DEAD_MS`)
  *
  * THE FOURTH ONE IS NOT AN OPERATOR'S QUESTION, IT IS THE ANSWER TO WHY THE
  * FIRST ONE IS ALLOWED TO BE LARGE. A deploy this console ordered restarts the
  * game, the feed goes quiet for tens of seconds, and without `deploy` in the
  * body the endpoint has no way to distinguish that from an outage — nor any way
  * to explain the 200 it now answers through it. See `lib/healthVerdict`.
+ *
+ * AND THE FIFTH IS NOT A READING AT ALL, IT IS THE YARDSTICK THE FIRST ONE WAS
+ * MEASURED WITH. A consumer that holds its own copy of that number is a second
+ * opinion about the word "dead" in a repository this one cannot see; sending it
+ * beside the age is what makes holding a copy unnecessary.
  *
  * ═══ THE MULTI-STATE `dispatch` IS THE POINT, NOT A BOOLEAN ═══
  *
@@ -454,6 +460,42 @@ export async function GET(req: Request): Promise<Response> {
        * woken for.
        */
       deploy,
+
+      /**
+       * ═══ THE THRESHOLD THIS CONSOLE JUDGED `ingestAgeMs` AGAINST ═══
+       *
+       * MILLISECONDS, AND IT IS `lib/feedHealth`'s `DEAD_MS` VERBATIM — the
+       * number `feedNow` used to resolve the feed a few lines above, not a
+       * second copy written for this payload. A consumer comparing
+       * `ingestAgeMs` against it is asking the same question this console asked,
+       * and gets the same answer.
+       *
+       * ═══ IT IS HERE BECAUSE THE NUMBER WAS LIVING IN TWO REPOSITORIES ═══
+       *
+       * The reader of this payload is not in this repository and is not rebuilt
+       * when this file changes, so a threshold it holds a COPY of is a copy that
+       * drifts the first time the constant moves — silently, and in whichever
+       * direction is worse: move `DEAD_MS` up and the consumer reports a dead
+       * feed while this console answers `ok: true` about the same age; move it
+       * down and the consumer stays quiet through a silence this console is
+       * already calling a fault. Two surfaces disagreeing about the word "dead",
+       * with nothing in either of them to say which is right. That is the exact
+       * duplication `lib/feedHealth` was extracted from `components/FeedStatus`
+       * to prevent, reappearing across a boundary where nobody can see both
+       * halves at once.
+       *
+       * SO THE NUMBER TRAVELS WITH THE READING IT JUDGES. One source, in
+       * `lib/feedHealth`, and a consumer that never needs to hold a copy of it.
+       * `scripts/check-health-route.mjs` pins that this field is the constant
+       * itself rather than a literal, because a literal here would be the same
+       * duplication moved twelve lines.
+       *
+       * IT IS NOT A REASON THE VERDICT MOVES, AND THAT IS WHY IT DOES NOT BREAK
+       * the rule stated at `deploy` above. It is the yardstick, not a reading:
+       * `ok` cannot be false BECAUSE of this field, it can only be false because
+       * of an `ingestAgeMs` measured against it — and that one is in the body.
+       */
+      feedDeadMs: DEAD_MS,
     },
     { status: ok ? 200 : 503 },
   )

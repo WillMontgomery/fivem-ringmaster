@@ -846,7 +846,7 @@ printf 'header = "x-ringmaster-service: %s"\n' "$(sudo grep -m1 '^COMMAND_SECRET
 **The body, then `200`** — on a healthy console:
 
 ```json
-{"ok":true,"ingestAgeMs":1840,"dispatch":"ok","ddb":"connected","deploy":"idle"}
+{"ok":true,"ingestAgeMs":1840,"dispatch":"ok","ddb":"connected","deploy":"idle","feedDeadMs":30000}
 ```
 
 The secret is substituted out of the file rather than typed, so it stays off
@@ -875,7 +875,7 @@ game server, so whoever runs the check holds that.
 | `200`, `"ok":true` | the console is well |
 | `401`, body `{"ok":false}` | the header is missing, or the secret does not match `.env.local`. **Nothing is logged** — see §6 |
 | `503`, body `{"ok":false,"error":"not-configured"}` | `COMMAND_SECRET` is unset on this box (§6) |
-| `503`, body with the four readings | **the console answered and is reporting itself unwell** — read `dispatch` |
+| `503`, body with the readings in it | **the console answered and is reporting itself unwell** — read `dispatch` |
 
 **THE TWO `503`s ARE TOLD APART BY THE `error` FIELD AND BY NOTHING ELSE**, so
 anything parsing this — a checker, a script, a person — reads `error` before it
@@ -931,6 +931,30 @@ normally.** That covers a restart somebody fired by typing
 `systemctl start royale-deploy` on the game box: this console never heard about
 it, so it reports the feed as dead — correctly, because "we do not know why the
 game went quiet" is a reason to look, not a reason to stay green.
+
+### `feedDeadMs`, and why you should not type `30` into your checker
+
+`feedDeadMs` is the sixth field and it is the only one that is not a reading. It
+is the age, in milliseconds, at which **this console** calls the feed dead — the
+same number it just judged `ingestAgeMs` with, sent along so that whatever is
+polling this route never has to hold a copy of it.
+
+**Compare against the field, never against a number of your own.** A checker
+with `30` written into it is a second opinion about the word "dead" living in a
+place this repository cannot see: change the console's threshold and the two
+disagree, silently, and the payload beside the alert says the console is fine
+while the alert says it is not. Nothing would fail; both halves would look
+finished.
+
+| Both fields | The reading | What it means |
+|---|---|---|
+| `ingestAgeMs` under `feedDeadMs` | fresh, or merely late | not a fault. A few seconds behind is a busy tick |
+| `ingestAgeMs` over `feedDeadMs` | dead | the game stopped pushing — unless `deploy` explains it |
+| `ingestAgeMs` is `null` | never started | there has been no feed at all since this process booted. **Not a zero** |
+
+**It is milliseconds, like `ingestAgeMs`, because the two are compared to each
+other.** A consumer that converts one and not the other is out by a factor of a
+thousand in whichever direction is quieter.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://ringmaster.example.com/login

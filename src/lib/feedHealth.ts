@@ -54,6 +54,23 @@ export const STALE_MS = 6_000
  * not: it is not a guess at how long an operator will tolerate stale data, it
  * is fifteen missed pushes. Nothing that is merely busy misses fifteen in a
  * row; something that has stopped misses all of them.
+ *
+ * ═══ AND IT LEAVES THIS PROCESS, WHICH IS WHY IT MAY BE MOVED FREELY ═══
+ *
+ * `/api/health` PUBLISHES IT AS `feedDeadMs`, beside the `ingestAgeMs` it was
+ * used to judge. That is not decoration. The consumer of that payload is in
+ * another repository, is not rebuilt when this line changes, and used to hold
+ * its own copy of thirty seconds — so moving this constant made the two
+ * disagree about the word "dead" with nothing in either of them to say which
+ * was right, and both would have looked finished in review. It is the same
+ * defect that kept these thresholds in `components/FeedStatus.tsx`, one
+ * boundary further out and correspondingly harder to see.
+ *
+ * SO THIS IS THE ONE PLACE THE NUMBER LIVES, AND MOVING IT IS A ONE-FILE
+ * CHANGE. The header chip, the endpoint's verdict and whatever is polling that
+ * endpoint all follow it in the same deploy. `scripts/check-health-route.mjs`
+ * holds the property that makes that true — that the route publishes THIS
+ * binding rather than a literal of its own — instead of pinning the value.
  */
 export const DEAD_MS = 30_000
 

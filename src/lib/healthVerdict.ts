@@ -74,6 +74,32 @@ import { silenceIsExplained, type DeployPhase } from './serverPhase'
  * specifically: not knowing why the game is quiet is a reason to page, not a
  * reason to stay green.
  *
+ * ═══ WHY THE FEED IS JUDGED HERE AT ALL, WHICH IS A FAIR QUESTION ═══
+ *
+ * IT HAS BEEN PROPOSED, TWICE, THAT THIS FUNCTION SHOULD STOP LOOKING AT THE
+ * FEED — on the reasoning that the age is already a field in the same body, so
+ * whatever consumes the payload can judge it, and dropping it here would remove
+ * the one axis a deploy ever falsely fired on. The first half is true. The
+ * conclusion is wrong, and the reason is `offline`.
+ *
+ * A CONSOLE THE GAME HAS NEVER PUSHED TO REPORTS `ingestAgeMs: null`, `ddb:
+ * unknown`, and a `dispatch` that is frequently fine. Every one of those is a
+ * non-reading: there is no age to compare, `unknown` is not a fault on either
+ * channel, and a working SSH channel is a fact about this box rather than about
+ * the game. A consumer doing its own judging therefore has NOTHING to judge —
+ * three correct non-readings and no fourth field — and `ok` is the only value in
+ * the payload that is false. That is not a corner: it is a console restarted
+ * while the game box is down, which is to say a console in the middle of the
+ * incident this endpoint exists for.
+ *
+ * SO THE FEED STAYS, AND WITH IT THE FILE'S STATED RULE RATHER THAN AGAINST IT.
+ * `Feed lost` and `No data` are chips a signed-in admin sees on rung 4 of
+ * `chipCluster`; a verdict that ignored them would be green while the header
+ * beside it was not, which is the disagreement this whole module exists to make
+ * impossible. The deploy case is not an argument for removing the axis, it is
+ * the argument for the suppression above — the header suppresses exactly the
+ * same chip, through exactly the same function, at exactly the same moment.
+ *
  * ═══ WHAT IS DELIBERATELY NOT A FAULT, AND WHY EACH ONE IS NOT ═══
  *
  * `unknown`, on either channel, is not a failure and both modules say so at
