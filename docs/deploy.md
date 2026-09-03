@@ -532,13 +532,51 @@ Two headers, on a POST to one of four paths:
 > `src/lib/service.check.ts` says so beside the entry, and fails the build if the
 > path is removed from `SERVICE_ROUTES` without that decision being made.
 
-**Nothing else.** `/api/maintenance/force` — the button that skips the drain and
-restarts the box now — and `/api/bans/lift` are deliberately not on that list,
-and the console refuses them whatever the secret says. Cancel and force sit
+**Nothing else that WRITES.** `/api/maintenance/force` — the button that skips
+the drain and restarts the box now — and `/api/bans/lift` are deliberately not on
+that list, and the console refuses them whatever the secret says. There is one
+read, `GET /api/health`, and it is the subsection below rather than a row in the
+table above because nothing about it matches that table: it is a GET, the bot
+never calls it, and it takes no `x-ringmaster-actor`. Cancel and force sit
 under one path prefix and are opposite actions, which is why the console matches
 these paths exactly and never as a prefix. `src/lib/service.check.ts` fails the
 build if the routes and the list ever stop agreeing, and names which command
 breaks when one of them stops being covered.
+
+### `GET /api/health` — the one read this credential opens
+
+**It is not the bot's, and no `x-ringmaster-actor` goes with it.** It is for an
+external uptime check: something outside a browser asking this console how it is
+doing, at an hour when nobody is signed in. One header, and that is the whole
+request:
+
+| Path | Method | Headers | What uses it |
+|---|---|---|---|
+| `/api/health` | `GET` | `x-ringmaster-service` only | an external uptime check |
+
+It is guarded for the reason everything on this box is: Caddy sends the whole
+public hostname to `127.0.0.1:3000` (§2), so an ungated route here is a route
+the internet can read — and what this one hands out is a running commentary on
+when the operator's infrastructure is unwell, at whatever cadence the reader
+likes.
+
+**It does not go through the gate the four write paths use, and that is
+deliberate.** That gate demands the Discord id of the human being attributed,
+and there is no human behind a health check. `src/app/api/health/route.ts`
+carries the argument at length; `SERVICE_ROUTES` stays a write allowlist.
+
+> **THE CHECKER BECOMES A THIRD HOLDER OF THIS CREDENTIAL, WITH THE FULL BLAST
+> RADIUS ABOVE.** Pasting `COMMAND_SECRET` into a hosted uptime monitor's
+> custom-header box hands that vendor the string that can ban players and
+> restart the game server. Nothing about the health route needs that power and
+> nothing stops it: it is one credential. Prefer a checker you run yourself —
+> and if this endpoint ever gets a second consumer, that is the moment to split
+> a read-only secret out rather than widen this one further.
+>
+> **It is also a holder the rotation steps below do not know about.** Those name
+> two files. A rotation that follows them exactly leaves the checker on the old
+> value, which starts answering `401` immediately — see the note in the next
+> section.
 
 > **`x-ringmaster-actor` is why the audit log is still worth reading.** The row
 > names the admin who ran the command — their license, their name, their Discord
@@ -563,6 +601,13 @@ The same string is in two files, both on the CONSOLE box:
 |---|---|
 | `/opt/ringmaster/.env.local` | this console |
 | `/opt/blitz-bot/.env` | the bot |
+
+**And in however many places the health check is configured, which is not a
+file on this box.** If `GET /api/health` is wired to an external monitor, that
+monitor holds a third copy in its own settings, and a rotation that updates only
+the two files above leaves it presenting the old value — whereupon it gets
+`401`, reports the console down, and the console is fine. Update it in the same
+sitting, or the first thing the new secret does is page you.
 
 A new one is generated with:
 
@@ -608,8 +653,16 @@ answer.
 ### If it leaks
 
 Whoever holds this string can ban players and restart the game server. That is
-the blast radius, and it is why every refused call is logged at error level
-rather than passed over quietly.
+the blast radius, and it is why every refused call **on the four write paths** is
+logged at error level rather than passed over quietly.
+
+**`GET /api/health` is the exception and it is on purpose, so do not go looking
+for its refusals in the journal.** A wrong secret there logs nothing at all: it
+cannot ban anybody or restart anything, and a misconfigured checker hits it every
+thirty seconds forever, so a line per refusal would bury the telemetry failure
+you would actually be reading that journal to find. The one line it does write is
+`[health]`, not `[service]`, and it says `COMMAND_SECRET` is unset — once per
+process, not once per request.
 
 **Rotation is generating a new one and restarting both services** — the two
 steps above, in that order. There is no revocation list and no second credential
@@ -759,6 +812,48 @@ observes, because the only question being asked is "is this listening".
 > which proves the app is listening on 3000 and routing. A connection refused is
 > the real failure. If you get a `405` here, you are on a build predating the
 > health handler, and that is fine too.
+
+```bash
+curl -s -w '\n%{http_code}\n' -H "x-ringmaster-service: $(sudo grep -m1 '^COMMAND_SECRET=' /opt/ringmaster/.env.local | cut -d= -f2- | tr -d '" \r')" http://127.0.0.1:3000/api/health
+```
+
+**The body, then `200`** — on a healthy console:
+
+```json
+{"ok":true,"ingestAgeMs":1840,"dispatch":"ok","ddb":"connected"}
+```
+
+The secret is substituted out of the file rather than typed, for the reason §6
+gives for the comparison command there: it keeps the value off your screen and
+out of your shell history.
+
+**This is the check to point a monitor at, and it is a different question from
+the `/api/ingest` one above** — that proves something is listening; this reports
+whether what is listening is well. **Read §6 before wiring it to anything
+hosted:** the header carries the credential that can ban players and restart the
+game server, so whoever runs the check holds that.
+
+| You get | It means |
+|---|---|
+| `200`, `"ok":true` | the console is well |
+| `401`, body `{"ok":false}` | the header is missing, or the secret does not match `.env.local`. **Nothing is logged** — see §6 |
+| `503`, body `{"ok":false,"error":"not-configured"}` | `COMMAND_SECRET` is unset on this box (§6) |
+| `503`, body with the three readings | **the console answered and is reporting itself unwell** — read `dispatch` |
+
+**The last row is the one to understand, because a `503` there is a real answer
+rather than a failure to answer.** `ok` is derived from the three readings, and
+the status code carries that verdict as well as the body does. It has to: a
+`HEAD` probe — which Next answers out of this same handler with no body at all
+— has nothing but the status to go on, and asserting only `2xx` is the
+commonest way a monitor is configured.
+
+`dispatch` is the field that says which machine to open: `key-unreadable` is this
+box's filesystem, `rejected` is the game box's `authorized_keys`, `unreachable`
+is the network between them, `verb-failed` is `dispatch.sh` on the game box.
+Two of the seven words are NOT faults and do not make `ok` false — `unknown`,
+which is the first check after a restart before the poll timer has landed a
+reading and clears itself within about fifteen seconds, and `unconfigured`,
+which means this console was never pointed at a game box over SSH at all.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://ringmaster.example.com/login

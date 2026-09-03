@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
 import { env } from '@/lib/env'
+import { feedNow } from '@/lib/feedHealth'
+import { verdictNow } from '@/lib/healthVerdict'
 import { COMMAND_SECRET_HEADER } from '@/lib/service'
 import { liveView } from '@/lib/state'
 import { ensurePolling, hostView } from '@/lib/telemetry'
@@ -28,16 +30,37 @@ import { ensurePolling, hostView } from '@/lib/telemetry'
  * already keeps and puts them where something without a cookie can see them.
  *
  *   ingestAgeMs   how long since the game last pushed (`liveView`)
- *   dispatch      the SSH channel, as one of five words (`dispatchNow`)
+ *   dispatch      the SSH channel, as one word (`dispatchNow`)
  *   ddb           the game's own reachability probe (`reachNow`)
  *
- * ═══ THE FIVE-STATE `dispatch` IS THE POINT, NOT A BOOLEAN ═══
+ * ═══ THE MULTI-STATE `dispatch` IS THE POINT, NOT A BOOLEAN ═══
  *
- * `lib/dispatchHealth` says at length why the channel resolves to five words
- * rather than to up/down: what an operator does next is entirely decided by
- * WHERE the call stopped, and the five places live on three different machines.
- * A checker that flattened this to "unhealthy" would throw away the only part
- * of the answer that says which box to go and look at.
+ * `dispatch` is one of the SEVEN words in the `Dispatch` union: `ok` when the
+ * channel works, `unknown` before this process has landed a poll, and five
+ * failure states — `unconfigured`, `key-unreadable`, `unreachable`, `rejected`,
+ * `verb-failed` — that each name WHERE the call stopped.
+ *
+ * IT IS WORTH BEING PRECISE ABOUT THAT COUNT, because this comment used to say
+ * "one of five words" and a checker author reading it would have built a
+ * five-entry map with no arm for the value a HEALTHY console returns, nor for
+ * the one it returns on the first check after a restart. `lib/dispatchHealth`'s
+ * "THE STATES ARE FIVE" is about the five failure LOCATIONS, which sit on three
+ * different machines; it is not the size of the value domain. That module says
+ * at length why those five must not collapse to "unhealthy": what an operator
+ * does next is decided entirely by which one it is, and a checker that
+ * flattened them would throw away the only part of the answer that says which
+ * box to go and look at.
+ *
+ * ═══ `ok` IS A VERDICT, NOT A LIVENESS FLAG ═══
+ *
+ * The first version of this route answered `ok: true` as a literal, above three
+ * readings that could all say the console was broken — which made the field a
+ * statement that the request had been authorised, wearing the name of a
+ * statement about the console. On a route called `health` those are not the
+ * same word, and the gap between them is the outage this endpoint exists to
+ * catch. `lib/healthVerdict` now decides it: the verdict is false exactly when
+ * this console is raising a fault a signed-in admin would see on the Host page,
+ * and every reason it can be false is one of the three fields in the same body.
  */
 
 export const runtime = 'nodejs'
@@ -61,6 +84,22 @@ function secretMatches(presented: string | null, configured: string): boolean {
 }
 
 /**
+ * ONCE PER PROCESS, NOT ONCE PER REQUEST.
+ *
+ * The unset-secret refusal below logs, and the first version of it logged on
+ * every call. That is the same journal-flooding the 401 arm a few lines further
+ * down explicitly refuses to do, and it was worse here: this arm fires for
+ * callers who presented nothing at all, so an operator who points a
+ * thirty-second checker at this route before pasting the secret in gets 2,880
+ * identical error lines a day — in the very journal they would be reading to
+ * find the telemetry failure. `lib/telemetry` goes out of its way to log poll
+ * failures on the transition rather than on the tick for exactly that reason.
+ * This is the same discipline in the cheapest form the case needs, because
+ * "COMMAND_SECRET is unset" cannot change without a restart.
+ */
+let warnedUnconfigured = false
+
+/**
  * Health, for an external check holding `COMMAND_SECRET`.
  *
  * ═══ WHY THIS IS GUARDED AT ALL, GIVEN IT ONLY REPORTS ON OURSELVES ═══
@@ -72,6 +111,23 @@ function secretMatches(presented: string | null, configured: string): boolean {
  * exactly when it is not — which is a reconnaissance feed, told at whatever
  * cadence the reader likes. The facts are individually mild and the stream of
  * them is not.
+ *
+ * ═══ WHOEVER RUNS THE CHECK BECOMES A HOLDER OF THE COMMAND CREDENTIAL ═══
+ *
+ * THIS IS THE SENTENCE TO READ BEFORE WIRING ANYTHING UP, because the issue's
+ * choice of credential makes it the default way this endpoint gets used.
+ * `COMMAND_SECRET` opens `POST /api/kick`, `/api/bans`, `/api/maintenance` and
+ * `/api/maintenance/cancel`; `docs/deploy.md` §6 puts the blast radius as
+ * "whoever holds this string can ban players and restart the game server".
+ * Pasting it into a hosted uptime monitor's custom-header box makes that vendor
+ * a third holder of it, beside this console and `/opt/blitz-bot/.env` — and the
+ * rotation procedure in that section knows about those two files and not about
+ * the monitor, so a rotation silently leaves the checker on a stale secret.
+ *
+ * That is a real cost, it is stated in §6 alongside the two files, and it is a
+ * reason to prefer a checker you run yourself — and the argument for a separate
+ * read-only secret if this endpoint ever grows a second consumer. It is not a
+ * reason to leave the route open, for the paragraph above.
  *
  * ═══ DELIBERATELY NOT THROUGH `serviceGate()`, AND THIS IS THE PARAGRAPH THE
  *     NEXT READER IS LOOKING FOR ═══
@@ -100,7 +156,7 @@ function secretMatches(presented: string | null, configured: string): boolean {
  * compares its own. One header, one string, no identity, no audit row —
  * because nothing here is an action anybody could be attributed for.
  *
- * ═══ THE UNSET SECRET IS 503, NOT 401 ═══
+ * ═══ THE UNSET SECRET IS 503, AND SO IS AN UNWELL CONSOLE ═══
  *
  * `COMMAND_SECRET` is optional in `lib/env.ts` and unset is a supported state
  * that closes this door entirely. `serviceGate` distinguishes that case from a
@@ -109,14 +165,29 @@ function secretMatches(presented: string | null, configured: string): boolean {
  * wiring up a check, and "nobody ever set the variable" versus "your secret is
  * stale" is otherwise a long evening. 503 because it is this console that is
  * not ready, not the caller that is wrong.
+ *
+ * AN UNHEALTHY CONSOLE ANSWERS 503 TOO, AND THE OVERLAP IS DELIBERATE RATHER
+ * THAN SLOPPY. The two are told apart in the body — `error: 'not-configured'`
+ * against the three readings — and to the person being paged they mean the same
+ * thing: this console cannot answer for the estate, go and look at it.
+ *
+ * THE STATUS CODE HAS TO CARRY THE VERDICT, because for a HEAD probe it is the
+ * ONLY thing that can. Next answers HEAD out of this GET handler with no body
+ * at all, so a 200 carrying `ok:false` inside would be invisible to exactly the
+ * simplest kind of checker somebody points at a route called `health` — and a
+ * monitor asserting nothing but `2xx` is the commonest configuration there is.
  */
 export async function GET(req: Request): Promise<Response> {
   const configured = env().COMMAND_SECRET
   if (!configured) {
-    console.error(
-      '[health] REFUSED a health check: COMMAND_SECRET is not set on this ' +
-        'console, so this route is closed. See docs/deploy.md.',
-    )
+    if (!warnedUnconfigured) {
+      warnedUnconfigured = true
+      console.error(
+        '[health] REFUSING health checks: COMMAND_SECRET is not set on this ' +
+          'console, so this route is closed. Logged once per process. ' +
+          'See docs/deploy.md §6.',
+      )
+    }
     return Response.json({ ok: false, error: 'not-configured' }, { status: 503 })
   }
 
@@ -146,70 +217,122 @@ export async function GET(req: Request): Promise<Response> {
    * whenever nobody is watching reports it as `unknown` exactly when it may in
    * fact be broken. It would not be a weak signal, it would be an inverted one.
    *
-   * `ensurePolling` IS IDEMPOTENT, so this costs nothing on a console somebody
+   * `ensurePolling` IS IDEMPOTENT, so this adds nothing on a console somebody
    * is already using, and it does NOT make the request wait on SSH — the timer
    * collects in the background and every read below is a property access. The
    * first health check after a restart therefore still answers `unknown` for
    * one round, which is correct: it starts the timer and reports what is known
    * at that instant, which is nothing yet.
    *
-   * IT IS A SIDE EFFECT ON A GET, AND THAT IS DELIBERATE. It changes no state
-   * this endpoint reports on and nothing durable anywhere — it starts a timer
-   * this process would have started on the next Host page load — so the route
-   * stays a read for every purpose that word is used for here, including
-   * `check:origin`'s coverage walk.
+   * ═══ WHAT IT COSTS ON A CONSOLE NOBODY IS USING, PLAINLY ═══
+   *
+   * Not nothing, and the honest number belongs here rather than in a reviewer's
+   * head. Nothing ever calls `clearInterval`, so the first health check makes
+   * the poller permanent for the life of the process: two ssh logins to the
+   * game box every fifteen seconds, roughly eleven and a half thousand a day,
+   * with nobody signed in. That is what `dispatch` meaning anything at 4am
+   * costs, and it is the cost the issue asked for on purpose.
+   *
+   * `attended: false` IS WHAT HOLDS IT TO THAT. Without the flag, a box parked
+   * off main — its normal state while a branch is being tested — would ALSO run
+   * `git fetch --prune` against GitHub every two minutes all night, because
+   * `poll`'s `branches` gate was written on the assumption that the only thing
+   * able to start this timer was somebody looking at the banner it feeds. The
+   * flag says a machine started it, which keeps that assumption true.
+   *
+   * IT IS A SIDE EFFECT ON A GET, AND THAT IS DELIBERATE. It changes no DURABLE
+   * state anywhere and starts no work the next Host page load would not have
+   * started, which is the sense in which this route stays a read — including
+   * for `check:origin`'s coverage walk. It emphatically DOES change what
+   * `dispatch` reports, and that is the entire reason the call is here: the next
+   * maintainer who reads this paragraph as saying the call is inert, hoists it
+   * out or puts an `export const revalidate` in front of it, puts the endpoint
+   * back to answering `unknown` on every unattended console.
    */
-  ensurePolling()
+  ensurePolling({ attended: false })
 
   const now = Date.now()
   const live = liveView(now)
   const host = hostView()
 
-  return Response.json({
-    ok: true,
-
-    /**
-     * NULL MEANS THE GAME HAS NEVER PUSHED TO THIS PROCESS, and a checker must
-     * not read it as zero. `liveView` returns null for a console that has not
-     * been pushed to since it booted; "the feed is perfectly fresh" and "there
-     * has never been a feed" are opposite facts and a `0` would render the
-     * second as the first.
-     */
-    ingestAgeMs: live.ageMs,
-
-    /**
-     * TAKEN OFF `hostView()` RATHER THAN CLASSIFIED AGAIN HERE. `dispatchNow`
-     * needs three module-private facts from `lib/telemetry` — whether SSH is
-     * configured, the last poll's error, and whether the timer has ever landed
-     * a reading — and `hostView` is where they are put to it. Asking the same
-     * question a second time in this file would need those three facts
-     * exported, and would create a second place that could disagree with the
-     * Host page about which of the five states the channel is in. The comment
-     * on `hostView` makes that argument for the chip, the strip and the popup;
-     * an external check is a fourth reader of the same one answer.
-     */
+  const ok = verdictNow({
     dispatch: host.dispatch,
-
-    /**
-     * THE GAME'S OWN REACHABILITY PROBE, RESOLVED BY `reachNow` — `connected`,
-     * `unreachable` or `unknown`, and never a boolean, because only something
-     * inside FXServer can ask whether its reads actually work and every way of
-     * not having been told is `unknown` rather than a fault.
-     *
-     * THE ISSUE ASKED WHETHER THIS BELONGS HERE AT ALL, on the grounds that it
-     * is one more fact for a credentialed-but-machine surface to carry. It is
-     * included, and the reason is that it is the one reading here that is NOT
-     * about this console: `ingestAgeMs` and `dispatch` both go quiet together
-     * when the link between the two boxes goes, and this is what separates "we
-     * cannot hear the game" from "the game cannot reach its own store". Those
-     * are different nights. Dropping it would leave a check able to say
-     * something is wrong and never which half.
-     *
-     * THE `probe` OBJECT BESIDE IT IS DELIBERATELY NOT FORWARDED. It carries
-     * the game's verbatim error text and the names of what it was talking to,
-     * which is material for the fix popup an admin reads while signed in — not
-     * for a payload whose whole job is to be polled by a machine.
-     */
     ddb: host.ddb.reach,
+    feed: feedNow(live.ageMs),
   })
+
+  return Response.json(
+    {
+      /**
+       * THE VERDICT, DERIVED — see `lib/healthVerdict` for what it consults
+       * and, more importantly, for what it deliberately does NOT treat as a
+       * fault: `unknown` on either channel, `unconfigured` SSH and a merely
+       * `stale` feed are readings rather than alarms, and every one of them
+       * would otherwise be a false page on an ordinary night.
+       *
+       * A CHECKER SHOULD STILL KEY ON THE THREE FIELDS BELOW, not on this
+       * boolean alone. `ok: false` says something is wrong; only `dispatch`
+       * says which of three machines to go and open, which is the reason that
+       * field is a word rather than a flag.
+       */
+      ok,
+
+      /**
+       * NULL MEANS THE GAME HAS NEVER PUSHED TO THIS PROCESS, and a checker must
+       * not read it as zero. `liveView` returns null for a console that has not
+       * been pushed to since it booted; "the feed is perfectly fresh" and "there
+       * has never been a feed" are opposite facts and a `0` would render the
+       * second as the first. A collector that cannot express "no reading"
+       * should publish no datum rather than a number.
+       *
+       * MILLISECONDS, AND THE NAME SAYS SO. It is the unit `liveView` keeps and
+       * the unit the header chip is drawn from. A consumer that wants seconds
+       * divides; one that renamed the field without dividing would be comparing
+       * milliseconds against a threshold in seconds and alarming for ever.
+       */
+      ingestAgeMs: live.ageMs,
+
+      /**
+       * TAKEN OFF `hostView()` RATHER THAN CLASSIFIED AGAIN HERE. `dispatchNow`
+       * needs three module-private facts from `lib/telemetry` — whether SSH is
+       * configured, the last poll's error, and whether the timer has ever landed
+       * a reading — and `hostView` is where they are put to it. Asking the same
+       * question a second time in this file would need those three facts
+       * exported, and would create a second place that could disagree with the
+       * Host page about which of the states the channel is in. The comment on
+       * `hostView` makes that argument for the chip, the strip and the popup;
+       * an external check is a fourth reader of the same one answer.
+       *
+       * THAT RULE BINDS ANYTHING DOWNSTREAM TOO. A collector that opened its own
+       * `ssh … true` from some other box to decide the same fact would be a
+       * fifth classifier, with a different user, a different key and a different
+       * `known_hosts`, free to report a working channel while this console
+       * reports `key-unreadable`. This field is what such a collector reads.
+       */
+      dispatch: host.dispatch,
+
+      /**
+       * THE GAME'S OWN REACHABILITY PROBE, RESOLVED BY `reachNow` — `connected`,
+       * `unreachable` or `unknown`, and never a boolean, because only something
+       * inside FXServer can ask whether its reads actually work and every way of
+       * not having been told is `unknown` rather than a fault.
+       *
+       * THE ISSUE ASKED WHETHER THIS BELONGS HERE AT ALL, on the grounds that it
+       * is one more fact for a credentialed-but-machine surface to carry. It is
+       * included, and the reason is that it is the one reading here that is NOT
+       * about this console: `ingestAgeMs` and `dispatch` both go quiet together
+       * when the link between the two boxes goes, and this is what separates "we
+       * cannot hear the game" from "the game cannot reach its own store". Those
+       * are different nights. Dropping it would leave a check able to say
+       * something is wrong and never which half.
+       *
+       * THE `probe` OBJECT BESIDE IT IS DELIBERATELY NOT FORWARDED. It carries
+       * the game's verbatim error text and the names of what it was talking to,
+       * which is material for the fix popup an admin reads while signed in — not
+       * for a payload whose whole job is to be polled by a machine.
+       */
+      ddb: host.ddb.reach,
+    },
+    { status: ok ? 200 : 503 },
+  )
 }

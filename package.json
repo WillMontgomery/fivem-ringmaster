@@ -13,7 +13,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "check:secrets": "node scripts/check-secrets.mjs",
-    "verify": "npm run check:secrets && npm run check:banrule && npm run check:banreconcile && npm run check:xpcurve && npm run check:verdict && npm run check:artifacts && npm run check:discordrole && npm run check:adminlicense && npm run check:handoff && npm run check:origin && npm run check:service && npm run check:framed && npm run check:chips && npm run check:deployphase && npm run check:deploytarget && npm run check:branchpicker && npm run check:timeline && npm run check:corroboration && npm run check:actionbar && npm run check:ddbhealth && npm run check:dispatchhealth && npm run check:contrast && npm run check:cef && npm run typecheck && npm run lint",
+    "verify": "npm run check:secrets && npm run check:banrule && npm run check:banreconcile && npm run check:xpcurve && npm run check:verdict && npm run check:artifacts && npm run check:discordrole && npm run check:adminlicense && npm run check:handoff && npm run check:origin && npm run check:service && npm run check:framed && npm run check:chips && npm run check:deployphase && npm run check:deploytarget && npm run check:branchpicker && npm run check:timeline && npm run check:corroboration && npm run check:actionbar && npm run check:ddbhealth && npm run check:dispatchhealth && npm run check:healthroute && npm run check:contrast && npm run check:cef && npm run typecheck && npm run lint",
     "check:xpcurve": "tsx scripts/check-xp-curve.mjs",
     "check:banrule": "node scripts/check-ban-rule.mjs",
     "check:banreconcile": "tsx src/lib/bans.check.ts",
@@ -33,6 +33,7 @@
     "check:actionbar": "tsx src/lib/actionBar.check.ts",
     "check:ddbhealth": "tsx scripts/check-ddb-health.mjs",
     "check:dispatchhealth": "tsx scripts/check-dispatch-health.mjs",
+    "check:healthroute": "tsx scripts/check-health-route.mjs",
     "check:contrast": "tsx scripts/check-contrast.mjs",
     "check:cef": "node scripts/check-cef-css.mjs",
     "check:framed": "tsx src/lib/framed.check.ts"

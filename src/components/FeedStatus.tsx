@@ -3,6 +3,7 @@
 import { Radio, WifiOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { feedNow, type Feed } from '@/lib/feedHealth'
 import { useLiveState } from '@/lib/livePoll'
 import { cn } from '@/lib/utils'
 
@@ -54,21 +55,17 @@ import { cn } from '@/lib/utils'
  * words — which is what rule 8 asks of us.
  */
 
-/** Beyond this the feed is late — the game pushes every 2s by default. */
-const STALE_MS = 6_000
-/** Beyond this, assume the game server or the link is gone. */
-const DEAD_MS = 30_000
-
-type Tone = 'live' | 'stale' | 'dead' | 'offline'
-
-function toneOf(ageMs: number | null): Tone {
-  if (ageMs === null) return 'offline'
-  if (ageMs > DEAD_MS) return 'dead'
-  if (ageMs > STALE_MS) return 'stale'
-  return 'live'
-}
-
-const TONE: Record<Tone, { chip: string; label: string }> = {
+/**
+ * THE THRESHOLDS AND THE WORD THEY RESOLVE TO MOVED TO `lib/feedHealth`, and
+ * this component is now one of two readers of them. The other is
+ * `GET /api/health`, which decides from the same numbers whether to answer a
+ * checker that this console is unwell. They were both going to need `> 30s
+ * means the feed is gone` and a second copy of that number is a second opinion:
+ * this chip could then read `Feed lost` while the endpoint an operator points
+ * a pager at answered green, with nothing on either surface to say which was
+ * right. Only the colours below are this component's own.
+ */
+const TONE: Record<Feed, { chip: string; label: string }> = {
   live: {
     chip: 'bg-live/10 text-live ring-live/30',
     label: 'Live',
@@ -121,7 +118,7 @@ export function FeedStatus({
   }, [])
 
   const ageMs = lastPushAt === null ? null : Math.max(0, now - lastPushAt)
-  const tone = toneOf(ageMs)
+  const tone = feedNow(ageMs)
   const t = TONE[tone]
 
   return (
