@@ -65,11 +65,52 @@ interface TelState {
   refPolledAt: number
   /** One `branches` call at a time; they are slow and they fetch. */
   refBusy: boolean
+
+  /**
+   * WHEN A HUMAN WAS LAST DEMONSTRABLY LOOKING AT THIS CONSOLE. Zero means
+   * never, in the life of this process.
+   *
+   * IT EXISTS BECAUSE THE POLLER GAINED A CALLER THAT IS NOT A PERSON.
+   * `ensurePolling` is lazy for one stated reason — the box should not hold a
+   * connection to the game host open for nobody — and until now every caller
+   * was a page render or the poll behind one, so "the timer is running" and
+   * "somebody is here" were the same fact. `GET /api/health` breaks that: it is
+   * a machine, it runs at four in the morning precisely when nobody is here,
+   * and it needs the timer running or `dispatch` is not worth reading.
+   *
+   * The fifteen-second `status` poll is the cost the health endpoint asks for
+   * and it is paid. What that decision does NOT cover is the `branches` verb
+   * below, whose entire justification is that it runs "precisely in the window
+   * in which somebody is looking at the banner" — and with a checker starting
+   * the timer there may be no such window ever again. This timestamp is what
+   * keeps that justification true.
+   */
+  attendedAt: number
 }
 
 /** ~30 min at one sample per 15s. Enough to see a trend, cheap to hold. */
 const WINDOW = 120
 const POLL_MS = 15_000
+
+/**
+ * HOW LONG AFTER A HUMAN REQUEST THIS CONSOLE STILL COUNTS AS ATTENDED.
+ *
+ * The longest human-driven poll in the app is the sixty-second update watcher
+ * (`lib/idle` names all three), so this window has to clear that comfortably or
+ * a reader sitting on a quiet page would flicker out of it and lose the very
+ * banner the `branches` call feeds. Five minutes is that with margin, and short
+ * enough that the fetch stops within one screen of the journal after the last
+ * person closes their tab.
+ *
+ * IT IS NOT AN IDLE TIMEOUT AND MUST NOT BE CONFUSED WITH ONE. `IDLE_MS` in
+ * `lib/idle` is a security control over a signed-in session, and that file's
+ * central rule is that REQUESTS ARE NOT ACTIVITY — a tab left open overnight
+ * must not keep a session alive. This is the opposite kind of number: it
+ * governs one background `git fetch`, requests are exactly the right evidence
+ * for it, and being wrong in either direction costs a rounding error on a
+ * network bill rather than a hole in the console.
+ */
+const ATTENDED_MS = 5 * 60_000
 
 /**
  * How often the parked branch's own tip is re-read. NOT the poll interval.
@@ -118,6 +159,7 @@ function create(): TelState {
     refKey: '',
     refPolledAt: 0,
     refBusy: false,
+    attendedAt: 0,
   }
 }
 
@@ -408,10 +450,65 @@ async function poll(): Promise<void> {
      * round trip from the game box to GitHub, and putting an unconditional
      * timer on it would spend that on every console that has ever been opened,
      * forever, to learn a sha nothing would render.
+     *
+     * ═══ AND `attended` IS THE THIRD CONDITION, ADDED WITH `/api/health` ═══
+     *
+     * Every sentence above rests on somebody being here. That was safe to leave
+     * implicit while the only thing that could start this timer was a page
+     * render; it stopped being safe the moment a machine could start it. An
+     * external checker polling `/api/health` every thirty seconds keeps this
+     * process polling for ever, and a box parked off main — which is its normal
+     * state while a branch is being tested — would then run `git fetch --prune`
+     * against GitHub every two minutes, all night, to compute a banner nobody
+     * will look at until morning.
+     *
+     * THE FIFTEEN-SECOND `status` POLL IS NOT GATED THE SAME WAY, and the
+     * asymmetry is the whole point: that one is what the health endpoint is FOR
+     * — it is what makes `dispatch` say something other than `unknown` — and it
+     * is two local reads on the game box. This one is a network round trip to
+     * GitHub that feeds a piece of UI. The first is the cost of being told the
+     * console is broken at 4am; the second is not.
      */
-    if (parked || status.behindMain > 0) {
+    const attended = Date.now() - state.attendedAt < ATTENDED_MS
+    if (attended && (parked || status.behindMain > 0)) {
       void pollDeployedRef(status)
     } else {
+      /**
+       * NOT POLLING IS AN ABSENCE, AND IT HAS TO READ AS ONE.
+       *
+       * ═══ `refUpdate` IS CLEARED HERE AND IT IS THE HALF THAT WAS MISSED ═══
+       *
+       * The clearing above only fires when the box is back ON MAIN, so before
+       * `attended` existed a PARKED box always took the branch above and
+       * `refUpdate` was refreshed every two minutes for as long as the process
+       * ran. Adding the gate created a path where `poll` neither refreshes that
+       * reading nor clears it — so on a box parked on `dev`, which is its normal
+       * state while a branch is tested, the value FREEZES at whatever the last
+       * attended tick saw and nothing ever corrects it.
+       *
+       * WHAT THAT LOOKS LIKE IN THE MORNING. The last admin closes their tab at
+       * 23:00 with `refUpdate = { ref: 'dev', behind: 0 }`; three commits land on
+       * `dev` overnight; at 09:00 the server render of /maintenance reads this
+       * value synchronously and `nothingToDeploy` tells an operator with a
+       * commit in hand that there is nothing to ship. `refBehindNow` and
+       * `refBlockedNow` apply NO age bound of their own — only `updateTargetNow`
+       * does, through `TARGET_MAX_AGE_MS` — because both were written when this
+       * reading could not be more than two minutes old.
+       *
+       * THE REFUSAL DIRECTION IS THE WORSE ONE. A twelve-hour-old
+       * `eligible: false` greys out the Schedule button on a branch that was
+       * fixed at midnight, and `lib/maintenance` justifies honouring a stale
+       * refusal on the grounds that it "costs at most one refresh" — an argument
+       * that assumed a reading minutes old, not one from last night.
+       *
+       * SO IT GOES TO NULL, WHICH IS THE POLARITY EVERY READER ALREADY ASSUMES:
+       * an absence never claims and never refuses. `refPolledAt = 0` below then
+       * forces a re-poll on the first tick after somebody comes back, so the
+       * banner is right within one interval rather than wrong until then.
+       * `POST /api/maintenance` is unaffected either way — it calls
+       * `refreshDeployedRef()` before it reads any of this.
+       */
+      state.refUpdate = null
       state.updateTarget = null
       state.refKey = ''
       state.refPolledAt = 0
@@ -445,8 +542,31 @@ async function poll(): Promise<void> {
   }
 }
 
-/** Start the poll timer once. Idempotent; safe to call from any request. */
-export function ensurePolling(): void {
+/**
+ * Start the poll timer once. Idempotent; safe to call from any request.
+ *
+ * ═══ `attended` DEFAULTS TO TRUE AND EVERY EXISTING CALLER LEAVES IT ALONE ═══
+ *
+ * The four callers that predate `/api/health` — the Host page, `/api/host`,
+ * the Config page and `AppShell` — are all a person's own page render, and
+ * `lib/maintenanceDriver` runs while a deploy that a person scheduled is in
+ * flight. Every one of them is evidence somebody is here, so the default is
+ * the truth for all five and none of them changed.
+ *
+ * PASSING `attended: false` MEANS "START THE TIMER, BUT DO NOT CLAIM ANYBODY
+ * IS LOOKING". `GET /api/health` is the only caller that does, because it is
+ * the only caller that is not a human. What it buys is described on
+ * `ATTENDED_MS` and on the `branches` gate in `poll` — the fifteen-second
+ * `status` poll runs either way, and the `git fetch` against GitHub does not.
+ *
+ * THE FLAG IS DELIBERATELY NOT `unattended: true`. A caller that forgets it is
+ * the common failure, and forgetting a positive flag here would silently
+ * declare a machine to be a person; forgetting to say `attended: false` is the
+ * mistake this default makes safe to notice, because the only thing it costs is
+ * the fetch it was meant to save.
+ */
+export function ensurePolling({ attended = true }: { attended?: boolean } = {}): void {
+  if (attended) state.attendedAt = Date.now()
   if (state.timer || !sshConfigured()) return
   state.polling = true
   void poll()

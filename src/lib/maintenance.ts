@@ -44,6 +44,26 @@ import type { HostBranch, RefUpdate, UpdateTarget } from './ssh'
 /** The single active window's partition key. */
 const CURRENT = 'current'
 
+/**
+ * How long a window may go on governing the server before something gives up.
+ *
+ * IT IS NOT A DRAIN TIMEOUT AND MUST NOT BE READ AS ONE. Nothing about this
+ * number decides when a deploy fires — `when-empty` still waits for the last
+ * player to leave, however long that takes, because ending somebody's match to
+ * save a few minutes is the thing draining exists to avoid. This is the outer
+ * bound past which a window is no longer believable at all: the door has been
+ * shut for four hours, no deploy has fired, and whatever the row is waiting for
+ * is not going to arrive.
+ *
+ * FOUR HOURS IS DELIBERATELY FAR PAST ANY LEGITIMATE DRAIN. A battle-royale
+ * match is minutes; a busy server empties in tens of minutes. What takes longer
+ * than four hours is not a slow drain, it is a count that has stopped moving —
+ * a dead ingest feed freezing the last non-zero reading — and at that point the
+ * honest thing is to reopen the door rather than to keep refusing players on
+ * the strength of a number nobody has updated since lunchtime.
+ */
+export const WINDOW_EXPIRY_MS = 4 * 60 * 60_000
+
 export type MaintenanceState =
   | 'scheduled'
   | 'draining'
@@ -1032,6 +1052,28 @@ export async function schedule(input: {
     drainStartsAt: input.drainStartsAt,
     deployMode: input.deployMode,
     deployAt: input.deployMode === 'at-time' ? input.deployAt : null,
+
+    /**
+     * THE DEAD-MAN'S SWITCH, AND IT USED TO BE ON HOST-PATCH ROWS ONLY.
+     *
+     * A console-scheduled window has exactly the shape of failure the switch
+     * was written for. `when-empty` fires when the live player count reaches
+     * zero, and that count is read off the ingest feed — so a feed that dies
+     * while a window is draining freezes the last count above zero and the
+     * drain waits on a number that will never move again. The row stays
+     * `draining`, `isDraining` keeps refusing every player, and the console
+     * looks perfectly well the whole time. That is this estate's own worst
+     * documented silent outage, and until now nothing in this repository wrote
+     * `expiresAt` onto any window at all.
+     *
+     * MEASURED FROM THE LATEST MOMENT THE WINDOW IS STILL SUPPOSED TO BE
+     * WAITING, not from now: an `at-time` deploy can legitimately be scheduled
+     * hours after draining begins, and expiring from `drainStartsAt` alone
+     * would cancel it before it ever fired.
+     */
+    expiresAt:
+      Math.max(input.drainStartsAt, input.deployAt ?? 0) + WINDOW_EXPIRY_MS,
+
     drainStartedAt: null,
     deployStartedAt: null,
     completedAt: null,
@@ -1270,7 +1312,22 @@ export async function markDeployConfirmed(
   })
 }
 
-export async function markComplete(error?: string | null): Promise<void> {
+export async function markComplete(
+  error?: string | null,
+  /**
+   * What to stamp as `completedAt`, when the caller knows better than the
+   * clock. Defaults to now, which is what every ordinary deploy wants.
+   *
+   * THE ONE CALLER THAT PASSES IT IS THE DRIVER'S ABANDONED-DEPLOY RECOVERY,
+   * and it passes the deploy's own `deployStartedAt`. `completedAt` is the
+   * clock `RESTART_GRACE_MS` runs against, so settling an abandoned row with
+   * `Date.now()` would restart that grace from the moment we noticed and buy
+   * the silence another five minutes — over a server that has already been
+   * unreachable for longer than the grace allows. Backdated, `deployPhase`
+   * resolves the row immediately on the evidence it has.
+   */
+  at?: number,
+): Promise<void> {
   /**
    * CLEARS THE UPDATE SIGNAL ON SUCCESS, and that is a bug fix rather than
    * tidying.
@@ -1288,6 +1345,7 @@ export async function markComplete(error?: string | null): Promise<void> {
    * opposite mistake.
    */
   const clearSignal = !error
+  const completedAt = typeof at === 'number' ? at : Date.now()
 
   await ddb.update({
     TableName: tables.maintenance,
@@ -1299,14 +1357,14 @@ export async function markComplete(error?: string | null): Promise<void> {
     ExpressionAttributeValues: clearSignal
       ? {
           ':complete': 'complete',
-          ':t': Date.now(),
+          ':t': completedAt,
           ':e': null,
           ':z': 0,
           ':null': null,
         }
       : {
           ':complete': 'complete',
-          ':t': Date.now(),
+          ':t': completedAt,
           ':e': error,
         },
   })

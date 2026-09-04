@@ -98,9 +98,49 @@ const cases = [
   ['complete but never actually deployed (the update-signal stub row)', { state: 'complete', completedAt: null, lastPushAt: NOW - SEC }, 'idle'],
 
   // ---- The deploy verb is running. ----
-  ['deploying', { state: 'deploying', completedAt: null, lastPushAt: NOW - SEC }, 'deploying'],
-  ['deploying, feed still alive for the moment', { state: 'deploying', completedAt: null, lastPushAt: NOW, bootEpoch: OLD }, 'deploying'],
-  ['deploying outranks a recorded confirmation from the last window', { state: 'deploying', completedAt: NOW - 60 * SEC, deployConfirmedAt: NOW - 50 * SEC, lastPushAt: NOW }, 'deploying'],
+  ['deploying', { state: 'deploying', deployStartedAt: NOW - 10 * SEC, completedAt: null, lastPushAt: NOW - SEC }, 'deploying'],
+  ['deploying, feed still alive for the moment', { state: 'deploying', deployStartedAt: NOW - 10 * SEC, completedAt: null, lastPushAt: NOW, bootEpoch: OLD }, 'deploying'],
+  ['deploying outranks a recorded confirmation from the last window', { state: 'deploying', deployStartedAt: NOW - 10 * SEC, completedAt: NOW - 60 * SEC, deployConfirmedAt: NOW - 50 * SEC, lastPushAt: NOW }, 'deploying'],
+  ['deploying, just inside the grace', { state: 'deploying', deployStartedAt: NOW - (RESTART_GRACE_MS - SEC), completedAt: null, lastPushAt: null }, 'deploying'],
+
+  // =====================================================================
+  // THE HANG — `deploying` WAS THE ONE PHASE WITH NO CLOCK ON IT.
+  //
+  // The driver writes `markDeploying`, runs the deploy, and only then writes
+  // `markComplete`, with an audit write and an SSH round trip in between.
+  // Anything that stopped it reaching that last write — a throttled audit
+  // table, an OOM, `systemctl restart ringmaster` landing mid-deploy, or the
+  // completion write itself being refused — left the row in `deploying`, and
+  // nothing else could ever move it: the tick returned early on every state
+  // that is not `draining`, and `expiresAt` was written on host-patch rows
+  // alone.
+  //
+  // WHAT THAT BOUGHT IS THE POINT. `silenceIsExplained` says yes to
+  // `deploying`, so `/api/health` skipped the feed axis and answered 200 over
+  // a feed that had been dead for hours; the collector reads that phase off
+  // the payload and withheld its own feed-dead datum to match; and
+  // `isDraining` returns true for `deploying`, so the game refused every
+  // player for the whole of it. Every case here carries a start time, because
+  // `markDeploying` has always written one.
+  // =====================================================================
+  ['THE HANG: one second past the grace is a stated failure, not a spinner', { state: 'deploying', deployStartedAt: NOW - (RESTART_GRACE_MS + SEC), completedAt: null, lastPushAt: null }, 'unconfirmed'],
+  ['a deploy stuck since the day before yesterday', { state: 'deploying', deployStartedAt: NOW - 2 * 24 * 3600 * SEC, completedAt: null, lastPushAt: null }, 'unconfirmed'],
+  [
+    'stuck deploying while the game pushes happily — the row is wrong, not the server',
+    { state: 'deploying', deployStartedAt: NOW - (RESTART_GRACE_MS + SEC), completedAt: null, bootEpoch: NEW, lastPushAt: NOW },
+    'unconfirmed',
+  ],
+
+  /**
+   * AND NOT KNOWING WHEN IT STARTED STILL SHOWS LESS, which is this file's
+   * standing polarity. A `/api/state` payload older than the field carries no
+   * start time — a browser tab left open across a console deploy — and the
+   * console must not announce a failure on the strength of never having been
+   * told. Both surfaces where the bound is load-bearing, `/api/health` and
+   * `AppShell`, read the DynamoDB row itself and always have it.
+   */
+  ['a deploying row with no start time is not known to be stuck', { state: 'deploying', deployStartedAt: null, completedAt: null, lastPushAt: NOW - SEC }, 'deploying'],
+  ['start time absent entirely, as an older payload sends it', { state: 'deploying', completedAt: null, lastPushAt: NOW - SEC }, 'deploying'],
 
   // =====================================================================
   // PROPERTY 1 — A PRE-RESTART HEARTBEAT MUST NOT SATISFY COMPLETION.
@@ -294,6 +334,152 @@ for (const state of [null, undefined]) {
       failed++
       console.error(`  FAIL  claimed ${phase} with no window (state=${state})`)
     }
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 4b. NO PHASE THAT EXCUSES SILENCE IS A FIXED POINT.
+ *
+ * THE PROPERTY THAT WOULD HAVE CAUGHT THE HANG, AND IT IS A DIFFERENT SHAPE
+ * FROM PROPERTY 3. Property 3 sweeps the inputs at ONE instant past the grace
+ * and only over `complete` rows — every one of its loops varies age through
+ * `completedAt`, which is the clock the `deploying` branch never read. So it
+ * proved the bound on the half that had one and said nothing about the half
+ * that did not.
+ *
+ * THIS SWEEPS TIME INSTEAD. For every state a row can be stuck in, an
+ * ADVANCING `now` over a row that is not changing must eventually stop
+ * excusing the silence — because `silenceIsExplained` is what `/api/health`
+ * consults, what the collector reads off the payload, and what `chipCluster`
+ * rung 1 hides the feed chip on. A phase that never leaves the excusing set is
+ * a permanent, estate-wide mute with no alarm anywhere behind it.
+ *
+ * IT IS WRITTEN OVER `MaintenanceState` RATHER THAN OVER `DeployPhase` on
+ * purpose: the fixed point that shipped was a STATE nothing advanced, and a
+ * sweep over phases would have re-derived the same answer from the same
+ * function. A sixth state added tomorrow is covered by this loop the day it
+ * exists.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+{
+  const STATES = ['scheduled', 'draining', 'deploying', 'complete', 'cancelled']
+  /** A row frozen at NOW, read again a long time later. Nothing about it moves. */
+  const LATER = NOW + 30 * 24 * 3600 * SEC
+
+  for (const state of STATES) {
+    for (const deployError of [null, 'deploy refused']) {
+      for (const bootEpoch of [OLD, null]) {
+        const input = {
+          state,
+          deployStartedAt: NOW,
+          completedAt: state === 'complete' ? NOW : null,
+          deployError,
+          deployBootEpoch: OLD,
+          bootEpoch,
+          lastPushAt: bootEpoch === null ? null : NOW,
+          now: LATER,
+        }
+        const phase = deployPhase(input)
+        if (updateInProgress(input)) {
+          failed++
+          console.error(
+            `  FAIL  state \`${state}\` still excuses the silence a month later ` +
+              `(phase ${phase}, error=${deployError}, epoch=${bootEpoch}) — a loading ` +
+              'state with no exit is a hang, and this one mutes every alarm in the estate',
+          )
+        }
+      }
+    }
+  }
+
+  /**
+   * AND THE EXIT IS AT THE GRACE, NOT MERELY SOMEWHERE. A sweep across the
+   * boundary, one row, one advancing clock: excused up to it, never after it.
+   */
+  const started = NOW - RESTART_GRACE_MS
+  for (const offset of [-2 * SEC, -SEC, 0, SEC, 2 * SEC, 60 * SEC]) {
+    const now = NOW + offset
+    const excused = updateInProgress({
+      state: 'deploying',
+      deployStartedAt: started,
+      completedAt: null,
+      lastPushAt: null,
+      now,
+    })
+    const shouldExcuse = now - started < RESTART_GRACE_MS
+    if (excused !== shouldExcuse) {
+      failed++
+      console.error(
+        `  FAIL  a deploying row ${now - started}ms old reads excused=${excused}, ` +
+          `expected ${shouldExcuse} (grace ${RESTART_GRACE_MS}ms)`,
+      )
+    }
+  }
+}
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 4c. THE CLOCK IS WRITTEN, AND IT REACHES THE READERS THAT NEED IT.
+ *
+ * THE BOUND ABOVE IS ONLY AS REAL AS THE FIELD IT READS. `deployStartedAt` is
+ * optional in `DeployPhaseInput` — it has to be, so an older `/api/state`
+ * payload reads as "not known" rather than as a failure — which means a call
+ * site that simply stopped passing it would silently restore the unbounded
+ * `deploying` this whole section exists to close, and every case table above
+ * would still pass. So the writer and the three readers that hold the row are
+ * read as text, the way this file already reads the deploy button.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+{
+  if (!/'deployStartedAt = :t'/.test(read('src/lib/maintenance.ts'))) {
+    failed++
+    console.error(
+      '  FAIL  markDeploying no longer writes deployStartedAt — the deploying phase ' +
+        'has no clock on the row, so nothing can ever bound it',
+    )
+  }
+
+  /**
+   * `/api/health` FIRST, BECAUSE IT IS THE ONE THAT PAGES NOBODY. Its `deploy`
+   * field is what the external collector suppresses its feed-dead datum on, so
+   * a route that stops passing the clock mutes two repositories at once.
+   */
+  for (const [path, what] of [
+    ['src/app/api/health/route.ts', 'the external health payload'],
+    ['src/components/AppShell.tsx', "the header's server-rendered phase"],
+    ['src/lib/livePoll.ts', 'the browser poll'],
+    ['src/app/api/state/route.ts', 'the payload the browser poll reads'],
+  ]) {
+    if (!/deployStartedAt/.test(read(path))) {
+      failed++
+      console.error(
+        `  FAIL  ${path} does not carry deployStartedAt, so ${what} cannot bound ` +
+          '`deploying` and will excuse a dead feed for ever',
+      )
+    }
+  }
+
+  /**
+   * AND THE ROW ITSELF IS SETTLED, NOT ONLY REPORTED ON. The phase bound fixes
+   * what every surface SAYS; `isDraining` reads the stored STATE, so only a
+   * write reopens the door the stuck row is holding shut.
+   */
+  const driver = read('src/lib/maintenanceDriver.ts')
+  if (!/w\.state === 'deploying'[\s\S]{0,200}RESTART_GRACE_MS/.test(driver)) {
+    failed++
+    console.error(
+      '  FAIL  maintenanceDriver has no recovery arm for a deploying row past its grace — ' +
+        'isDraining returns true for `deploying`, so the game refuses every player ' +
+        'until somebody edits DynamoDB by hand',
+    )
+  }
+  if (/markComplete\([^)]*\)\.catch\(\(\) => \{\}\)/.test(driver)) {
+    failed++
+    console.error(
+      '  FAIL  the driver swallows markComplete\'s failure again. It is the only write ' +
+        'that ends a deploy; refused silently, the row stays `deploying` for ever',
+    )
   }
 }
 
@@ -612,7 +798,7 @@ if (failed > 0) {
 }
 
 console.log(
-  `check:deployphase — ${cases.length} completion cases and 4 properties, ` +
+  `check:deployphase — ${cases.length} completion cases and 6 properties, ` +
     `${blockCases.length} eligibility cases and 6 properties, and 4 call sites hold ` +
     `(grace ${RESTART_GRACE_MS / 60_000}m)`,
 )

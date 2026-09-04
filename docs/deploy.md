@@ -108,8 +108,16 @@ use and names **every** missing variable at once rather than one per restart.
 > **This paragraph said "three" until `COMMAND_SECRET` shipped on 2026-08-30**,
 > and it is corrected rather than quietly renumbered because the fourth is the
 > one an operator is most likely to think is required. It is not: unset, the
-> Discord bot's door is simply shut and nothing else about the console changes.
-> §6 is the whole of it.
+> Discord bot's door is simply shut, and no page, feed or command changes
+> behaviour. §6 is the whole of it.
+>
+> **"And nothing else about the console changes" was true when that was written
+> and stopped being true when `GET /api/health` shipped**, because that route is
+> behind the same variable. Unset, it answers every caller
+> `503 {"ok":false,"error":"not-configured"}` — which is the correct answer and
+> is also indistinguishable, to an external check watching only the status code,
+> from the console reporting itself unwell. If a check is wired up, this variable
+> is required in practice whatever `src/lib/env.ts` says.
 
 > **`DISCORD_BOT_TOKEN` now does two jobs, and this document used to name only
 > the first.** It used to say the token's absence meant "every player shows a
@@ -461,22 +469,33 @@ curl -s https://www.cloudflare.com/ips-v4
 
 ---
 
-## 6. `COMMAND_SECRET` — the Discord bot's door — CONSOLE box
+## 6. `COMMAND_SECRET` — the Discord bot's door, and the one read behind it — CONSOLE box
 
 **The value is already set on this box**, in `/opt/ringmaster/.env.local`, and
 the same string is in `/opt/blitz-bot/.env`. This section is for the day the bot
-starts refusing commands, for rotating the value, and for rebuilding either
-side — not a step to come back and do later.
+starts refusing commands, for rotating the value, for rebuilding either side,
+and for wiring up an external health check — not a step to come back and do
+later.
 
 `src/lib/env.ts` keeps it optional and the console still starts without it.
 Unset, the door is simply shut: the kick the bot relays out of Discord, and both
-halves of `/drain`, are refused with a line in the journal naming this variable,
-and nothing else about the console changes.
+halves of `/drain`, are refused with a line in the journal naming this variable.
+
+> **UNSET NOW COSTS ONE MORE THING THAN IT USED TO, AND THIS PARAGRAPH USED TO
+> END "and nothing else about the console changes".** It does not. `GET
+> /api/health` is behind the same variable, so an unset secret also closes the
+> route an external check reads, which answers `503` with
+> `{"ok":false,"error":"not-configured"}` to everybody. **Its refusal is NOT a
+> line per call**, unlike the two above it: a route designed to be polled every
+> thirty seconds forever writes one `[health]` line per process and then goes
+> quiet, so an operator reading the journal for the reason will find one line
+> near the last restart and nothing since. See the subsection below.
 
 ### What it is
 
-The credential `blitz-bot` presents when it asks this console to do something a
-bot cannot do itself. There are two such things. **The live kick** is tmux over
+**The bot's half first, because it is what the credential was made for.** It is
+what `blitz-bot` presents when it asks this console to do something a bot cannot
+do itself, and there are two such things. **The live kick** is tmux over
 SSH and only the CONSOLE box holds that channel. **A maintenance window** is
 `POST /api/maintenance` to start one and `POST /api/maintenance/cancel` to call
 it off, because `nothingToDeploy`, the branch-eligibility gate and the
@@ -498,6 +517,13 @@ on a kick and on a ban, the refusal to ban a license that is already banned,
 any of them through, because nothing it does runs after them — the gate hands
 back the acting human and stops. It is a second door into the same room, and
 never a way around what is in the room.
+
+**And the half that is not the bot's at all: one read, `GET /api/health`.** The
+bot never calls it and no admin is behind it — it is how something outside a
+browser asks this console how it is doing at an hour when nobody is signed in.
+It is on this credential because there is only one, which is a cost rather than
+a design: it has its own subsection below, and the sentence to read there is the
+one about who ends up holding this string.
 
 ### How the bot presents it
 
@@ -532,13 +558,51 @@ Two headers, on a POST to one of four paths:
 > `src/lib/service.check.ts` says so beside the entry, and fails the build if the
 > path is removed from `SERVICE_ROUTES` without that decision being made.
 
-**Nothing else.** `/api/maintenance/force` — the button that skips the drain and
-restarts the box now — and `/api/bans/lift` are deliberately not on that list,
-and the console refuses them whatever the secret says. Cancel and force sit
+**Nothing else that WRITES.** `/api/maintenance/force` — the button that skips
+the drain and restarts the box now — and `/api/bans/lift` are deliberately not on
+that list, and the console refuses them whatever the secret says. There is one
+read, `GET /api/health`, and it is the subsection below rather than a row in the
+table above because nothing about it matches that table: it is a GET, the bot
+never calls it, and it takes no `x-ringmaster-actor`. Cancel and force sit
 under one path prefix and are opposite actions, which is why the console matches
 these paths exactly and never as a prefix. `src/lib/service.check.ts` fails the
 build if the routes and the list ever stop agreeing, and names which command
 breaks when one of them stops being covered.
+
+### `GET /api/health` — the one read this credential opens
+
+**It is not the bot's, and no `x-ringmaster-actor` goes with it.** It is for an
+external uptime check: something outside a browser asking this console how it is
+doing, at an hour when nobody is signed in. One header, and that is the whole
+request:
+
+| Path | Method | Headers | What uses it |
+|---|---|---|---|
+| `/api/health` | `GET` | `x-ringmaster-service` only | an external uptime check |
+
+It is guarded for the reason everything on this box is: Caddy sends the whole
+public hostname to `127.0.0.1:3000` (§2), so an ungated route here is a route
+the internet can read — and what this one hands out is a running commentary on
+when the operator's infrastructure is unwell, at whatever cadence the reader
+likes.
+
+**It does not go through the gate the four write paths use, and that is
+deliberate.** That gate demands the Discord id of the human being attributed,
+and there is no human behind a health check. `src/app/api/health/route.ts`
+carries the argument at length; `SERVICE_ROUTES` stays a write allowlist.
+
+> **THE CHECKER BECOMES A THIRD HOLDER OF THIS CREDENTIAL, WITH THE FULL BLAST
+> RADIUS ABOVE.** Pasting `COMMAND_SECRET` into a hosted uptime monitor's
+> custom-header box hands that vendor the string that can ban players and
+> restart the game server. Nothing about the health route needs that power and
+> nothing stops it: it is one credential. Prefer a checker you run yourself —
+> and if this endpoint ever gets a second consumer, that is the moment to split
+> a read-only secret out rather than widen this one further.
+>
+> **It is also a holder the rotation steps below do not know about.** Those name
+> two files. A rotation that follows them exactly leaves the checker on the old
+> value, which starts answering `401` immediately — see the note in the next
+> section.
 
 > **`x-ringmaster-actor` is why the audit log is still worth reading.** The row
 > names the admin who ran the command — their license, their name, their Discord
@@ -563,6 +627,13 @@ The same string is in two files, both on the CONSOLE box:
 |---|---|
 | `/opt/ringmaster/.env.local` | this console |
 | `/opt/blitz-bot/.env` | the bot |
+
+**And in however many places the health check is configured, which is not a
+file on this box.** If `GET /api/health` is wired to an external monitor, that
+monitor holds a third copy in its own settings, and a rotation that updates only
+the two files above leaves it presenting the old value — whereupon it gets
+`401`, reports the console down, and the console is fine. Update it in the same
+sitting, or the first thing the new secret does is page you.
 
 A new one is generated with:
 
@@ -608,8 +679,16 @@ answer.
 ### If it leaks
 
 Whoever holds this string can ban players and restart the game server. That is
-the blast radius, and it is why every refused call is logged at error level
-rather than passed over quietly.
+the blast radius, and it is why every refused call **on the four write paths** is
+logged at error level rather than passed over quietly.
+
+**`GET /api/health` is the exception and it is on purpose, so do not go looking
+for its refusals in the journal.** A wrong secret there logs nothing at all: it
+cannot ban anybody or restart anything, and a misconfigured checker hits it every
+thirty seconds forever, so a line per refusal would bury the telemetry failure
+you would actually be reading that journal to find. The one line it does write is
+`[health]`, not `[service]`, and it says `COMMAND_SECRET` is unset — once per
+process, not once per request.
 
 **Rotation is generating a new one and restarting both services** — the two
 steps above, in that order. There is no revocation list and no second credential
@@ -759,6 +838,123 @@ observes, because the only question being asked is "is this listening".
 > which proves the app is listening on 3000 and routing. A connection refused is
 > the real failure. If you get a `405` here, you are on a build predating the
 > health handler, and that is fine too.
+
+```bash
+printf 'header = "x-ringmaster-service: %s"\n' "$(sudo grep -m1 '^COMMAND_SECRET=' /opt/ringmaster/.env.local | cut -d= -f2- | tr -d '" \r')" | curl -s -w '\n%{http_code}\n' --config - http://127.0.0.1:3000/api/health
+```
+
+**The body, then `200`** — on a healthy console:
+
+```json
+{"ok":true,"ingestAgeMs":1840,"dispatch":"ok","ddb":"connected","deploy":"idle","feedDeadMs":30000}
+```
+
+The secret is substituted out of the file rather than typed, so it stays off
+your screen and out of your shell history — the reason §6 gives for the
+comparison command there.
+
+**It goes in through `--config -` rather than `-H`, and that is not decoration.**
+A command line is public on the box: `-H "x-ringmaster-service: $(…)"` resolves
+the substitution *before* `curl` is executed, so the plaintext credential that
+can ban players and restart the game server sits in `curl`'s argument vector for
+the life of the request, readable in `ps aux` and `/proc/<pid>/cmdline` by any
+other local account. §6's comparison command has no such gap — it pipes the
+value straight into `sha256sum` and never puts it in an argument — so borrowing
+its justification for a `-H` was borrowing the wrong half. `printf` is a shell
+builtin, so its arguments are never a process either; `curl` reads the header
+off standard input and its own command line carries nothing but the URL.
+
+**This is the check to point a monitor at, and it is a different question from
+the `/api/ingest` one above** — that proves something is listening; this reports
+whether what is listening is well. **Read §6 before wiring it to anything
+hosted:** the header carries the credential that can ban players and restart the
+game server, so whoever runs the check holds that.
+
+| You get | It means |
+|---|---|
+| `200`, `"ok":true` | the console is well |
+| `401`, body `{"ok":false}` | the header is missing, or the secret does not match `.env.local`. **Nothing is logged** — see §6 |
+| `503`, body `{"ok":false,"error":"not-configured"}` | `COMMAND_SECRET` is unset on this box (§6) |
+| `503`, body with the readings in it | **the console answered and is reporting itself unwell** — read `dispatch` |
+
+**THE TWO `503`s ARE TOLD APART BY THE `error` FIELD AND BY NOTHING ELSE**, so
+anything parsing this — a checker, a script, a person — reads `error` before it
+reads the status. Present and equal to `not-configured`, the console declined to
+answer and the body holds no readings. Absent, the body is the full payload from
+a console that looked and found something wrong. Treating every `503` alike
+discards the second one, which is the only thing that says which machine to open.
+
+**The last row is the one to understand, because a `503` there is a real answer
+rather than a failure to answer.** `ok` is derived from the four readings, and
+the status code carries that verdict as well as the body does. It has to: a
+`HEAD` probe — which Next answers out of this same handler with no body at all
+— has nothing but the status to go on, and asserting only `2xx` is the
+commonest way a monitor is configured.
+
+`dispatch` is the field that says which machine to open: `key-unreadable` is this
+box's filesystem, `rejected` is the game box's `authorized_keys`, `unreachable`
+is the network between them, `verb-failed` is `dispatch.sh` on the game box.
+**Three of the seven words are NOT faults and do not make `ok` false** —
+`ok` itself, which is what a healthy channel reports; `unknown`, which is the
+first check after a restart before the poll timer has landed a reading and
+clears itself within about fifteen seconds; and `unconfigured`, which means this
+console was never pointed at a game box over SSH at all. The other four are
+faults. **Count them from this sentence and nowhere else** — an earlier version
+of it said two, which is a severity map with `ok` wired up as a failure and a
+monitor reporting a perfectly healthy console as a dispatch outage.
+
+### `deploy`, and why a planned restart no longer pages you
+
+`deploy` is the fifth field, and it is the one that explains a large
+`ingestAgeMs` sitting under `"ok":true`. `royale-deploy` restarts FXServer, so
+the game stops pushing for tens of seconds — and this console is usually the
+thing that ordered it, from a maintenance window somebody scheduled.
+
+| `deploy` | The server is | Does it excuse a silent feed |
+|---|---|---|
+| `idle` | up, or nothing is known about any deploy | **no** |
+| `deploying` | going down; the deploy verb is running | yes |
+| `confirming` | expected back; waiting for its first heartbeat | yes |
+| `failed` | untouched — the host refused the deploy, the old code is still running | **no** |
+| `unconfirmed` | **gone** — the restart fired and nothing came back inside five minutes | **no** |
+
+**Before this field existed the endpoint answered `503` through every planned
+deploy**, for up to five minutes, while an admin looking at the console's own
+header saw one calm `Updating` chip. A monitor on the documented thirty-second
+cadence saw several consecutive failures on a routine overnight update, which is
+how an operator learns to silence the check that matters. `unconfirmed` is
+deliberately still a failure: a deploy past its grace is a server that did not
+come back, and that is the one to be woken for.
+
+**A console that has not been told about a deploy reports `idle` and pages
+normally.** That covers a restart somebody fired by typing
+`systemctl start royale-deploy` on the game box: this console never heard about
+it, so it reports the feed as dead — correctly, because "we do not know why the
+game went quiet" is a reason to look, not a reason to stay green.
+
+### `feedDeadMs`, and why you should not type `30` into your checker
+
+`feedDeadMs` is the sixth field and it is the only one that is not a reading. It
+is the age, in milliseconds, at which **this console** calls the feed dead — the
+same number it just judged `ingestAgeMs` with, sent along so that whatever is
+polling this route never has to hold a copy of it.
+
+**Compare against the field, never against a number of your own.** A checker
+with `30` written into it is a second opinion about the word "dead" living in a
+place this repository cannot see: change the console's threshold and the two
+disagree, silently, and the payload beside the alert says the console is fine
+while the alert says it is not. Nothing would fail; both halves would look
+finished.
+
+| Both fields | The reading | What it means |
+|---|---|---|
+| `ingestAgeMs` under `feedDeadMs` | fresh, or merely late | not a fault. A few seconds behind is a busy tick |
+| `ingestAgeMs` over `feedDeadMs` | dead | the game stopped pushing — unless `deploy` explains it |
+| `ingestAgeMs` is `null` | never started | there has been no feed at all since this process booted. **Not a zero** |
+
+**It is milliseconds, like `ingestAgeMs`, because the two are compared to each
+other.** A consumer that converts one and not the other is out by a factor of a
+thousand in whichever direction is quieter.
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' https://ringmaster.example.com/login

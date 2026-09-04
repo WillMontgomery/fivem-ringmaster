@@ -44,6 +44,17 @@ export interface MaintenancePhase {
   deployError?: string | null
   deployBootEpoch?: string | null
   deployConfirmedAt?: number | null
+
+  /**
+   * When the deploy step started — the clock on the `deploying` phase.
+   *
+   * IT RIDES THIS PAYLOAD FOR THE SAME REASON THE THREE ABOVE DO: `deployPhase`
+   * compares it against `now`, and `now` is on this response. Absent on a
+   * payload older than the field, which reads as `deploying` for as long as the
+   * row says so — see `DeployPhaseInput.deployStartedAt` for why that direction
+   * is the safe one in a browser tab and not in `/api/health`.
+   */
+  deployStartedAt?: number | null
 }
 
 export interface LivePayload {
@@ -93,6 +104,7 @@ export function phaseOf(payload: LivePayload | null): DeployPhase {
   const m = payload.maintenance
   return deployPhase({
     state: m?.state,
+    deployStartedAt: m?.deployStartedAt,
     completedAt: m?.completedAt,
     deployError: m?.deployError,
     deployBootEpoch: m?.deployBootEpoch,

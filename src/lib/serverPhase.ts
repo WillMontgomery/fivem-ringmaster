@@ -79,6 +79,30 @@ export type DeployPhase =
 export interface DeployPhaseInput {
   /** The stored window's state, or null when no window has been read. */
   state: MaintenanceState | null | undefined
+  /**
+   * When the deploy step STARTED, epoch ms — written by `markDeploying` in the
+   * same conditional write that moves the row into `deploying`.
+   *
+   * IT IS THE CLOCK ON THE `deploying` PHASE, AND UNTIL IT WAS PASSED IN THAT
+   * PHASE HAD NONE. `confirming` has been bounded by `RESTART_GRACE_MS` since
+   * it was written; `deploying` was returned unconditionally — and the bound
+   * `confirming` runs against, `completedAt`, is written only by
+   * `markComplete`, which is the one call in the driver's tick that a failure
+   * anywhere above it stops the run from reaching. A row that never left
+   * `deploying` was therefore excused for ever by `silenceIsExplained`,
+   * `/api/health` answered 200 over a feed that had been dead for hours, and
+   * `isDraining` turned away every player for the whole of it.
+   *
+   * ABSENT MEANS NOT KNOWN AND STILL READS AS `deploying`, which is this
+   * file's standing polarity rather than an oversight. Every row
+   * `markDeploying` writes carries it; what does not is a `/api/state` payload
+   * from before this field rode it — a browser tab left open across a console
+   * deploy — and flipping that tab to `unconfirmed` would be the console
+   * announcing a failure on the strength of never having been told. The two
+   * surfaces where the bound is load-bearing, `/api/health` and `AppShell`,
+   * read the DynamoDB row itself and always have it.
+   */
+  deployStartedAt?: number | null
   /** When the deploy step finished, epoch ms. Null while it has not. */
   completedAt: number | null | undefined
   /** What the deploy verb returned, when it returned a refusal. */
@@ -169,8 +193,43 @@ export function heartbeatIsFresh(input: {
 }
 
 export function deployPhase(input: DeployPhaseInput): DeployPhase {
-  /** THE DEPLOY IS RUNNING. A stated fact, and the only unconditional one. */
-  if (input.state === 'deploying') return 'deploying'
+  /**
+   * THE DEPLOY IS RUNNING — FOR AS LONG AS A RUNNING DEPLOY PLAUSIBLY TAKES.
+   *
+   * THIS RETURN USED TO BE UNCONDITIONAL, AND IT WAS THE ONE PHASE IN THE FILE
+   * WITH NO CLOCK ON IT. `RESTART_GRACE_MS` above makes the argument in its own
+   * words — "a loading state with no exit is not a loading state, it is a hang"
+   * — and it was applied to the wrong half: to `confirming`, which the driver
+   * reaches only after `markComplete` has written `completedAt`, and not to
+   * `deploying`, which is where the row sits WHILE the driver is doing the work
+   * that can fail. A tick that threw between `markDeploying` and `markComplete`
+   * — an audit-table throttle, an OOM, the console restarted mid-deploy, or
+   * `markComplete`'s own write refused — left the row in `deploying` with
+   * nothing anywhere able to move it: the tick's own recovery arm returns early
+   * on any state that is not `draining`, and `expiresAt` is written on
+   * host-patch rows only.
+   *
+   * WHAT THAT COST IS THE WHOLE POINT OF THE PHASE. `silenceIsExplained` says
+   * yes to `deploying`, so `/api/health` skipped the feed axis and answered
+   * `200 {"ok":true}` over an `ingestAgeMs` of hours; the collector reads that
+   * phase off the payload and withholds `IngestFeedDead` for it, so the estate
+   * went quiet on both sides of the same contract. And `isDraining` returns
+   * true for `deploying`, so the game refused every player for the whole time.
+   * One number ends all of it.
+   *
+   * IT IS THE SAME NUMBER AND THE SAME SENTENCE AS THE `confirming` BOUND
+   * BELOW, deliberately: the moment the excuse expires and the moment the
+   * failure is declared are the same moment. `unconfirmed` is already the
+   * terminal phase for "the restart fired and nothing came back", is already
+   * not in `silenceIsExplained`, and is already published by everything
+   * downstream — so the fix adds a comparison rather than a state.
+   */
+  if (input.state === 'deploying') {
+    return typeof input.deployStartedAt === 'number' &&
+      input.now - input.deployStartedAt >= RESTART_GRACE_MS
+      ? 'unconfirmed'
+      : 'deploying'
+  }
 
   /**
    * ANYTHING ELSE THAT IS NOT A FINISHED DEPLOY SAYS NOTHING. `scheduled` and
@@ -208,6 +267,46 @@ export function deployPhase(input: DeployPhaseInput): DeployPhase {
 }
 
 /**
+ * DOES A DEPLOY ACCOUNT FOR THE SERVER BEING QUIET RIGHT NOW?
+ *
+ * ═══ THE SENTENCE THREE SURFACES HAVE TO SAY THE SAME WAY ═══
+ *
+ * `royale-deploy` restarts FXServer, so the game stops pushing — for tens of
+ * seconds, and `RESTART_GRACE_MS` above allows five minutes of it. That silence
+ * is not a fault; it is the intended consequence of an act this console ordered.
+ * THREE THINGS NOW HAVE TO KNOW THAT, and they must not each decide it:
+ *
+ *   `chipCluster` rung 1   the header shows one chip, `Updating`, and hides the
+ *                          feed chip — "three chips raising three alarms about
+ *                          one intended act" is the failure it was built for
+ *   `updateInProgress`     the same two phases, read off a raw window
+ *   `lib/healthVerdict`    `GET /api/health` must not answer 503 through a
+ *                          deploy this console scheduled and is executing
+ *
+ * THE THIRD READER IS WHY THIS IS A FUNCTION RATHER THAN AN INLINE COMPARISON.
+ * The endpoint and the page were free to disagree about the same fact, and they
+ * did: the header showed a calm `Updating` chip while `/api/health` answered
+ * `503 {"ok":false,"ingestAgeMs":47000}` to whatever monitor an operator had
+ * wired to it, for the whole of every planned deploy. A checker that pages on
+ * every intended restart is a checker somebody silences — which is how they
+ * come to miss the one that matters, the same argument `lib/feedHealth` makes
+ * about not paging on `stale`.
+ *
+ * NOTE WHAT IS NOT IN IT: `unconfirmed`. A deploy past its grace is not still
+ * updating, and treating it as such is how a console ends up showing a calm
+ * amber spinner — or answering 200 — over a server that is genuinely dead.
+ * `failed` is out for the opposite reason: the deploy verb refused, so the
+ * restart never fired and nothing about the feed was ever expected to change.
+ *
+ * IT TAKES A PHASE AND NOT A WINDOW, because two of its three readers already
+ * hold a resolved phase and only one holds the inputs. `updateInProgress` below
+ * is that one, and it is now this function with `deployPhase` in front of it.
+ */
+export function silenceIsExplained(phase: DeployPhase): boolean {
+  return phase === 'deploying' || phase === 'confirming'
+}
+
+/**
  * IS THE SERVER MID-UPDATE — and therefore, is its silence explained?
  *
  * The header's "Updating" chip, in one expression. Kept as its own function
@@ -215,12 +314,12 @@ export function deployPhase(input: DeployPhaseInput): DeployPhase {
  * asserts against it directly and because two of the five phases mean "in
  * flight" while three do not — a distinction worth naming once.
  *
- * NOTE WHAT IS NOT IN IT: `unconfirmed`. A deploy past its grace is not still
- * updating, and treating it as such is how a console ends up showing a calm
- * amber spinner over a server that is genuinely dead.
+ * IT IS `silenceIsExplained` WITH `deployPhase` IN FRONT OF IT, and it keeps its
+ * own name because its callers hold a window rather than a phase.
  */
 export function updateInProgress(input: {
   state: MaintenanceState | null | undefined
+  deployStartedAt?: number | null
   completedAt: number | null | undefined
   deployError?: string | null
   deployBootEpoch?: string | null
@@ -229,8 +328,7 @@ export function updateInProgress(input: {
   lastPushAt: number | null | undefined
   now: number
 }): boolean {
-  const phase = deployPhase(input)
-  return phase === 'deploying' || phase === 'confirming'
+  return silenceIsExplained(deployPhase(input))
 }
 
 /**
@@ -345,8 +443,16 @@ export function chipCluster(
    */
   const { phase, badge } = polled ?? seed
 
-  /** 1. The deploy is running, or we are waiting for the server to come back. */
-  if (phase === 'deploying' || phase === 'confirming') {
+  /**
+   * 1. The deploy is running, or we are waiting for the server to come back.
+   *
+   * THROUGH `silenceIsExplained`, WHICH IS ALSO WHAT `/api/health` ASKS. This
+   * rung and the endpoint's verdict are the same judgement about the same
+   * silence, and spelling the two phases out in both places is how the header
+   * came to show `Updating` while the endpoint answered 503 about the feed this
+   * rung was deliberately not mentioning.
+   */
+  if (silenceIsExplained(phase)) {
     return { feed: false, update: false, phase: 'updating', window: null }
   }
 
