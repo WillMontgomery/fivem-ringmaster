@@ -344,6 +344,7 @@ export async function GET(req: Request): Promise<Response> {
   const mv = maintenanceView(now)
   const deploy = deployPhase({
     state: mv.window?.state,
+    deployStartedAt: mv.window?.deployStartedAt,
     completedAt: mv.window?.completedAt,
     deployError: mv.window?.deployError,
     deployBootEpoch: mv.window?.deployBootEpoch,

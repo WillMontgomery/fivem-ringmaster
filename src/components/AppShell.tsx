@@ -551,6 +551,7 @@ export async function AppShell({
    */
   const initialPhase = deployPhase({
     state: mv.window?.state,
+    deployStartedAt: mv.window?.deployStartedAt,
     completedAt: mv.window?.completedAt,
     deployError: mv.window?.deployError,
     deployBootEpoch: mv.window?.deployBootEpoch,

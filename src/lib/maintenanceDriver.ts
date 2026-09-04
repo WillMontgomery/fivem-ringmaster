@@ -1,6 +1,6 @@
 import * as audit from './audit'
 import * as maint from './maintenance'
-import { heartbeatIsFresh } from './serverPhase'
+import { RESTART_GRACE_MS, heartbeatIsFresh } from './serverPhase'
 import { isOnMain, isParkedOffMain, runVerb, sshConfigured, switchRef } from './ssh'
 import {
   ensurePolling,
@@ -410,14 +410,82 @@ export async function tick(): Promise<void> {
     if (!maint.isLive(w)) return
 
     /**
+     * ═══ A DEPLOY THAT NEVER REPORTED BACK IS SETTLED, NOT LEFT LIVE ═══
+     *
+     * THIS IS THE ARM THAT DID NOT EXIST, AND ITS ABSENCE WAS AN OUTAGE THE
+     * WHOLE ESTATE STAYED GREEN THROUGH. The tick below returns early on any
+     * state that is not `draining`, so once a row reached `deploying` NOTHING
+     * here could ever move it again. The only thing that ever did was
+     * `markComplete`, twenty lines from the bottom of this function, behind
+     * `runDeploy`, an audit write and a `.catch(() => {})` — so a throttled
+     * audit table, an OOM, a `systemctl restart ringmaster` landing mid-deploy,
+     * or that one DynamoDB write being refused left the row in `deploying` for
+     * ever. `isDraining` returns true for `deploying`, so the game refused
+     * EVERY player from that moment on; `silenceIsExplained` says yes to it, so
+     * `/api/health` answered 200 over a feed that had been dead for hours and
+     * the collector on the other side of that contract withheld its own
+     * feed-dead datum to match. Nothing anywhere had a clock on it.
+     *
+     * `serverPhase` NOW BOUNDS THE PHASE AND THIS BOUNDS THE ROW, and both are
+     * needed. The phase bound fixes what every surface SAYS; only a write fixes
+     * what the game DOES, because `isDraining` reads the stored state and not
+     * the phase.
+     *
+     * `completedAt` IS BACKDATED TO THE DEPLOY'S OWN START, WHICH IS THE POINT
+     * OF PASSING IT. Settling with `Date.now()` would restart
+     * `RESTART_GRACE_MS` from here and buy the silence another five minutes.
+     * Backdated, `deployPhase` resolves this row immediately and correctly by
+     * the evidence: `idle` if the game has since come back as a new process —
+     * the deploy landed and only the bookkeeping was lost — and `unconfirmed`
+     * if it has not, which is the phase that says the restart fired and nothing
+     * returned. That is the honest pair, and it is why this does NOT write a
+     * `deployError`: `failed` means the host refused and the old code is still
+     * running, and we have no evidence of that at all.
+     */
+    if (
+      w.state === 'deploying' &&
+      typeof w.deployStartedAt === 'number' &&
+      now - w.deployStartedAt >= RESTART_GRACE_MS
+    ) {
+      const startedAt = w.deployStartedAt
+      try {
+        await maint.markComplete(null, startedAt)
+      } catch (e) {
+        // Loud, and it will be retried on the next tick — this is the write
+        // whose silent failure created the state being recovered from.
+        console.error('[maintenance] could not settle an abandoned deploy', e)
+        return
+      }
+      await refresh()
+      await audit
+        .begin({
+          action: 'maintenance.deploy',
+          actor: { license: null, name: 'system', discordId: null },
+          reason:
+            'The deploy did not report a result within the restart grace, so the ' +
+            'window was settled automatically and the door reopened',
+          detail: { deployStartedAt: startedAt, automatic: true, abandoned: true },
+        })
+        .catch(() => {})
+      return
+    }
+
+    /**
      * A WINDOW THAT OUTLIVED ITS EXPIRY IS CANCELLED, NOT HONOURED.
      *
-     * Only host-patch windows carry `expiresAt`. What clears them normally is a
-     * systemd unit on a box that has just finished rebooting; if that unit
-     * fails, nothing else in the system has any reason to touch the row, and
-     * the game turns away every player indefinitely while every health check
-     * stays green. That failure is silent, which is what earns it a dead-man's
-     * switch rather than a log line.
+     * EVERY WINDOW CARRIES `expiresAt` NOW, and it used to be host-patch rows
+     * alone. What clears a host-patch window normally is a systemd unit on a
+     * box that has just finished rebooting; if that unit fails, nothing else in
+     * the system has any reason to touch the row, and the game turns away every
+     * player indefinitely while every health check stays green.
+     *
+     * A CONSOLE-SCHEDULED WINDOW HAS THE SAME SHAPE OF FAILURE AND HAD NO
+     * SWITCH. `when-empty` fires when the live player count reaches zero, and
+     * that count comes off the ingest feed — so a feed that dies while a window
+     * is draining freezes the last count above zero and the drain waits for a
+     * number that will never move again. The door stays shut, the row stays
+     * `draining`, and this is the estate's own worst documented silent outage.
+     * `maint.schedule` now sets the same field for the same reason.
      *
      * NOT DYNAMODB TTL, which was the obvious answer and the wrong one: TTL
      * deletion is best-effort within 48 hours, so it would reopen the door long
@@ -430,7 +498,9 @@ export async function tick(): Promise<void> {
         .begin({
           action: 'maintenance.cancel',
           actor: { license: null, name: 'system', discordId: null },
-          reason: 'Host-patch window expired without being cleared',
+          reason: w.hostPatch
+            ? 'Host-patch window expired without being cleared'
+            : 'Maintenance window expired without ever completing',
           detail: { expiresAt: w.expiresAt, automatic: true },
         })
         .catch(() => {})
@@ -604,8 +674,40 @@ export async function tick(): Promise<void> {
     })
 
     const res = await runDeploy(w)
-    await audit.resolve(ts, res.ok ? 'ok' : 'failed', res.error ?? null)
-    await maint.markComplete(res.error ?? null).catch(() => {})
+
+    /**
+     * ═══ THE ROW ADVANCES FIRST, AND THE AUDIT WRITE FOLLOWS IT ═══
+     *
+     * THE ORDER USED TO BE THE OTHER WAY ROUND AND IT WAS THE WHOLE OUTAGE.
+     * `audit.resolve` was an unguarded `await` sitting between `runDeploy` and
+     * `markComplete`, so ONE refused DynamoDB write on the audit table — a
+     * throttle, an IAM change, a table being restored — threw past
+     * `markComplete` into the outer `catch`, printed `[maintenance] tick
+     * failed`, and left the row in `deploying` after the deploy verb had
+     * already restarted FXServer. Nothing could move it afterwards. The
+     * recovery arm at the top of this tick now settles that row, and this
+     * ordering means it should never have to: the state machine advances
+     * before the thing that only describes it.
+     *
+     * AND ITS FAILURE IS NAMED RATHER THAN SWALLOWED. `markComplete` was
+     * `.catch(() => {})`, which is the same silence one indirection out: the
+     * one write that ends a deploy could be refused every tick for ever and the
+     * journal would say nothing at all.
+     */
+    try {
+      await maint.markComplete(res.error ?? null)
+    } catch (e) {
+      console.error(
+        '[maintenance] markComplete failed after the deploy verb returned. The window ' +
+          'is still marked `deploying`, which shuts the door on every player — the ' +
+          'recovery arm settles it once RESTART_GRACE_MS has passed',
+        e,
+      )
+    }
+
+    await audit
+      .resolve(ts, res.ok ? 'ok' : 'failed', res.error ?? null)
+      .catch((e) => console.error('[maintenance] could not resolve the deploy audit row', e))
     /**
      * `completedAt` IS THE CLOCK THE "IS IT BACK YET" TEST RUNS AGAINST, so it
      * has to reach the cache immediately rather than on the next tick. Until it

@@ -297,6 +297,40 @@ const WELL = { dispatch: 'ok', ddb: 'connected', feed: 'live' }
   if (feedNow(null) !== 'offline') {
     fail('feedNow(null) is not `offline` — a console never pushed to reads as fresh')
   }
+
+  /**
+   * AND A NEGATIVE AGE IS THE SAME INVERSION REACHED BY ARITHMETIC RATHER THAN
+   * BY A NULL.
+   *
+   * `liveView` computes `now - receivedAt` from two readings of one clock, so a
+   * clock that steps BACKWARDS — an NTP correction after drift, a hypervisor
+   * time sync, somebody setting the date by hand — makes the age negative for
+   * the length of the step. A negative number is not greater than `DEAD_MS` and
+   * not greater than `STALE_MS`, so it fell through both comparisons to `live`
+   * and stayed there however dead the feed was. Nothing downstream would have
+   * caught it: the collector's numeric guard is explicitly `^-?[0-9]+…`, so the
+   * minus sign passes by design, and its `awk` comparison then publishes a
+   * confident `IngestFeedDead 0` off the same number.
+   *
+   * SWEPT RATHER THAN SPOT-CHECKED, because the boundary is the whole claim.
+   */
+  for (const ms of [-1, -1000, -DEAD_MS, -DEAD_MS * 100]) {
+    if (feedNow(ms) !== 'offline') {
+      fail(
+        `feedNow(${ms}) is \`${feedNow(ms)}\` — an impossible age must read as a ` +
+          'non-reading, not as the healthiest reading there is. A clock that stepped ' +
+          'backwards would otherwise report a dead feed as live for the whole step.',
+      )
+    }
+    if (verdictNow({ ...WELL, feed: feedNow(ms) })) {
+      fail(`an ingestAgeMs of ${ms} answers ok:true — the console cannot in fact say`)
+    }
+  }
+  /** And zero is still a reading: a push that landed this millisecond. */
+  if (feedNow(0) !== 'live') {
+    fail('feedNow(0) is not `live` — zero is a fresh push, not an impossible age')
+  }
+
   if (verdictNow({ ...WELL, feed: feedNow(null) })) {
     fail('a console the game has never pushed to is reported healthy')
   }
@@ -1005,6 +1039,36 @@ for (const r of answers) {
         `answers 503 for up to five minutes through every deploy this console ` +
         `itself scheduled, while the header shows a calm \`Updating\` chip about ` +
         `the same silence. See lib/healthVerdict.`,
+    )
+  }
+
+  /**
+   * ═══ AND THE PHASE IS RESOLVED WITH THE CLOCK THAT BOUNDS IT ═══
+   *
+   * `deploy` IS THE ONLY FIELD IN THIS PAYLOAD THAT CAN BUY SILENCE, and for a
+   * long time it could buy an unlimited amount of it. `silenceIsExplained` says
+   * yes to `deploying`, `deployPhase` returned `deploying` unconditionally, and
+   * the row only ever left that state through `markComplete` — one write, at
+   * the bottom of the driver's tick, behind an SSH round trip and an audit
+   * write. When it was not reached, this route answered `200 {"ok":true}` over
+   * an `ingestAgeMs` of hours, for ever, and the collector reading this field
+   * withheld its own feed-dead datum to match. Two repositories, one mute, no
+   * alarm anywhere.
+   *
+   * `deployStartedAt` IS WHAT ENDS IT, and it is optional on
+   * `DeployPhaseInput` — deliberately, so an older browser payload reads as
+   * "not known" rather than as a failure. Optional means a route that stops
+   * passing it compiles, type-checks, and silently restores the unbounded
+   * phase. This is the line that does not let it.
+   */
+  if (!/deployPhase\s*\(\s*\{[^}]*deployStartedAt/.test(routeCode)) {
+    fail(
+      `${ROUTE} does not pass \`deployStartedAt\` to deployPhase. It is the only ` +
+        `clock on the \`deploying\` phase, and without it a maintenance row that ` +
+        `never left \`deploying\` — an audit write refused, a console restarted ` +
+        `mid-deploy — excuses a dead feed for ever: this route answers 200 and the ` +
+        `collector reading \`deploy\` publishes no IngestFeedDead. See ` +
+        `lib/serverPhase.`,
     )
   }
 

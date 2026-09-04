@@ -79,6 +79,30 @@ export type DeployPhase =
 export interface DeployPhaseInput {
   /** The stored window's state, or null when no window has been read. */
   state: MaintenanceState | null | undefined
+  /**
+   * When the deploy step STARTED, epoch ms — written by `markDeploying` in the
+   * same conditional write that moves the row into `deploying`.
+   *
+   * IT IS THE CLOCK ON THE `deploying` PHASE, AND UNTIL IT WAS PASSED IN THAT
+   * PHASE HAD NONE. `confirming` has been bounded by `RESTART_GRACE_MS` since
+   * it was written; `deploying` was returned unconditionally — and the bound
+   * `confirming` runs against, `completedAt`, is written only by
+   * `markComplete`, which is the one call in the driver's tick that a failure
+   * anywhere above it stops the run from reaching. A row that never left
+   * `deploying` was therefore excused for ever by `silenceIsExplained`,
+   * `/api/health` answered 200 over a feed that had been dead for hours, and
+   * `isDraining` turned away every player for the whole of it.
+   *
+   * ABSENT MEANS NOT KNOWN AND STILL READS AS `deploying`, which is this
+   * file's standing polarity rather than an oversight. Every row
+   * `markDeploying` writes carries it; what does not is a `/api/state` payload
+   * from before this field rode it — a browser tab left open across a console
+   * deploy — and flipping that tab to `unconfirmed` would be the console
+   * announcing a failure on the strength of never having been told. The two
+   * surfaces where the bound is load-bearing, `/api/health` and `AppShell`,
+   * read the DynamoDB row itself and always have it.
+   */
+  deployStartedAt?: number | null
   /** When the deploy step finished, epoch ms. Null while it has not. */
   completedAt: number | null | undefined
   /** What the deploy verb returned, when it returned a refusal. */
@@ -169,8 +193,43 @@ export function heartbeatIsFresh(input: {
 }
 
 export function deployPhase(input: DeployPhaseInput): DeployPhase {
-  /** THE DEPLOY IS RUNNING. A stated fact, and the only unconditional one. */
-  if (input.state === 'deploying') return 'deploying'
+  /**
+   * THE DEPLOY IS RUNNING — FOR AS LONG AS A RUNNING DEPLOY PLAUSIBLY TAKES.
+   *
+   * THIS RETURN USED TO BE UNCONDITIONAL, AND IT WAS THE ONE PHASE IN THE FILE
+   * WITH NO CLOCK ON IT. `RESTART_GRACE_MS` above makes the argument in its own
+   * words — "a loading state with no exit is not a loading state, it is a hang"
+   * — and it was applied to the wrong half: to `confirming`, which the driver
+   * reaches only after `markComplete` has written `completedAt`, and not to
+   * `deploying`, which is where the row sits WHILE the driver is doing the work
+   * that can fail. A tick that threw between `markDeploying` and `markComplete`
+   * — an audit-table throttle, an OOM, the console restarted mid-deploy, or
+   * `markComplete`'s own write refused — left the row in `deploying` with
+   * nothing anywhere able to move it: the tick's own recovery arm returns early
+   * on any state that is not `draining`, and `expiresAt` is written on
+   * host-patch rows only.
+   *
+   * WHAT THAT COST IS THE WHOLE POINT OF THE PHASE. `silenceIsExplained` says
+   * yes to `deploying`, so `/api/health` skipped the feed axis and answered
+   * `200 {"ok":true}` over an `ingestAgeMs` of hours; the collector reads that
+   * phase off the payload and withholds `IngestFeedDead` for it, so the estate
+   * went quiet on both sides of the same contract. And `isDraining` returns
+   * true for `deploying`, so the game refused every player for the whole time.
+   * One number ends all of it.
+   *
+   * IT IS THE SAME NUMBER AND THE SAME SENTENCE AS THE `confirming` BOUND
+   * BELOW, deliberately: the moment the excuse expires and the moment the
+   * failure is declared are the same moment. `unconfirmed` is already the
+   * terminal phase for "the restart fired and nothing came back", is already
+   * not in `silenceIsExplained`, and is already published by everything
+   * downstream — so the fix adds a comparison rather than a state.
+   */
+  if (input.state === 'deploying') {
+    return typeof input.deployStartedAt === 'number' &&
+      input.now - input.deployStartedAt >= RESTART_GRACE_MS
+      ? 'unconfirmed'
+      : 'deploying'
+  }
 
   /**
    * ANYTHING ELSE THAT IS NOT A FINISHED DEPLOY SAYS NOTHING. `scheduled` and
@@ -260,6 +319,7 @@ export function silenceIsExplained(phase: DeployPhase): boolean {
  */
 export function updateInProgress(input: {
   state: MaintenanceState | null | undefined
+  deployStartedAt?: number | null
   completedAt: number | null | undefined
   deployError?: string | null
   deployBootEpoch?: string | null

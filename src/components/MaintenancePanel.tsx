@@ -635,6 +635,7 @@ export function MaintenancePanel({
   const phaseNow = polled?.now ?? now
   const phase = deployPhase({
     state: w?.state,
+    deployStartedAt: w?.deployStartedAt,
     completedAt: w?.completedAt,
     deployError: w?.deployError,
     deployBootEpoch: w?.deployBootEpoch,

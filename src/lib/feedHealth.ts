@@ -82,9 +82,29 @@ export const DEAD_MS = 30_000
  * happen to a null in a comparison renders "there has never been a feed" as
  * "the feed is perfectly fresh" — the exact inversion the null exists to
  * prevent.
+ *
+ * ═══ AND A NEGATIVE AGE IS `offline` FOR THE SAME REASON ═══
+ *
+ * IT IS AN IMPOSSIBLE READING, AND EVERY COMPARISON BELOW QUIETLY CALLED IT THE
+ * HEALTHIEST ONE. `liveView` computes `now - receivedAt` from two readings of
+ * one clock, so the moment that clock steps BACKWARDS — an NTP correction after
+ * drift, a hypervisor time sync, somebody setting the date by hand — the age is
+ * negative for the length of the step. A negative number is not greater than
+ * `DEAD_MS` and not greater than `STALE_MS`, so it fell through both
+ * comparisons to `live` and STAYED there for the whole step, however dead the
+ * feed actually was: a green chip in the header, `200 {"ok":true}` from
+ * `/api/health`, and a confident `IngestFeedDead 0` published by the collector
+ * off the same number.
+ *
+ * `offline` IS ALREADY THE WORD FOR A NON-READING THAT COUNTS AS A FAULT, which
+ * is precisely what this is: the console cannot say how old the picture is, and
+ * it must not answer that cheerfully. Clamping to zero was the other option and
+ * it is the worse one — it would render an impossible reading as a perfect one,
+ * which is the same inversion the paragraph above is about.
  */
 export function feedNow(ageMs: number | null): Feed {
   if (ageMs === null) return 'offline'
+  if (ageMs < 0) return 'offline'
   if (ageMs > DEAD_MS) return 'dead'
   if (ageMs > STALE_MS) return 'stale'
   return 'live'

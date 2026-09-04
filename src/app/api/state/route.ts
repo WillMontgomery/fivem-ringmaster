@@ -113,6 +113,15 @@ export async function GET(): Promise<Response> {
       deployError: m.window?.deployError ?? null,
       deployBootEpoch: m.window?.deployBootEpoch ?? null,
       deployConfirmedAt: m.window?.deployConfirmedAt ?? null,
+
+      /**
+       * AND A FOURTH OF THE SAME KIND: THE CLOCK ON `deploying`. `deployPhase`
+       * measures it against the `now` this same response carries, so sending
+       * one without the other would compare a start time against a different
+       * instant — the identical argument the paragraph above makes for the
+       * boot epochs.
+       */
+      deployStartedAt: m.window?.deployStartedAt ?? null,
     },
   })
 }
