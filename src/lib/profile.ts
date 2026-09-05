@@ -407,7 +407,7 @@ export interface Profile {
     src: number
     state: string
     matchId: number | null
-    squadId: number | null
+    squadId: string | null
     hp: number
     inventory: Array<{ slot: number; item: string | null; count?: number }>
   } | null

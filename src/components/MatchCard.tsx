@@ -67,14 +67,37 @@ const PHASE: Record<string, { chip: string; bar: string }> = {
  * during an incident review is a genuinely bad outcome.
  */
 const SQUAD_HUES = 8
-export function squadColour(squadId: number | null): string {
+
+/**
+ * The squad's number, out of the id the game actually sends.
+ *
+ * THE ONE PLACE THE WIRE FORMAT IS PARSED. `m<match>sq<index>` is the gamemode's
+ * own shape (server/party.lua:873) and it is namespaced by match on purpose, so
+ * the id is the right thing to key, group and compare on -- but it is the wrong
+ * thing to SHOW, because "Squad m3sq2" is not how anybody says it out loud.
+ *
+ * NULL FOR ANYTHING IT DOES NOT RECOGNISE, and callers fall back to the id.
+ * A shape this does not know means the gamemode moved and this did not, and the
+ * honest answer to that is the raw id rather than a wrong number.
+ */
+export function squadIndex(squadId: string | null): number | null {
+  if (squadId === null) return null
+  const m = /sq(\d+)$/u.exec(squadId)
+  return m ? Number(m[1]) : null
+}
+
+export function squadColour(squadId: string | null): string {
   if (squadId === null) return 'var(--idle)'
-  return `var(--squad-${(Math.abs(squadId) % SQUAD_HUES) + 1})`
+  // The INDEX and not the whole id: two squads in one match must not share a
+  // hue, and hashing the string would let them.
+  const n = squadIndex(squadId)
+  if (n === null) return 'var(--idle)'
+  return `var(--squad-${(Math.abs(n) % SQUAD_HUES) + 1})`
 }
 
 /** Deterministic grouping — never iterate a hash and hope. */
-function bySquad(players: Player[]): Array<[number | null, Player[]]> {
-  const map = new Map<number | null, Player[]>()
+function bySquad(players: Player[]): Array<[string | null, Player[]]> {
+  const map = new Map<string | null, Player[]>()
   for (const p of players) {
     const key = p.squadId ?? null
     const list = map.get(key)
@@ -84,7 +107,12 @@ function bySquad(players: Player[]): Array<[number | null, Player[]]> {
   return [...map.entries()].sort((a, b) => {
     if (a[0] === null) return 1
     if (b[0] === null) return -1
-    return a[0] - b[0]
+    // By INDEX where both have one, so Squad 2 sorts before Squad 10; by id
+    // otherwise, which at least keeps the order stable across renders.
+    const ai = squadIndex(a[0])
+    const bi = squadIndex(b[0])
+    if (ai !== null && bi !== null) return ai - bi
+    return a[0].localeCompare(b[0])
   })
 }
 
@@ -207,7 +235,7 @@ export function MatchCard({
                   <span className="inline-flex items-center gap-1.5">
                     <Users className="size-3" style={{ color: colour }} />
                     <span style={{ color: colour }}>
-                      {squadId === null ? 'No squad' : `Squad ${squadId}`}
+                      {squadId === null ? 'No squad' : `Squad ${squadIndex(squadId) ?? squadId}`}
                     </span>
                   </span>
                   <span

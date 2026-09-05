@@ -67,7 +67,27 @@ const playerRow = z.object({
   name: z.string().max(128),
   license: optNull(z.string().min(1).max(128)),
   matchId: optNull(z.number().int()),
-  squadId: optNull(z.number().int()),
+  /**
+   * A STRING, AND IT ALWAYS WAS. This read `z.number().int()` and rejected every
+   * snapshot containing a squadded player, which is to say every squads match
+   * ever pushed: the route answered 400, the game counted a failed push, the
+   * feed aged out and `prod-console-ingest-dead` fired. It looked like a storm
+   * bug because the owner happened to be freezing the storm at the time; it
+   * survived `brstormfreeze off` and kept firing while three clients stayed in
+   * a squad match, which is what gave it away (owner, 2026-09-04).
+   *
+   * THE GAME MINTS `m<match>sq<index>` -- server/party.lua:873,
+   * `('m%dsq%d'):format(m.id, i)` -- and namespaces it by match ON PURPOSE, so
+   * two concurrent matches cannot conflate anything keyed on a squad. The
+   * console had been written expecting a bare index.
+   *
+   * THE CONSOLE BENDS, NOT THE GAME. The owner's standing rule is that the game
+   * server must never depend on Ringmaster and only the reverse is allowed, so
+   * the wire keeps the gamemode's own type and this estate derives what it needs
+   * for display -- see `squadIndex` in components/MatchCard.tsx, which is the
+   * one place the `sq<n>` suffix is parsed.
+   */
+  squadId: optNull(z.string().min(1).max(64)),
   state: z.string().max(32),
   hp: z.number(),
   armour: z.number(),

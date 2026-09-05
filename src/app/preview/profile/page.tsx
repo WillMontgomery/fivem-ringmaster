@@ -1228,7 +1228,7 @@ function fixture(
     // The live block only decides in-match detail; the "ONLINE NOW" chip and
     // the kick button both read the same fact, so they move together.
     live: MOD_CASES[mod].online
-      ? { src: 12, state: 'in_match', matchId: 412, squadId: 3, hp: 100, inventory: [] }
+      ? { src: 12, state: 'in_match', matchId: 412, squadId: 'm412sq3', hp: 100, inventory: [] }
       : null,
     incidents: reportsAgainst(counts.against),
     reportsFiled: reportsFiledBy(counts.filed),

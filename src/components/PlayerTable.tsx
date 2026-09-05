@@ -3,6 +3,8 @@
 import { ArrowDown, ArrowUp, ChevronsUpDown, Search, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 
+import { squadIndex } from '@/components/MatchCard'
+
 import { openPlayerSearch } from '@/components/PlayerSearch'
 import { PlayerRowView } from '@/components/PlayerRow'
 import { Input } from '@/components/ui/input'
@@ -185,7 +187,7 @@ export function PlayerTable({
   players: Player[]
   server: { wallMs: number; gameMs: number }
   now: number
-  squadColour?: (squadId: number | null) => string | undefined
+  squadColour?: (squadId: string | null) => string | undefined
 }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<(typeof FILTERS)[number]['key']>('all')
@@ -224,7 +226,11 @@ export function PlayerTable({
         case 'damage':
           return (a.damage - b.damage) * dir
         case 'squad':
-          return ((a.squadId ?? 0) - (b.squadId ?? 0)) * dir
+          // BY INDEX, NOT BY STRING. The wire carries `m<match>sq<index>`, so a
+          // lexical compare puts Squad 10 between Squad 1 and Squad 2, and the
+          // old numeric compare does not typecheck at all now the id is a
+          // string. Unsquadded sorts as 0, which is where `?? 0` already put it.
+          return ((squadIndex(a.squadId) ?? 0) - (squadIndex(b.squadId) ?? 0)) * dir
         case 'connected':
           // Earlier connectedAt = longer connected. Compare the origin rather
           // than a computed duration so the order cannot wobble with `now`.

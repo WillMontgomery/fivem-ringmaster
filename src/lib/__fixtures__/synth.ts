@@ -97,7 +97,10 @@ export function synthSnapshot(): SnapshotEnvelope {
     const m = matches.find((x) => x.id === match)!
 
     squads.forEach((members, squadIdx) => {
-      const squadId = squadIdx + 1 + match * 10
+      // THE GAME'S OWN SHAPE, `m<match>sq<index>` (server/party.lua:873).
+      // A fixture that mints a bare number is a fixture that cannot reproduce
+      // the 400 this file's schema once returned for every squads match.
+      const squadId = `m${match}sq${squadIdx + 1}`
       // Deliberately wipe one squad in the storm match.
       const wiped = match === 41 && squadIdx === 1
 
