@@ -42,6 +42,15 @@ next-env.d.ts
 *.pfx
 id_rsa*
 id_ed25519*
+
+# THE DISPATCH KEY, WHICH EVERY PATTERN ABOVE MISSES. It is named `dispatch`
+# with no extension -- not *.pem, not *.key, not id_ed25519* -- and it lives at
+# .ssh/dispatch inside this checkout on the Ringmaster host. So the file the
+# SECRETS note above calls "never checked in" was untracked but NOT ignored,
+# which is the one state `git add -A` publishes. check-secrets.mjs flagged it
+# for exactly that reason: it scans tracked files plus untracked-and-not-ignored
+# ones, because those are the files git would actually publish.
+.ssh/
 credentials
 .aws/
 
