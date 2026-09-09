@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from 'node:crypto'
 import * as bans from '@/lib/bans'
 import { corroborationText } from '@/lib/corroborationText'
 import { env } from '@/lib/env'
-import { ingestEnvelope } from '@/lib/ingest'
+import { ingestEnvelope, realTime } from '@/lib/ingest'
 import * as incidents from '@/lib/incidents'
 import * as players from '@/lib/players'
 import { applyEvents, applySnapshot } from '@/lib/state'
@@ -264,7 +264,10 @@ export function GET(): Response {
  * the case does not.
  */
 async function applyIncidentEvents(
-  env_: { events: Array<{ kind: string; data: unknown }> },
+  env_: {
+    server: { wallMs: number; gameMs: number }
+    events: Array<{ kind: string; at: number; data: unknown }>
+  },
   now: number,
 ): Promise<void> {
   for (const ev of env_.events) {
@@ -307,9 +310,40 @@ async function applyIncidentEvents(
     // to 3 says the same thing and says nothing about when. The sentence itself
     // lives in `lib/corroborationText`, beside the fold that groups a run of
     // them by it.
+    /**
+     * ═══ THE MOMENT IT HAPPENED, NOT THE MOMENT IT ARRIVED ═══
+     *
+     * This stamped every corroboration in a batch with one `Date.now()` taken
+     * per REQUEST, and threw away the per-event clock the wire already carries
+     * and `lib/ingest` already validates. While each row was drawn on its own
+     * line that was merely imprecise. It is not any more: the timeline collapses
+     * a run into one line stating how long the run reached, so a batch stamped
+     * with one clock produced the sentence "happened 12 times in 1 second"
+     * about twelve refusals the anticheat's own thirty-second throttle spread
+     * over six minutes. A duration that is false is worse than a timestamp that
+     * is coarse.
+     *
+     * AND BATCHING IS THE NORMAL CASE, NOT A FREAK ONE. `br_lib`'s outbox hands
+     * back up to `batchMax` events at once and backs off on failure, so any
+     * moment this console is slow or down queues corroborations and delivers
+     * them together on one millisecond.
+     *
+     * `realTime` IS WHY THE ENVELOPE CARRIES A CLOCK PAIR. `ev.at` is a
+     * `GetGameTimer()` reading, milliseconds since the resource started, which
+     * is not a date; `server.wallMs`/`server.gameMs` are sampled together at the
+     * flush and turn it into one. Skew between the game box's clock and this one
+     * shifts a whole batch together and leaves the DIFFERENCES exact, which is
+     * what the collapsed sentence is actually asserting.
+     *
+     * THE DELIVERY CLOCK IS STILL THE FALLBACK, for an envelope whose clock pair
+     * cannot produce a real instant. A row that lands at the wrong end of the
+     * list is a worse failure than one that lands a second late.
+     */
+    const at = realTime(env_.server, ev.at)
+
     await incidents.corroborate({
       incidentId: d.incidentId,
-      at: now,
+      at: Number.isFinite(at) && at > 0 ? at : now,
       text: corroborationText(d),
       byLicense: d.reporterLicense,
       byName: d.reporterName,

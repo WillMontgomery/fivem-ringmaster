@@ -77,9 +77,27 @@ export function fromIncidentParam(
  *
  * THE LIST IS THE MARKUP'S LIST, and it has to stay that way. The report bar
  * links the subject, the reporter and the linked profile; the timeline links
- * both parties of every kill. If a link is added to that page and not added
- * here, the breadcrumb silently stops working for it — which fails safe, in the
- * direction of the old behaviour, but is still worth knowing.
+ * both parties of every kill, and the byline of a corroboration a person filed.
+ * If a link is added to that page and not added here, the breadcrumb silently
+ * stops working for it — which fails safe, in the direction of the old
+ * behavior, but is still worth knowing.
+ *
+ * ═══ AND THAT IS EXACTLY WHAT HAPPENED TO THE CORROBORATOR ═══
+ *
+ * The owner's own in-game report on somebody else's anticheat case is a byline
+ * carrying `?from=<case>` to a profile that is not the subject, is not the
+ * reporter (an anticheat case has none), is not the linked license, and need
+ * never have traded a kill with the subject. Every clause missed him, the
+ * parameter was dropped, and the breadcrumb read "back to live players" — the
+ * one sentence this module exists to answer. It worked only when he happened to
+ * appear in a kill row, which is worse than not working.
+ *
+ * ONLY A CORROBORATION'S AUTHOR, MATCHING THE MARKUP EXACTLY. The rows that open
+ * and close a case draw their author as plain text, so an admin's license on a
+ * `resolved` event is not a link this page carries and must not open a
+ * breadcrumb — `lib/corroborationText`'s `linksAuthor` is the other half of this
+ * pair, and the kind is spelled here rather than imported because this module
+ * has no runtime imports and every shape it reads is restated structurally.
  *
  * `null` NEVER MATCHES. An incident with no reporter has `reporterLicense:
  * null`, and a caller asking about a player whose license is somehow empty must
@@ -90,6 +108,12 @@ export function linksToProfile(
     subjectLicense?: string | null
     reporterLicense?: string | null
     linkedLicense?: string | null
+    events?:
+      | ReadonlyArray<{
+          kind?: string | null
+          byLicense?: string | null
+        } | null>
+      | null
     matchTimeline?:
       | ReadonlyArray<{
           killerLicense?: string | null
@@ -105,6 +129,14 @@ export function linksToProfile(
     incident.subjectLicense === license ||
     incident.reporterLicense === license ||
     incident.linkedLicense === license
+  ) {
+    return true
+  }
+
+  if (
+    (incident.events ?? []).some(
+      (e) => e?.kind === 'corroborated' && e?.byLicense === license,
+    )
   ) {
     return true
   }

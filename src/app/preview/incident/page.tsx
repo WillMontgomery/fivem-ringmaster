@@ -385,15 +385,24 @@ const STATE_CASES = {
    * of corroborations. That shouldn't happen."
    *
    * WHAT THERE IS TO LOOK AT HERE IS THE FOLD AND THE BYLINE TOGETHER. The two
-   * halves collapse to one row each with a count and a span; his row stands
-   * alone between them with his name as a link, because it carries a license
-   * where the anticheat carries null. Both facts are asserted, the fold in
-   * `check:timeline` and the byline in `check:corroboration`, and neither can be
+   * halves collapse to one row each with a count and a span; the human rows
+   * stand alone between them, because neither states a graded severity and only
+   * the anticheat sends one. Both facts are asserted, the fold in
+   * `check:timeline` and the byline in `check:profilelink`, and neither can be
    * SEEN anywhere else before it is deployed.
    *
-   * HIS ROW IS THE REPORTER'S, WHICH IS THE REAL SEQUENCE. He reported a player
-   * the anticheat had already filed against, so the game turned his report into
-   * a corroboration on the existing case rather than opening a second one.
+   * TWO HUMAN ROWS, WHICH IS THE STATE OF THE CREDIT ITSELF. The first is what
+   * the game sends TODAY — no reporter at all, so the console writes
+   * `byLicense: null, byName: 'System'` for a person exactly as for the machine,
+   * and the row reads "System" however this page is written. The second is the
+   * same report once the gamemode starts sending `reporterLicense`, which is the
+   * only one that draws a name and a link. Showing one of them alone would be
+   * this harness claiming a state that is not deployed.
+   *
+   * THE ROWS ARE THE REPORTER'S, WHICH IS THE REAL SEQUENCE. He reported a
+   * player the anticheat had already filed against, so the game turned his
+   * report into a corroboration on the existing case rather than opening a
+   * second one.
    */
   'corroboration-burst': {
     ...BASE_INCIDENT,
@@ -419,9 +428,16 @@ const STATE_CASES = {
       {
         at: BASE - 3 * HOUR + 60_000 + 10 * 30_000 + 1_000,
         kind: 'corroborated',
+        byLicense: null,
+        byName: 'System',
+        text: corroborationText({ count: 1, reason: 'cheating' }),
+      },
+      {
+        at: BASE - 3 * HOUR + 60_000 + 10 * 30_000 + 2_000,
+        kind: 'corroborated',
         byLicense: REPORTER,
         byName: 'Marla',
-        text: corroborationText({ count: 1, reason: 'cheating' }),
+        text: corroborationText({ count: 2, reason: 'cheating' }),
       },
     ],
   },

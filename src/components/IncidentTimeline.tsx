@@ -19,7 +19,7 @@ import {
   TimelineMeta,
   TimelineTitle,
 } from '@/components/ui/timeline'
-import { foldCorroborations } from '@/lib/corroborationText'
+import { foldCorroborations, linksAuthor } from '@/lib/corroborationText'
 import { verdictTone } from '@/lib/incidentChip'
 import type { ClosedByBan, IncidentVerdict, VerdictAction } from '@/lib/incidents'
 import { labelFor } from '@/lib/labels'
@@ -341,22 +341,28 @@ function ConsoleRow({
         {/*
           WHO, AS SOMEWHERE TO GO WHEN IT WAS A PERSON. The owner, on his own
           in-game corroboration: "The profile name should be there, as a
-          hyperlink." Same test the case header already makes about its filer, where
-          a license means a profile and null means the system, and the same shape
-          the `Party` links on the kill rows below carry, minus `font-medium`
-          because this line is small muted text.
+          hyperlink." The same shape the `Party` links on the kill rows below
+          carry, minus `font-medium` because this line is small muted text.
+
+          THE TEST IS `linksAuthor` AND NOT A COMPARISON WRITTEN HERE. It asks
+          two things this markup must not answer for itself: that the row is a
+          corroboration, because nothing was asked about the names on the rows
+          that open and close a case and turning those into links is a change
+          nobody requested; and that the license is a NON-EMPTY string, because
+          `incidents.ts` writes `''` for an admin with no grants row and
+          `/players/` is not a route.
         */}
         <TimelineMeta>
           <LocalTime ms={event.at} /> ·{' '}
-          {event.byLicense === null ? (
-            event.byName
-          ) : (
+          {linksAuthor(event) ? (
             <Link
               href={profileHref(event.byLicense, from)}
               className="underline underline-offset-2"
             >
               {event.byName}
             </Link>
+          ) : (
+            event.byName
           )}
           <Offset at={event.at} origin={origin} />
         </TimelineMeta>

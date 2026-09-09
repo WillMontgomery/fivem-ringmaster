@@ -28,6 +28,17 @@
  * spells the other's format. The only thing crossing the boundary is a type
  * import, which is erased.
  *
+ * ═══ AND ONLY THE ANTICHEAT'S ROWS ARE EVER FOLDED ═══
+ *
+ * A person's corroboration is a person's evidence and may not be absorbed into
+ * somebody else's tally. That cannot be decided on the author, because there
+ * is not one: until the gamemode sends a reporter, every corroboration is
+ * stored `byLicense: null, byName: 'System'`, and the rows already in the
+ * owner's table will never carry one whatever ships next. {@link gradesSeverity}
+ * is what decides it instead, on the sentence, so it holds for the rows he has
+ * today. A run also never reaches further than a match can last; see
+ * {@link MATCH_REACH_MS}.
+ *
  * NO NEW WORDS ON THE PAGE BEYOND THE ONES THE OWNER WROTE. Every character
  * before the appended clause is the row's existing text; the clause itself is
  * his example sentence with the two numbers filled in.
@@ -41,6 +52,19 @@ import type { ConsoleTimelineEvent, TimelineRow } from './matchTimeline'
  * fingerprint cannot disagree about it.
  */
 const SEP = ' · '
+
+/**
+ * The two labeled clauses, named once so the builder and the matchers below
+ * cannot disagree about them.
+ *
+ * `worst:` IS LOAD-BEARING AND NOT DECORATION. See {@link gradesSeverity}: it
+ * is the one thing on a stored row that says the anticheat wrote it.
+ */
+const REASON_PREFIX = 'last: '
+const SEVERITY_PREFIX = 'worst: '
+
+/** The kind, spelled once. The renderer is grepped for this literal. */
+const CORROBORATED = 'corroborated'
 
 /**
  * What the console records when the game says the subject is still at it.
@@ -62,10 +86,75 @@ export function corroborationText(input: {
 }): string {
   const parts = [
     typeof input.count === 'number' ? `${input.count} refusals this match` : null,
-    input.reason ? `last: ${input.reason}` : null,
-    input.severity ? `worst: ${input.severity}` : null,
+    input.reason ? `${REASON_PREFIX}${input.reason}` : null,
+    input.severity ? `${SEVERITY_PREFIX}${input.severity}` : null,
   ].filter(Boolean)
   return parts.length > 0 ? parts.join(SEP) : 'Still happening.'
+}
+
+/**
+ * ═══ THE ONE THING A STORED ROW SAYS ABOUT WHO WROTE IT ═══
+ *
+ * Does this sentence carry a graded severity, which only the anticheat sends.
+ *
+ * THE PROBLEM THIS SOLVES, IN THE STATE THAT IS ACTUALLY SHIPPING. The fold
+ * below must never swallow a person's report into somebody else's tally. The
+ * obvious test is the author, and the author is not there: until the gamemode
+ * starts sending `reporterLicense`, EVERY corroboration reaches this console
+ * with `byLicense: null, byName: 'System'`, a person's and the anticheat's
+ * alike. The owner does not hand-edit DynamoDB, so the rows already in his
+ * table will never carry it whatever the gamemode does next. A guard that only
+ * works after a deploy is not a guard for those rows.
+ *
+ * SEVERITY IS THE DISCRIMINATOR, AND IT IS STRUCTURAL RATHER THAN A HEURISTIC.
+ * Both of the gamemode's human paths omit it deliberately and say why in the
+ * source: `br_core/server/players.lua` at the panel report and again at the
+ * keypress report, "NO SEVERITY, for the reason BR.IncidentBuild.fromReport
+ * gives: a human's category is not a measurement, and grading it here would
+ * invent confidence that does not exist." All three anticheat paths in
+ * `br_core/server/incident.lua` send one — the refusal doubling forwards
+ * `ev.severity`, the strip and the vehicle handlers both read
+ * `BR.ShotTier[...]`. So `worst:` on the row means a machine graded it.
+ *
+ * IT FAILS TOWARDS NOT FOLDING, WHICH IS THE DIRECTION THAT MATTERS. An
+ * anticheat corroboration that somehow arrived without a severity is not folded
+ * and renders exactly as it does today, which costs a tidier page. The
+ * alternative failure is deleting one player's report from the record, which
+ * `br_core/server/incident.lua` calls "destroying evidence rather than tidying
+ * it" where it explains why the human paths skip its own throttle.
+ *
+ * ANCHORED AT THE END, because {@link corroborationText} joins the severity
+ * last. A reason that happened to contain the word cannot be mistaken for one.
+ */
+export function gradesSeverity(text: string | null | undefined): boolean {
+  const parts = (text ?? '').split(SEP)
+  const last = parts[parts.length - 1] ?? ''
+  return last.startsWith(SEVERITY_PREFIX) && last.length > SEVERITY_PREFIX.length
+}
+
+/**
+ * Whether the byline on a row should be a link to a profile.
+ *
+ * TRUTHY, NOT `!== null`, AND THE DIFFERENCE IS A 404. `incidents.ts` writes
+ * `byLicense: input.actor.license ?? ''` for a signed-in admin with no grants
+ * row, which `lib/grants.ts` says is normal and fully privileged. An empty
+ * string is not null, so a null test renders `/players/?from=…`, a route that
+ * does not exist. This is the same truthy test the case header already makes
+ * about its filer.
+ *
+ * AND ONLY ON A CORROBORATION. The owner asked for his own corroboration to be
+ * credited; nothing was asked about the row that opens a case or the row that
+ * closes one, and turning those names into links is a change he did not
+ * request. Those rows render the name as plain text, exactly as before.
+ */
+export function linksAuthor(
+  event: ConsoleTimelineEvent,
+): event is ConsoleTimelineEvent & { byLicense: string } {
+  return (
+    event.kind === CORROBORATED &&
+    typeof event.byLicense === 'string' &&
+    event.byLicense !== ''
+  )
 }
 
 /**
@@ -98,20 +187,36 @@ function plural(n: number, unit: string): string {
  *
  * THE UNITS COME FROM THE OWNER'S OWN EXAMPLE AND NOTHING ELSE. "happened 20
  * times in 10 minutes" is twenty rows thirty seconds apart, which is nine and a
- * half minutes, so this rounds rather than truncates. Under a minute it says
- * seconds, past ninety minutes it says hours, and a span of one reads singular.
+ * half minutes, so this rounds rather than truncates. A span of one reads
+ * singular.
  *
- * A ZERO SPAN STILL READS AS A DURATION. Two corroborations delivered in one
- * ingest batch share a millisecond, because the route stamps a batch with one
- * clock; `in 0 seconds` would be the page reporting on its own delivery rather
- * than on the match, so the floor is one second.
+ * ═══ THE LADDER STEPS WHERE THE ROUNDING STEPS, AND IT USED NOT TO ═══
+ *
+ * This tested `minutes < 90` on the ROUNDED minutes and then rounded the raw
+ * span into hours, and those two roundings disagreed in the band between them:
+ * 89 minutes read "89 minutes", 89 and a half read "1 hour" — a longer span
+ * printing a shorter duration — and 90 read "2 hours", a third more than it
+ * was. A duration that goes backwards as the run gets longer is worse than an
+ * imprecise one, because the page is then evidence of nothing.
+ *
+ * Each rung now hands over exactly where its own rounding would carry: seconds
+ * hand over when they round to sixty, and sixty seconds IS one minute, so the
+ * next rung's first reading is "1 minute" and never a smaller number than the
+ * last one it replaced. Minutes hand over to hours on the same rule, which is
+ * also what makes "1 hour" reachable — under `< 90` it never was, because 90
+ * minutes divided by an hour rounds to 2. Every reading is within half of its
+ * own unit of the truth, which is all that rounding to a unit can promise.
+ *
+ * A ZERO SPAN STILL READS AS A DURATION. Two corroborations can share an
+ * instant; `in 0 seconds` would be a claim about the clock rather than about
+ * the match, so the floor is one second.
  */
 export function corroborationSpan(ms: number): string {
   const span = Number.isFinite(ms) && ms > 0 ? ms : 0
   const seconds = Math.max(1, Math.round(span / SECOND))
   if (seconds < 60) return plural(seconds, 'second')
   const minutes = Math.round(span / MINUTE)
-  if (minutes < 90) return plural(minutes, 'minute')
+  if (minutes < 60) return plural(minutes, 'minute')
   return plural(Math.round(span / HOUR), 'hour')
 }
 
@@ -123,21 +228,59 @@ export function corroborationRollup(times: number, spanMs: number): string {
 type ConsoleRow = Extract<TimelineRow, { source: 'console' }>
 
 /**
- * A row that may join a run.
+ * The longest a run may reach, and therefore the longest span it can claim.
  *
- * THREE TESTS, AND THE MIDDLE ONE IS THE ONE THAT PROTECTS PEOPLE. `byLicense`
- * is null only on the anticheat's own corroborations; a corroboration a person
- * filed carries their license, so it can never be swallowed into a roll-up and
- * lose its name. The kind test keeps admin notes and the case brackets out, and
- * the clock test keeps a row whose `at` is unreadable out of an arithmetic it
- * would turn into NaN.
+ * ═══ A CASE IS CORROBORATED ACROSS NIGHTS, AND THE ROW SAYS "THIS MATCH" ═══
+ *
+ * `br_core/server/players.lua`'s keypress report attaches to
+ * `BR.Incident.openFor`, which is NOT match scoped, and its own comment says
+ * what that costs: "A day-old case corroborated in tonight's round restarts at
+ * 2." Two corroborations days apart with nothing stored between them are
+ * consecutive ROWS, and an unbounded fold turned them into one line reading
+ * "refusals this match … happened 2 times in 72 hours" — a sentence that
+ * contradicts itself and presents two nights as one recurring offense.
+ *
+ * ONE HOUR, WHICH IS THE LONGEST A MATCH CAN BE. The gamemode's own
+ * `br_lib/shared/incident_build.lua` sets `MATCH_ENDS_BY_MS = 60 * 60 * 1000`
+ * against a round that runs about twenty minutes, and this console already
+ * spends the same number for the same reason — `matchTimeline`'s
+ * `OFFSET_REACH_MS`, "one hour is three matches". A run that reaches further
+ * than a match can is not one recurring offense, whatever the sentences say.
+ *
+ * IT IS THE WHOLE RUN AND NOT THE GAP BETWEEN NEIGHBORS. Bounding only the gap
+ * would still let twenty rows an hour apart each collapse into a row claiming
+ * twenty hours, which is the same lie with more steps.
+ */
+const MATCH_REACH_MS = 60 * 60_000
+
+/**
+ * A row that may join a run: an anticheat corroboration with a readable clock.
+ *
+ * ═══ THE TEST THAT PROTECTS PEOPLE IS `gradesSeverity`, NOT THE AUTHOR ═══
+ *
+ * This tested `byLicense === null` and called that "the one that protects
+ * people". It protects nobody today. The gamemode does not send a reporter yet,
+ * so a person's corroboration is stored `byLicense: null, byName: 'System'`,
+ * byte for byte the same as the anticheat's — and the keypress path always
+ * sends ONE reason, `BR.Config.defaultReportCategory()`, so two players
+ * reporting the same case fingerprinted alike, folded, and one of them was
+ * deleted from the page. That is the regression against the complaint that
+ * started this: his row did not merely lack a name, it could vanish.
+ *
+ * {@link gradesSeverity} is the discriminator that works on the rows already in
+ * the table, and it is where the argument for it lives.
+ *
+ * THE AUTHOR TEST STAYS, AS THE SECOND LOCK RATHER THAN THE ONLY ONE, and it is
+ * truthy now: once the gamemode sends `reporterLicense`, a credited row is
+ * excluded on its own account without waiting on the sentence.
  */
 function foldable(row: TimelineRow): row is ConsoleRow {
   return (
     row.source === 'console' &&
     row.event != null &&
-    row.event.kind === 'corroborated' &&
-    row.event.byLicense === null &&
+    row.event.kind === CORROBORATED &&
+    !row.event.byLicense &&
+    gradesSeverity(row.event.text) &&
     Number.isFinite(row.at)
   )
 }
@@ -183,6 +326,11 @@ function collapse(first: ConsoleRow, last: ConsoleRow, times: number): ConsoleRo
  *
  * A GROUP OF ONE IS RETURNED UNTOUCHED, not rewritten with a clause saying it
  * happened once. One corroboration is the shape the page has always drawn.
+ *
+ * AND A RUN NEVER REACHES FURTHER THAN A MATCH. See {@link MATCH_REACH_MS}: a
+ * row too far from the one that opened the run starts a new run instead of
+ * joining it, so the collapsed sentence cannot claim a span the thing it is
+ * describing could not have had.
  */
 export function foldCorroborations(rows: readonly TimelineRow[]): TimelineRow[] {
   const out: TimelineRow[] = []
@@ -200,7 +348,10 @@ export function foldCorroborations(rows: readonly TimelineRow[]): TimelineRow[] 
   for (const row of rows) {
     if (foldable(row)) {
       const fingerprint = corroborationFingerprint(row.event.text)
-      if (run.length > 0 && fingerprint === print) {
+      const opener = run[0]
+      const withinReach =
+        opener !== undefined && row.at - opener.at <= MATCH_REACH_MS
+      if (withinReach && fingerprint === print) {
         run.push(row)
         continue
       }

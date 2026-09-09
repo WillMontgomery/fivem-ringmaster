@@ -213,6 +213,8 @@ import {
   corroborationSpan,
   corroborationText,
   foldCorroborations,
+  gradesSeverity,
+  linksAuthor,
 } from './corroborationText'
 import { verdictTone } from './incidentChip'
 import type { Incident, IncidentEvent, VerdictAction } from './incidents'
@@ -638,18 +640,43 @@ check(
  * ═══ THE OWNER'S OWN ROW IN THE MIDDLE OF THE RUN, WHICH MUST SURVIVE ═══
  *
  * "The '1 refusals this match' line was me." It splits the burst in two and
- * stands alone between the halves. TWO INDEPENDENT REASONS it can never vanish
- * into a roll-up, and this case would still pass with either one removed, which
- * is why both are named: its sentence fingerprints differently, and it carries a
- * license where the anticheat carries null. The second is the structural one and
- * the one that holds after the gamemode starts sending his name.
+ * stands alone between the halves.
+ *
+ * ═══ AND IT IS BUILT THE WAY THE GAME BUILDS IT TODAY, WHICH IS THE WHOLE
+ * REASON THIS FILE MISSED THE DEFECT ═══
+ *
+ * This fixture used to carry `byLicense: 'license:owner'`, a shape NOTHING in
+ * either repository produces: the gamemode change that sends a reporter was
+ * deliberately not written, so `api/ingest` passes no author and
+ * `incidents.corroborate` writes `byLicense: null, byName: 'System'` for a
+ * person exactly as it does for the anticheat. So the suite was covering only
+ * the world after a deploy that has not happened, and the fold's author test —
+ * the one its own comment called "the one that protects people" — was inert
+ * against every row in the owner's table.
+ *
+ * WHAT SEPARATES HIM FROM THE ANTICHEAT ON A STORED ROW IS THE SEVERITY. Both
+ * of the gamemode's human paths omit it on purpose (`players.lua`: "NO
+ * SEVERITY … grading it here would invent confidence that does not exist"), and
+ * all three anticheat paths send one. No count, no reason and no adjacency can
+ * do this job: the keypress path sends ONE reason for every report it ever
+ * makes.
  */
 const mine: ConsoleTimelineEvent = {
   at: BURST + 10 * 30_000 + 1_000,
   kind: 'corroborated',
+  byLicense: null,
+  byName: 'System',
+  text: corroborationText({ count: 1, reason: 'cheating' }),
+}
+
+/*
+ * THE SAME ROW AFTER THE GAMEMODE HALF LANDS, so both worlds are covered rather
+ * than whichever one the fixture happened to be written in.
+ */
+const mineCredited: ConsoleTimelineEvent = {
+  ...mine,
   byLicense: 'license:owner',
   byName: 'Xeon',
-  text: corroborationText({ count: 1, reason: 'cheating' }),
 }
 
 const splitFolded = foldCorroborations(mergeTimeline([...burst, mine], []))
@@ -667,26 +694,120 @@ check(
   splitFolded.map((r) => (r.source === 'console' ? r.event.text : null)),
 )
 check(
-  'and his row is untouched between them, name, license and sentence',
+  'and his row is untouched between them, sentence and attribution',
   splitFolded[1]?.source === 'console' &&
-    splitFolded[1].event.byLicense === 'license:owner' &&
-    splitFolded[1].event.byName === 'Xeon' &&
+    splitFolded[1].event.byLicense === null &&
+    splitFolded[1].event.byName === 'System' &&
     splitFolded[1].event.text === '1 refusals this match · last: cheating',
   splitFolded[1]?.source === 'console' ? splitFolded[1].event : null,
 )
 
-/*
- * AND TWO OF HIS IN A ROW STILL DO NOT FOLD, which is the case that proves the
- * license test is doing the work rather than the fingerprint. Same sentence,
- * same author, adjacent: two rows.
- */
-const twoOfMine = foldCorroborations(
-  mergeTimeline([mine, { ...mine, at: mine.at + 30_000 }], []),
+/* And the same, once the gamemode starts putting his name on it. */
+const splitCredited = foldCorroborations(
+  mergeTimeline([...burst, mineCredited], []),
 )
 check(
-  'two corroborations by the same person are two rows, not a tally',
-  twoOfMine.length === 2,
-  twoOfMine.length,
+  'a credited corroboration mid-run splits it the same way',
+  splitCredited.length === 3 &&
+    splitCredited[1]?.source === 'console' &&
+    splitCredited[1].event.byLicense === 'license:owner',
+  splitCredited.length,
+)
+
+/*
+ * ═══ TWO PEOPLE, ONE CASE, ONE CATEGORY — AND THIS IS THE ONE THAT FAILED ═══
+ *
+ * Two different players press the report key on the same open case a minute
+ * apart. `players.lua` numbers them off one counter, so the console stores
+ * "1 refusals this match · last: cheating" and "2 refusals this match · last:
+ * cheating" — and today BOTH carry `byLicense: null, byName: 'System'`, because
+ * no reporter is sent. The keypress path has exactly one reason,
+ * `BR.Config.defaultReportCategory()`, so the fingerprints are identical by
+ * construction and not by coincidence: the accused-scoped one-action-per-match
+ * rule means two adjacent human rows are guaranteed to be two DIFFERENT people.
+ *
+ * Folding them deletes one person's report from the record and attributes the
+ * survivor to the anticheat. `br_core/server/incident.lua` says what that is
+ * where it explains why the human paths skip its own throttle: "folding two
+ * humans' reports into one row would be destroying evidence rather than tidying
+ * it." A noisier page is the cheaper failure, by a distance.
+ */
+const twoPeople = foldCorroborations(
+  mergeTimeline(
+    [
+      mine,
+      {
+        ...mine,
+        at: mine.at + 74_000,
+        text: corroborationText({ count: 2, reason: 'cheating' }),
+      },
+    ],
+    [],
+  ),
+)
+check(
+  'two people reporting the same case are two rows, not one tally',
+  twoPeople.length === 2,
+  twoPeople.map((r) => (r.source === 'console' ? r.event.text : null)),
+)
+
+/*
+ * AND THE SAME TWO ROWS WITH THE SAME COUNT, which is the harder half: a fold
+ * keyed on the count clause alone would keep these apart by accident. They are
+ * kept apart because neither states a severity.
+ */
+const twoPeopleSameCount = foldCorroborations(
+  mergeTimeline([mine, { ...mine, at: mine.at + 74_000 }], []),
+)
+check(
+  'and two identical human sentences are still two rows',
+  twoPeopleSameCount.length === 2,
+  twoPeopleSameCount.length,
+)
+
+/*
+ * WHAT THE DISCRIMINATOR IS, ON ITS OWN. The human paths send no severity and
+ * the anticheat paths always send one, so `worst:` at the end of the sentence
+ * is the machine's signature — and it is the only signature a row stored before
+ * any of this can carry, because the owner does not hand-edit DynamoDB.
+ */
+check(
+  'a graded sentence is the anticheat, an ungraded one is a person',
+  gradesSeverity(corroborationText({ count: 3, reason: REFUSAL_REASON, severity: 'high' })) &&
+    !gradesSeverity(corroborationText({ count: 1, reason: 'cheating' })) &&
+    !gradesSeverity(corroborationText({ count: 1 })) &&
+    !gradesSeverity(corroborationText({})) &&
+    !gradesSeverity(null),
+)
+check(
+  'and a reason that talks about severity is not a severity',
+  !gradesSeverity(corroborationText({ count: 1, reason: 'worst: cheating' })),
+  corroborationText({ count: 1, reason: 'worst: cheating' }),
+)
+
+/*
+ * SO AN ANTICHEAT ROW THAT ARRIVED WITHOUT A GRADE IS NOT FOLDED EITHER, and
+ * that is the deliberate direction to fail in. The wire allows a corroboration
+ * with no severity, and nothing on such a row can tell it from a person's. It
+ * costs a tidier page; the other direction costs somebody's report.
+ */
+const ungraded = foldCorroborations(
+  mergeTimeline(
+    [
+      { ...mine, text: corroborationText({ count: 3, reason: REFUSAL_REASON }) },
+      {
+        ...mine,
+        at: mine.at + 30_000,
+        text: corroborationText({ count: 33, reason: REFUSAL_REASON }),
+      },
+    ],
+    [],
+  ),
+)
+check(
+  'an ungraded pair is left alone rather than folded on a guess',
+  ungraded.length === 2,
+  ungraded.length,
 )
 
 /* A GROUP OF ONE IS RETURNED AS IT WAS. No clause saying it happened once. */
@@ -743,6 +864,93 @@ check(
 )
 
 /*
+ * ═══ A RUN CANNOT REACH FURTHER THAN A MATCH ═══
+ *
+ * A case is not match scoped — `players.lua` attaches a keypress report to
+ * `BR.Incident.openFor` and its own comment says "A day-old case corroborated
+ * in tonight's round restarts at 2" — so two corroborations three days apart
+ * with nothing stored between them are CONSECUTIVE ROWS. Folded, they read
+ * "refusals this match … happened 2 times in 72 hours", a sentence that
+ * contradicts itself and presents two nights of behavior as one offense.
+ *
+ * The bound is one hour, which is the gamemode's own `MATCH_ENDS_BY_MS` and the
+ * same hour `matchOffset` already spends below.
+ */
+const nightsApart = foldCorroborations(
+  mergeTimeline(
+    [
+      systemCorroboration(0),
+      { ...systemCorroboration(1), at: BURST + 3 * 24 * 60 * MIN },
+    ],
+    [],
+  ),
+)
+check(
+  'two corroborations three days apart are two rows, not one 72 hour claim',
+  nightsApart.length === 2,
+  nightsApart.map((r) => (r.source === 'console' ? r.event.text : null)),
+)
+
+/*
+ * THE EDGE, BOTH SIDES OF IT. An hour is inside the reach and a millisecond
+ * past it is not, so the largest span the page can ever print for a run is one
+ * hour — which is also the largest thing a match can be.
+ */
+const atTheEdge = foldCorroborations(
+  mergeTimeline(
+    [systemCorroboration(0), { ...systemCorroboration(1), at: BURST + 60 * MIN }],
+    [],
+  ),
+)
+check(
+  'a run reaching exactly one hour still folds, and says so',
+  atTheEdge.length === 1 &&
+    atTheEdge[0]?.source === 'console' &&
+    atTheEdge[0].event.text?.endsWith('happened 2 times in 1 hour') === true,
+  atTheEdge[0]?.source === 'console' ? atTheEdge[0].event.text : null,
+)
+const pastTheEdge = foldCorroborations(
+  mergeTimeline(
+    [
+      systemCorroboration(0),
+      { ...systemCorroboration(1), at: BURST + 60 * MIN + 1 },
+    ],
+    [],
+  ),
+)
+check(
+  'and one millisecond further apart is two rows',
+  pastTheEdge.length === 2,
+  pastTheEdge.length,
+)
+
+/*
+ * AND THE REACH IS MEASURED FROM THE ROW THAT OPENED THE RUN, not from the
+ * neighbor. Bounding only the gap would let a row every fifty minutes collapse
+ * into one line claiming hours, which is the same false sentence with more
+ * steps.
+ */
+const creeping = foldCorroborations(
+  mergeTimeline(
+    [0, 50, 100, 150].map((minute, i) => ({
+      ...systemCorroboration(i),
+      at: BURST + minute * MIN,
+    })),
+    [],
+  ),
+)
+check(
+  'a row every fifty minutes never becomes one row claiming hours',
+  creeping.every(
+    (r) =>
+      r.source === 'console' &&
+      (r.event.text ?? '').match(/happened \d+ times in (\d+) (\w+)/)?.[2] !==
+        'hours',
+  ),
+  creeping.map((r) => (r.source === 'console' ? r.event.text : null)),
+)
+
+/*
  * A CORROBORATION STORED UNDER THE OLD KIND IS NOT FOLDED, and that is the
  * correct outcome rather than a gap. Rows written before 2026-08-29 carry
  * `kind: 'note'` with `byName: 'System'`, and nothing can tell one of those from
@@ -790,11 +998,58 @@ check(
 )
 
 /*
+ * ═══ WHOSE NAME BECOMES A LINK, AND WHOSE DOES NOT ═══
+ *
+ * The byline tested `byLicense === null`, and `incidents.ts` writes
+ * `byLicense: input.actor.license ?? ''` for a signed-in admin with no grants
+ * row — a state `lib/grants.ts` calls normal and fully privileged, and one that
+ * is already stored on every case such an admin has closed. Empty string is not
+ * null, so their name on the closing row became a link to `/players/?from=…`,
+ * and there is no `/players` route: `next build` lists `/players/[license]` and
+ * nothing else. It was plain text before the fold shipped and it is plain text
+ * again.
+ *
+ * AND THE SCOPE WAS WRONG TOO. Only the corroboration was asked about. The rows
+ * that open and close a case keep drawing their author as text, so this console
+ * grew exactly the one link the owner asked for and no others.
+ */
+const linkCases: Array<[string, ConsoleTimelineEvent, boolean]> = [
+  ['a corroboration a person filed', mineCredited, true],
+  ['the anticheat, which has no profile', systemCorroboration(0), false],
+  [
+    'an admin with no grants row closing a case',
+    { at: BURST, kind: 'resolved', byLicense: '', byName: 'Preview Admin' },
+    false,
+  ],
+  [
+    'an admin with a license closing a case, which was never asked for',
+    { at: BURST, kind: 'resolved', byLicense: 'license:admin', byName: 'Marla' },
+    false,
+  ],
+  [
+    'the reporter on the row that opened the case, likewise',
+    { at: BURST, kind: 'opened', byLicense: 'license:reporter', byName: 'Marla' },
+    false,
+  ],
+  [
+    'a corroboration whose license is the empty string',
+    { ...mineCredited, byLicense: '' },
+    false,
+  ],
+]
+for (const [label, event, linked] of linkCases) {
+  check(
+    `${label} ${linked ? 'is' : 'is not'} drawn as a link`,
+    linksAuthor(event) === linked,
+    { byLicense: event.byLicense, kind: event.kind },
+  )
+}
+
+/*
  * THE SPAN'S UNITS, WHICH COME FROM HIS EXAMPLE AND NOTHING ELSE. Seconds under
- * a minute, minutes under ninety, hours past that, singular at one. The zero
- * case is a real delivery shape: the ingest route stamps a whole batch with one
- * clock, so two corroborations that arrived together share a millisecond, and
- * `in 0 seconds` would be the page reporting on its own plumbing.
+ * a minute, minutes under an hour, hours past that, singular at one. The zero
+ * case is a real shape: two corroborations can share an instant, and `in 0
+ * seconds` would be a claim about the clock rather than about the match.
  */
 const spanCases: Array<[number, string]> = [
   [0, '1 second'],
@@ -803,13 +1058,55 @@ const spanCases: Array<[number, string]> = [
   [59_400, '59 seconds'],
   [60_000, '1 minute'],
   [570_000, '10 minutes'],
-  [89 * MIN, '89 minutes'],
+  [59 * MIN, '59 minutes'],
+  /*
+   * THE HANDOVER, WHICH USED TO GO BACKWARDS. `minutes < 90` was tested on the
+   * ROUNDED minutes and the hours were rounded from the raw span, so 89 minutes
+   * read "89 minutes", 89 and a half read "1 hour" — SHORTER — and 90 read "2
+   * hours", a third longer than it was. The rung now changes exactly where its
+   * own rounding carries, which is also what makes "1 hour" reachable at all:
+   * under the old branch the first hour value that could ever print was 2.
+   */
+  [60 * MIN, '1 hour'],
+  [89 * MIN, '1 hour'],
   [90 * MIN, '2 hours'],
   [3 * 3_600_000, '3 hours'],
 ]
 for (const [ms, said] of spanCases) {
   check(`corroborationSpan(${ms}) reads "${said}"`, corroborationSpan(ms) === said, corroborationSpan(ms))
 }
+
+/*
+ * AND IT NEVER GOES BACKWARDS, swept rather than sampled. A longer run must
+ * never print a shorter duration: that is the one property of this sentence an
+ * admin reads it for, and the sampled cases above could not see it — the band
+ * where it broke was half a minute wide, between two of them.
+ */
+const UNIT_MS: Record<string, number> = {
+  second: 1_000,
+  seconds: 1_000,
+  minute: 60_000,
+  minutes: 60_000,
+  hour: 3_600_000,
+  hours: 3_600_000,
+}
+let worst: string | null = null
+let previous = 0
+for (let ms = 0; ms <= 4 * 3_600_000; ms += 500) {
+  const said = corroborationSpan(ms)
+  const m = /^(\d+) (\w+)$/.exec(said)
+  const value = m ? Number(m[1]) * (UNIT_MS[m[2] ?? ''] ?? NaN) : NaN
+  if (!Number.isFinite(value)) {
+    worst ??= `corroborationSpan(${ms}) is not a number and a unit: "${said}"`
+    break
+  }
+  if (value < previous) {
+    worst ??= `corroborationSpan(${ms}) reads "${said}", shorter than the span before it`
+    break
+  }
+  previous = value
+}
+check('the span never reads shorter as the run gets longer', worst === null, worst)
 
 /*
  * AND THE BUILDER IS THE ONE THE INGEST ROUTE USES. `check:corroboration` greps
@@ -2531,6 +2828,30 @@ check(
 check(
   'the byline links the license through the shared builder, not a path it spells',
   /href=\{profileHref\(event\.byLicense, from\)\}/.test(component?.text ?? ''),
+)
+/*
+ * ═══ AND WHICH ROWS GET A LINK IS A PREDICATE, NOT A COMPARISON IN THE JSX ═══
+ *
+ * This branch was `event.byLicense === null`, which is wrong twice over and
+ * neither half was visible from here. `incidents.ts` writes `byLicense: ''` for
+ * an admin with no grants row, and an empty string is not null, so the closing
+ * row of every case such an admin resolved drew their name as a link to
+ * `/players/?from=…` — a route `next build` does not list. And it reached EVERY
+ * console kind, so the name on the row that opens a case became a hyperlink the
+ * owner never asked for.
+ *
+ * `linksAuthor` answers both, in a module with cases. The grep is here because
+ * a component that stopped calling it would put a comparison back in markup
+ * nothing can check, which is the same gap section 4d exists for.
+ */
+check(
+  'the byline asks `linksAuthor` which rows are credited',
+  /linksAuthor\(event\)/.test(component?.text ?? ''),
+)
+check(
+  'and does not decide it with a comparison of its own',
+  !/event\.byLicense\s*[=!]==/.test(component?.text ?? ''),
+  (component?.text.match(/event\.byLicense\s*[=!]==[^\n]*/g) ?? []).join(' '),
 )
 
 /*
