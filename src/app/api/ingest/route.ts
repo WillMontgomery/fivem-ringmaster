@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
 import * as bans from '@/lib/bans'
+import { corroborationText } from '@/lib/corroborationText'
 import { env } from '@/lib/env'
 import { ingestEnvelope } from '@/lib/ingest'
 import * as incidents from '@/lib/incidents'
@@ -283,22 +284,35 @@ async function applyIncidentEvents(
       count?: number
       reason?: string
       severity?: string
+      /*
+       * WHO CORROBORATED, WHEN IT WAS A PERSON. Absent on every anticheat
+       * corroboration, which is what makes null mean the system rather than
+       * meaning "we did not look". The owner, reading his own in-game report on
+       * a case: "when I personally corroborate something it doesn't credit me".
+       * It never could: the name was not stored, not dropped in transit, and
+       * never put on the wire.
+       *
+       * READ OFF `data` WITHOUT A SCHEMA CHANGE, because `lib/ingest` types an
+       * event's `data` as a loose record. A build of the gamemode that does not
+       * send them yet leaves both undefined and the row reads `System`, exactly
+       * as it does today.
+       */
+      reporterLicense?: string
+      reporterName?: string
     }
     if (!d.incidentId) continue
 
-    // Written as a timeline note rather than a counter, because "it happened
+    // Written as a timeline row rather than a counter, because "it happened
     // again, and again" is the shape an admin reads. A number that went from 1
-    // to 3 says the same thing and says nothing about when.
-    const parts = [
-      typeof d.count === 'number' ? `${d.count} refusals this match` : null,
-      d.reason ? `last: ${d.reason}` : null,
-      d.severity ? `worst: ${d.severity}` : null,
-    ].filter(Boolean)
-
+    // to 3 says the same thing and says nothing about when. The sentence itself
+    // lives in `lib/corroborationText`, beside the fold that groups a run of
+    // them by it.
     await incidents.corroborate({
       incidentId: d.incidentId,
       at: now,
-      text: parts.length > 0 ? parts.join(' · ') : 'Still happening.',
+      text: corroborationText(d),
+      byLicense: d.reporterLicense,
+      byName: d.reporterName,
     })
   }
 }

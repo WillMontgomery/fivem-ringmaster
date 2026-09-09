@@ -1095,12 +1095,40 @@ export async function corroborate(input: {
   incidentId: string
   at: number
   text: string
+  /**
+   * The player who corroborated, when it was a player. Both or neither.
+   *
+   * ═══ THE OWNER'S OWN ROW SAID "System" AND IT WAS HIM ═══
+   *
+   * "when I personally corroborate something it doesn't credit me. The '1
+   * refusals this match' line was me." A second in-game report against a player
+   * who already has a case open against them in that match becomes a
+   * corroboration rather than a second case, which is the behavior he wants.
+   * But the reporter's identity was hardcoded away here, so his report reached
+   * the timeline attributed to the anticheat.
+   *
+   * ABSENT MEANS THE ANTICHEAT, AND THAT IS THE WHOLE CONVENTION. Every
+   * anticheat corroboration sends neither field and still writes
+   * `byLicense: null, byName: 'System'` byte for byte, so no existing caller
+   * changes and no stored row is touched. It is the same test the case's own
+   * `reporterLicense` already carries on the detail page: a license means a
+   * person to link to, null means the system.
+   */
+  byLicense?: string | null
+  byName?: string | null
 }): Promise<boolean> {
+  const author =
+    typeof input.byLicense === 'string' &&
+    input.byLicense !== '' &&
+    typeof input.byName === 'string' &&
+    input.byName !== ''
+      ? { byLicense: input.byLicense, byName: input.byName }
+      : { byLicense: null, byName: 'System' }
+
   const event: IncidentEvent = {
     at: input.at,
     kind: 'corroborated',
-    byLicense: null,
-    byName: 'System',
+    ...author,
     text: input.text,
   }
 

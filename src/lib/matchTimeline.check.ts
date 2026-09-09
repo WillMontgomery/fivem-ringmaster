@@ -208,6 +208,12 @@ import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import {
+  corroborationFingerprint,
+  corroborationSpan,
+  corroborationText,
+  foldCorroborations,
+} from './corroborationText'
 import { verdictTone } from './incidentChip'
 import type { Incident, IncidentEvent, VerdictAction } from './incidents'
 import { humanLabel, labelFor } from './labels'
@@ -538,6 +544,291 @@ check(
 )
 
 // ---------------------------------------------------------------------------
+// 3b. TWENTY ROWS SAYING ONE THING ARE ONE ROW.
+// ---------------------------------------------------------------------------
+
+/*
+ * ═══ THE UNCLAIMED GROUND WAS CARDINALITY ═══
+ *
+ * Nowhere in this repository did more than ONE corroboration exist at a time.
+ * Not in these cases, not in `check:corroboration`, not in the preview harness.
+ * So every assertion about a corroboration was an assertion about a row, and a
+ * roll-up could have shipped in any state at all, folding nothing, folding
+ * everything, or folding an admin's note into the anticheat's tally, with three
+ * green suites underneath it. That is the same shape of gap this file's header
+ * describes about the kind itself, one attribute along.
+ *
+ * The owner, reading a case with twenty of them: "a recurring offense of the
+ * anticheat system turns into tons of lines of corroborations. That shouldn't
+ * happen. Just say how many times it fired and across how long (example
+ * 'happened 20 times in 10 minutes')".
+ *
+ * THE FIXTURE IS HIS SCREENSHOT, TO THE NUMBER. Twenty rows thirty seconds
+ * apart, the tally climbing by thirty, ending on 573, so the first is 3 and the
+ * span is nine and a half minutes, which is where his "10 minutes" comes from
+ * and why the span rounds rather than truncating.
+ */
+
+console.log('3b. a run of identical system corroborations, as one row')
+
+const REFUSAL_REASON = 'weapon is not one this gamemode issues'
+const BURST = NOW
+
+function systemCorroboration(step: number): ConsoleTimelineEvent {
+  return {
+    at: BURST + step * 30_000,
+    kind: 'corroborated',
+    byLicense: null,
+    byName: 'System',
+    text: corroborationText({
+      count: 3 + step * 30,
+      reason: REFUSAL_REASON,
+      severity: 'high',
+    }),
+  }
+}
+
+const burst = Array.from({ length: 20 }, (_, step) => systemCorroboration(step))
+
+/* THE CONTRACT UNDERNEATH IS UNCHANGED: the merge still drops nothing. */
+const burstMerged = mergeTimeline(burst, [])
+check(
+  'mergeTimeline still keeps all twenty, because dropping is not its job',
+  burstMerged.length === 20,
+  burstMerged.length,
+)
+
+const burstFolded = foldCorroborations(burstMerged)
+check(
+  'foldCorroborations: twenty become one',
+  burstFolded.length === 1,
+  burstFolded.length,
+)
+
+const rolled = burstFolded[0]?.source === 'console' ? burstFolded[0].event : null
+
+/*
+ * THE COLLAPSED SENTENCE, CHARACTER FOR CHARACTER. Everything before the clause
+ * is the LAST member's own text, kept verbatim because the game's count is
+ * cumulative and its reason and severity are the latest and the worst, so the
+ * newest row already subsumes every earlier one. The clause is the owner's
+ * wording with two numbers filled in, and it is the only new copy on the page.
+ */
+check(
+  'the collapsed row reads exactly as the owner asked',
+  rolled?.text ===
+    '573 refusals this match · last: weapon is not one this gamemode issues · ' +
+      'worst: high · happened 20 times in 10 minutes',
+  rolled?.text,
+)
+check(
+  'and it is stamped with the most recent occurrence, so the span reaches back',
+  rolled?.at === BURST + 19 * 30_000 && burstFolded[0]?.at === BURST + 19 * 30_000,
+  { event: rolled?.at, row: burstFolded[0]?.at },
+)
+check(
+  'and it is still a corroboration attributed to the system',
+  rolled?.kind === 'corroborated' &&
+    rolled?.byLicense === null &&
+    rolled?.byName === 'System',
+  rolled,
+)
+
+/*
+ * ═══ THE OWNER'S OWN ROW IN THE MIDDLE OF THE RUN, WHICH MUST SURVIVE ═══
+ *
+ * "The '1 refusals this match' line was me." It splits the burst in two and
+ * stands alone between the halves. TWO INDEPENDENT REASONS it can never vanish
+ * into a roll-up, and this case would still pass with either one removed, which
+ * is why both are named: its sentence fingerprints differently, and it carries a
+ * license where the anticheat carries null. The second is the structural one and
+ * the one that holds after the gamemode starts sending his name.
+ */
+const mine: ConsoleTimelineEvent = {
+  at: BURST + 10 * 30_000 + 1_000,
+  kind: 'corroborated',
+  byLicense: 'license:owner',
+  byName: 'Xeon',
+  text: corroborationText({ count: 1, reason: 'cheating' }),
+}
+
+const splitFolded = foldCorroborations(mergeTimeline([...burst, mine], []))
+check(
+  'a human corroboration mid-run splits it into two rolled-up halves',
+  splitFolded.length === 3,
+  splitFolded.map((r) => (r.source === 'console' ? r.event.text : r.entry.kind)),
+)
+check(
+  'eleven before it, nine after it, each saying its own span',
+  splitFolded[0]?.source === 'console' &&
+    splitFolded[0].event.text?.endsWith('happened 11 times in 5 minutes') === true &&
+    splitFolded[2]?.source === 'console' &&
+    splitFolded[2].event.text?.endsWith('happened 9 times in 4 minutes') === true,
+  splitFolded.map((r) => (r.source === 'console' ? r.event.text : null)),
+)
+check(
+  'and his row is untouched between them, name, license and sentence',
+  splitFolded[1]?.source === 'console' &&
+    splitFolded[1].event.byLicense === 'license:owner' &&
+    splitFolded[1].event.byName === 'Xeon' &&
+    splitFolded[1].event.text === '1 refusals this match · last: cheating',
+  splitFolded[1]?.source === 'console' ? splitFolded[1].event : null,
+)
+
+/*
+ * AND TWO OF HIS IN A ROW STILL DO NOT FOLD, which is the case that proves the
+ * license test is doing the work rather than the fingerprint. Same sentence,
+ * same author, adjacent: two rows.
+ */
+const twoOfMine = foldCorroborations(
+  mergeTimeline([mine, { ...mine, at: mine.at + 30_000 }], []),
+)
+check(
+  'two corroborations by the same person are two rows, not a tally',
+  twoOfMine.length === 2,
+  twoOfMine.length,
+)
+
+/* A GROUP OF ONE IS RETURNED AS IT WAS. No clause saying it happened once. */
+const alone = foldCorroborations(mergeTimeline([systemCorroboration(0)], []))
+check(
+  'a lone corroboration is left exactly as it was',
+  alone.length === 1 &&
+    alone[0]?.source === 'console' &&
+    alone[0].event.text === systemCorroboration(0).text,
+  alone[0]?.source === 'console' ? alone[0].event.text : null,
+)
+
+/*
+ * ANYTHING ELSE BREAKS THE RUN, and a kill is the one that will really happen.
+ * This is the deliberate cost of the fold: a burst with kills through it becomes
+ * several small roll-ups rather than one big one, because the alternative is a
+ * page whose rows are no longer in the order they happened.
+ */
+const interrupted = foldCorroborations(
+  mergeTimeline(
+    [systemCorroboration(0), systemCorroboration(2)],
+    [kill({ at: BURST + 30_000 })],
+  ),
+)
+check(
+  'a kill between two corroborations keeps all three rows in order',
+  interrupted.length === 3 &&
+    interrupted[1]?.source === 'match' &&
+    interrupted[1].entry.kind === 'kill',
+  interrupted.map((r) => (r.source === 'match' ? r.entry.kind : r.event.kind)),
+)
+
+/*
+ * TWO DIFFERENT OFFENSES ARE TWO ROWS. The grouping is by the sentence with its
+ * count clause removed, so a run that changes reason or severity mid-way is two
+ * runs, which is right, because those two rows are not saying the same thing.
+ */
+const differentReasons = foldCorroborations(
+  mergeTimeline(
+    [
+      systemCorroboration(0),
+      {
+        ...systemCorroboration(1),
+        text: corroborationText({ count: 33, reason: 'speed', severity: 'high' }),
+      },
+    ],
+    [],
+  ),
+)
+check(
+  'a run that changes what it is about is not one run',
+  differentReasons.length === 2,
+  differentReasons.length,
+)
+
+/*
+ * A CORROBORATION STORED UNDER THE OLD KIND IS NOT FOLDED, and that is the
+ * correct outcome rather than a gap. Rows written before 2026-08-29 carry
+ * `kind: 'note'` with `byName: 'System'`, and nothing can tell one of those from
+ * an admin's typed sentence except by guessing at the name, and folding two
+ * of them together would destroy evidence on the strength of a guess.
+ */
+const legacyPair = foldCorroborations(
+  mergeTimeline(
+    [
+      { at: BURST, kind: 'note', byLicense: null, byName: 'System', text: '3 refusals' },
+      { at: BURST + 30_000, kind: 'note', byLicense: null, byName: 'System', text: '3 refusals' },
+    ],
+    [],
+  ),
+)
+check(
+  'two System notes from before the kind existed stay two rows',
+  legacyPair.length === 2,
+  legacyPair.length,
+)
+
+/*
+ * THE FINGERPRINT, ON ITS OWN. It strips the leading count clause and NOTHING
+ * else, which is what makes "these are the same recurring offense" provable
+ * rather than a guess about adjacency.
+ */
+check(
+  'the fingerprint drops the count clause and keeps the rest',
+  corroborationFingerprint(
+    '573 refusals this match · last: cheating · worst: high',
+  ) === 'last: cheating · worst: high',
+  corroborationFingerprint('573 refusals this match · last: cheating · worst: high'),
+)
+check(
+  'two counts of the same offense fingerprint alike, two offenses do not',
+  corroborationFingerprint(systemCorroboration(0).text) ===
+    corroborationFingerprint(systemCorroboration(19).text) &&
+    corroborationFingerprint(systemCorroboration(0).text) !==
+      corroborationFingerprint(mine.text),
+)
+check(
+  'a bare count fingerprints to nothing rather than to itself',
+  corroborationFingerprint(corroborationText({ count: 8 })) === '',
+  corroborationFingerprint(corroborationText({ count: 8 })),
+)
+
+/*
+ * THE SPAN'S UNITS, WHICH COME FROM HIS EXAMPLE AND NOTHING ELSE. Seconds under
+ * a minute, minutes under ninety, hours past that, singular at one. The zero
+ * case is a real delivery shape: the ingest route stamps a whole batch with one
+ * clock, so two corroborations that arrived together share a millisecond, and
+ * `in 0 seconds` would be the page reporting on its own plumbing.
+ */
+const spanCases: Array<[number, string]> = [
+  [0, '1 second'],
+  [1_000, '1 second'],
+  [43_000, '43 seconds'],
+  [59_400, '59 seconds'],
+  [60_000, '1 minute'],
+  [570_000, '10 minutes'],
+  [89 * MIN, '89 minutes'],
+  [90 * MIN, '2 hours'],
+  [3 * 3_600_000, '3 hours'],
+]
+for (const [ms, said] of spanCases) {
+  check(`corroborationSpan(${ms}) reads "${said}"`, corroborationSpan(ms) === said, corroborationSpan(ms))
+}
+
+/*
+ * AND THE BUILDER IS THE ONE THE INGEST ROUTE USES. `check:corroboration` greps
+ * the route for the import; this pins the sentence it produces, including the
+ * fallback the wire allows when the game sends an envelope with nothing in it.
+ */
+check(
+  'corroborationText builds the sentence the row has always carried',
+  corroborationText({ count: 8, reason: 'TOO_FAR', severity: 'high' }) ===
+    '8 refusals this match · last: TOO_FAR · worst: high',
+  corroborationText({ count: 8, reason: 'TOO_FAR', severity: 'high' }),
+)
+check(
+  'and keeps the existing fallback when the envelope carried nothing',
+  corroborationText({}) === 'Still happening.',
+  corroborationText({}),
+)
+
+// ---------------------------------------------------------------------------
 // 4. STILL IN PROGRESS IS THREE STATES, NOT TWO.
 // ---------------------------------------------------------------------------
 
@@ -852,6 +1143,14 @@ const caseBracketCases: Array<[string, boolean]> = [
   ['opened', true],
   ['resolved', true],
   ['note', false],
+  /*
+   * AND THE FOURTH KIND, WHICH THE TABLE HAD NEVER HEARD OF. `corroborated` was
+   * added to `IncidentEvent` on 2026-08-29 and this table still listed three,
+   * so "a corroboration is not an edge of the case" was true by accident rather
+   * than by assertion. A red dot on one would be the console claiming the case
+   * was opened or closed by the cheater carrying on.
+   */
+  ['corroborated', false],
   ['', false],
   ['reopened', false],
 ]
@@ -1577,12 +1876,20 @@ const ownerStored: MatchTimelineEntry[] = [
   },
 ]
 
+/*
+ * THE THREE SYSTEM ROWS ARE CORROBORATIONS AND WERE MODELLED AS NOTES. They
+ * carried `kind: 'note'` because that is what `incidents.corroborate` wrote
+ * until 2026-08-29, and this file never moved them, so `check:timeline` had
+ * fixtures for the old defect and, until the case table above, had never once
+ * seen the real kind exist. The offsets they prove are unaffected by the kind,
+ * which is exactly why nothing failed while they were wrong.
+ */
 const ownerEvents: ConsoleTimelineEvent[] = [
   { at: OWNER_OPENED, kind: 'opened', byLicense: null, byName: 'Anticheat' },
-  { at: OWNER_OPENED + 40_000, kind: 'note', byLicense: null, byName: 'System', text: '3 refusals' },
+  { at: OWNER_OPENED + 40_000, kind: 'corroborated', byLicense: null, byName: 'System', text: '3 refusals' },
   { at: OWNER_OPENED + 55_000, kind: 'resolved', byLicense: 'license:xeon', byName: 'Xeon' },
-  { at: OWNER_OPENED + 71_000, kind: 'note', byLicense: null, byName: 'System', text: '4 refusals' },
-  { at: OWNER_OPENED + 73_000, kind: 'note', byLicense: null, byName: 'System', text: '5 refusals' },
+  { at: OWNER_OPENED + 71_000, kind: 'corroborated', byLicense: null, byName: 'System', text: '4 refusals' },
+  { at: OWNER_OPENED + 73_000, kind: 'corroborated', byLicense: null, byName: 'System', text: '5 refusals' },
 ]
 
 const ownerRows = mergeTimeline(ownerEvents, ownerStored)
@@ -2003,10 +2310,17 @@ check(
   'the timeline component gets its case brackets from `isCaseBracket`',
   component?.text.includes('isCaseBracket(') === true,
 )
+/*
+ * `corroborated` JOINS THE BANNED LIST, and it is the reason this grep needed
+ * touching at all. The fold that collapses a run of them tests the kind, and a
+ * component that spelled `event.kind === 'corroborated'` in its own JSX would
+ * be exactly the drift this exists to stop, a fourth kind's membership decided
+ * in markup nothing can check. The test lives in `lib/corroborationText`.
+ */
 check(
   'and no console-kind literal is left in the markup to drift from it',
-  !/['"](opened|resolved|note)['"]/.test(component?.text ?? ''),
-  (component?.text.match(/['"](opened|resolved|note)['"]/g) ?? []).join(' '),
+  !/['"](opened|resolved|note|corroborated)['"]/.test(component?.text ?? ''),
+  (component?.text.match(/['"](opened|resolved|note|corroborated)['"]/g) ?? []).join(' '),
 )
 check(
   'the danger tone is applied conditionally rather than to every console row',
@@ -2161,6 +2475,19 @@ check(
 )
 
 /*
+ * AND IT FOLDS THE RUN BEFORE IT DRAWS ANYTHING. Every case in section 3b drives
+ * `foldCorroborations` directly, so all twenty of them stay green against a
+ * component that never calls it. A perfect fold in a module nothing reaches is
+ * the same page the owner photographed. The order is pinned too: folding before
+ * the merge would group rows the game's entries had not yet been allowed to
+ * interrupt, which is the one way to get a roll-up that spans a kill.
+ */
+check(
+  'the component folds the corroboration run, and folds it after the merge',
+  /foldCorroborations\(\s*mergeTimeline\(/.test(component?.text ?? ''),
+)
+
+/*
  * ═══ AND THE THREE FACTS THAT USED TO BE SAID TWICE ═══
  *
  * THIS IS THE GAP THE FOLD ITSELF OPENED, AND THREE MUTANTS WALKED STRAIGHT
@@ -2183,9 +2510,27 @@ check(
     component?.text ?? '',
   ),
 )
+/*
+ * REWORDED, NOT WEAKENED, BECAUSE THE NAME IS A LINK NOW. This was one exact
+ * regex over `<LocalTime ms={event.at} /> · {event.byName}`, and the owner's
+ * credit fix wraps the name in an anchor when a person corroborated. The two
+ * facts it was buying stay bought and are now bought separately: the instant is
+ * still drawn on the meta line, and the name is still drawn on BOTH sides of
+ * the branch. A byline that linked the license and forgot to render the name
+ * would be an empty anchor, which the old single regex would also have missed.
+ */
 check(
-  'and the meta line still names both the instant and the admin',
-  /<LocalTime ms=\{event\.at\} \/> · \{event\.byName\}/.test(component?.text ?? ''),
+  'and the meta line still names the instant',
+  /<LocalTime ms=\{event\.at\} \/> ·/.test(component?.text ?? ''),
+)
+check(
+  'and both sides of the byline still draw the name',
+  (component?.text.match(/event\.byName/g) ?? []).length === 2,
+  (component?.text.match(/event\.byName/g) ?? []).length,
+)
+check(
+  'the byline links the license through the shared builder, not a path it spells',
+  /href=\{profileHref\(event\.byLicense, from\)\}/.test(component?.text ?? ''),
 )
 
 /*
@@ -2397,13 +2742,15 @@ console.log(
     .join('  ')}`,
 )
 /*
- * THE CONSOLE'S THREE, WITH THE DOT EACH ONE GETS. Printed rather than only
+ * THE CONSOLE'S FOUR, WITH THE DOT EACH ONE GETS. Printed rather than only
  * asserted for the same reason as the line above: the owner dictated two of
  * these strings, and a change to either should show up in a diff of this
- * output as different words rather than as nothing.
+ * output as different words rather than as nothing. `corroborated` is on this
+ * line because it is on the row, and the word it prints is derived by
+ * `labelFor` rather than authored.
  */
 console.log(
-  `  console kinds     ${['opened', 'note', 'resolved']
+  `  console kinds     ${['opened', 'note', 'resolved', 'corroborated']
     .map(
       (k) =>
         `${k}=${labelFor(CONSOLE_EVENT_LABEL, k)}` +

@@ -19,6 +19,7 @@ import {
   TimelineMeta,
   TimelineTitle,
 } from '@/components/ui/timeline'
+import { foldCorroborations } from '@/lib/corroborationText'
 import { verdictTone } from '@/lib/incidentChip'
 import type { ClosedByBan, IncidentVerdict, VerdictAction } from '@/lib/incidents'
 import { labelFor } from '@/lib/labels'
@@ -176,9 +177,16 @@ export function IncidentTimeline({
     lose its verdict, its resolution text, its closing time and its closing
     admin all at once now that the card those lived in is gone.
   */
-  const rows = mergeTimeline(
-    withClosure(incident.events, incident),
-    incident.matchTimeline,
+  /*
+    AND THE RUN OF IDENTICAL SYSTEM CORROBORATIONS BECOMES ONE ROW, after the
+    merge and never inside it. The owner, on a case with twenty of them: "a
+    recurring offense of the anticheat system turns into tons of lines of
+    corroborations. That shouldn't happen." Which rows group, what the collapsed
+    one says and why a person's corroboration can never be swallowed into one
+    all live in `lib/corroborationText`, where they can be checked.
+  */
+  const rows = foldCorroborations(
+    mergeTimeline(withClosure(incident.events, incident), incident.matchTimeline),
   )
   const progress = matchProgress(incident, now)
   const progressLabel = MATCH_PROGRESS_LABEL[progress]
@@ -231,6 +239,7 @@ export function IncidentTimeline({
                 */
                 closure={isResolution(row.event) ? incident : null}
                 verdictLabel={verdictLabel}
+                from={incident.incidentId}
               />
             ) : (
               <MatchRow
@@ -252,10 +261,13 @@ function ConsoleRow({
   origin,
   closure,
   verdictLabel,
+  from,
 }: {
   event: ConsoleTimelineEvent
   /** The instant every offset on this list counts from. See `matchOffset`. */
   origin: number
+  /** This case, so a profile linked from here can find its way back. */
+  from: string
   /**
    * The case's outcome, on the ONE row that closed it, and null on every other.
    * The caller decides which row that is, from `isResolution`.
@@ -326,8 +338,26 @@ function ConsoleRow({
             .
           </p>
         )}
+        {/*
+          WHO, AS SOMEWHERE TO GO WHEN IT WAS A PERSON. The owner, on his own
+          in-game corroboration: "The profile name should be there, as a
+          hyperlink." Same test the case header already makes about its filer, where
+          a license means a profile and null means the system, and the same shape
+          the `Party` links on the kill rows below carry, minus `font-medium`
+          because this line is small muted text.
+        */}
         <TimelineMeta>
-          <LocalTime ms={event.at} /> · {event.byName}
+          <LocalTime ms={event.at} /> ·{' '}
+          {event.byLicense === null ? (
+            event.byName
+          ) : (
+            <Link
+              href={profileHref(event.byLicense, from)}
+              className="underline underline-offset-2"
+            >
+              {event.byName}
+            </Link>
+          )}
           <Offset at={event.at} origin={origin} />
         </TimelineMeta>
       </TimelineContent>

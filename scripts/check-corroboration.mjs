@@ -252,9 +252,15 @@ check(
  * make — the console writes `System` on several things. The kind carries the
  * fact now; this check fails if somebody removes the kind and leans on the name
  * again.
+ *
+ * REWORDED RATHER THAN DELETED WHEN THE AUTHOR BECAME OPTIONAL. It used to read
+ * as though `System` were the only attribution a corroboration can have; it now
+ * says what it always meant, which is that the ANTICHEAT's corroboration is the
+ * system's and is not identified by that fact alone. Section 3b below is the
+ * other half.
  */
 check(
-  'the corroboration is attributed to the system, and that is not the only signal',
+  'a corroboration with no author is the system, and that is not the only signal',
   corroboration.byName === 'System' &&
     corroboration.byLicense === null &&
     corroboration.kind !== 'note',
@@ -272,6 +278,102 @@ check(
   corroboration.at === OPENED + MIN,
   corroboration.at,
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3b. A CORROBORATION A PERSON FILED CARRIES THAT PERSON.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ═══ THE OWNER'S OWN ROW SAID "System" ═══
+ *
+ * "when I personally corroborate something it doesn't credit me. The '1 refusals
+ * this match' line was me. The profile name should be there, as a hyperlink."
+ *
+ * A second in-game report against a player who already has an open case in that
+ * match becomes a corroboration rather than a second case. The game decides
+ * that on the match and the license and on nothing else, so the reason he picked
+ * plays no part in it. That is the behavior he asked for. What it cost him was
+ * his name: the reporter's identity was hardcoded away in `corroborate()`, so
+ * the row he filed reached the timeline attributed to the anticheat.
+ *
+ * ═══ AND THIS CASE IS THE WHOLE GATE ═══
+ *
+ * An optional author that defaults to `System` leaves EVERY assertion above
+ * passing while covering nothing, because every existing caller passes neither
+ * field. The only thing that can fail on a `corroborate()` which still throws
+ * the author away is a call that supplies one. So this drives the real writer
+ * with an author and reads back what landed on the row.
+ *
+ * A SEPARATE CASE ROW, so the counts and indices section 3 pins are undisturbed.
+ */
+const MINE = 'incident-i-corroborated'
+rows.set(MINE, {
+  incidentId: MINE,
+  state: 'pending_review',
+  openedAt: OPENED,
+  events: [
+    { at: OPENED, kind: 'opened', byLicense: null, byName: 'Anticheat' },
+  ],
+})
+
+await incidents.corroborate({
+  incidentId: MINE,
+  at: OPENED + MIN,
+  text: '1 refusals this match · last: cheating',
+  byLicense: 'license:owner',
+  byName: 'Xeon',
+})
+
+const credited = rows.get(MINE).events[1]
+
+check(
+  'a corroboration with an author is written with that license and that name',
+  credited.byLicense === 'license:owner' && credited.byName === 'Xeon',
+  { byLicense: credited.byLicense, byName: credited.byName },
+)
+check(
+  'and it is still a corroboration, not a note',
+  credited.kind === 'corroborated',
+  credited.kind,
+)
+check(
+  'and the license is what the page needs to draw a link at all',
+  typeof credited.byLicense === 'string' && credited.byLicense !== '',
+  credited.byLicense,
+)
+
+/**
+ * HALF AN AUTHOR IS NO AUTHOR. A name with no license cannot be linked and a
+ * license with no name has nothing to draw, so either alone falls back to the
+ * system rather than producing a byline the page cannot render. Both directions,
+ * because a fallback written as `byLicense ?? null` alone would pass one of them
+ * and write an empty anchor for the other.
+ */
+for (const [label, partial] of [
+  ['a name with no license', { byName: 'Xeon' }],
+  ['a license with no name', { byLicense: 'license:owner' }],
+  ['empty strings', { byLicense: '', byName: '' }],
+]) {
+  const id = `incident-${label.replace(/\W+/g, '-')}`
+  rows.set(id, {
+    incidentId: id,
+    state: 'pending_review',
+    openedAt: OPENED,
+    events: [{ at: OPENED, kind: 'opened', byLicense: null, byName: 'Anticheat' }],
+  })
+  await incidents.corroborate({
+    incidentId: id,
+    at: OPENED + MIN,
+    text: 'still happening',
+    ...partial,
+  })
+  const row = rows.get(id).events[1]
+  check(
+    `${label} falls back to the system rather than half a byline`,
+    row.byLicense === null && row.byName === 'System',
+    { byLicense: row.byLicense, byName: row.byName },
+  )
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. And the renderer, also for real.
@@ -422,6 +524,47 @@ check(
 check(
   'and still hands it to incidents.corroborate',
   /incidents\.corroborate\(/.test(route),
+)
+
+/**
+ * ═══ THE TWO FIELDS THAT CARRY THE PERSON ═══
+ *
+ * The name was never sent, at any layer, so `corroborate()` gaining an author
+ * buys nothing until the route reads one off the wire. It rides on `data`,
+ * which `lib/ingest` types as a loose record, so no wire schema changed and a
+ * gamemode build that does not send them yet leaves the row reading `System`.
+ *
+ * BOTH NAMES ARE GREPPED, AND THE HANDOFF SEPARATELY. Reading them and then
+ * dropping them on the floor is the mutation this is aimed at: a route that
+ * destructured both and passed neither would pass a grep for the names alone.
+ * Comments are stripped first, for the reason stated above.
+ */
+check(
+  'the ingest route reads the reporter off the corroboration event',
+  /reporterLicense/.test(route) && /reporterName/.test(route),
+)
+check(
+  'and hands both to the writer rather than reading them and dropping them',
+  /byLicense:\s*d\.reporterLicense/.test(route) &&
+    /byName:\s*d\.reporterName/.test(route),
+)
+
+/**
+ * AND THE SENTENCE IS BUILT IN ONE PLACE. The fold on the timeline groups rows
+ * by this text with its count clause stripped, so a format spelled in the route
+ * and a matcher spelled in the renderer would be two spellings of one decision,
+ * and the failure mode of them drifting is silent: nothing folds, and the page
+ * looks exactly as it did before the fix.
+ */
+check(
+  'the route builds the corroboration sentence through the shared builder',
+  /corroborationText\(/.test(route) &&
+    /from '@\/lib\/corroborationText'/.test(route),
+)
+check(
+  'and does not keep a second copy of the format',
+  !/refusals this match/.test(route),
+  (route.match(/refusals this match/g) ?? []).join(' '),
 )
 
 // ─────────────────────────────────────────────────────────────────────────────

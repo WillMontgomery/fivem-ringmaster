@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 import { AppShell } from '@/components/AppShell'
 import { IncidentDetail } from '@/components/IncidentDetail'
 import type { Artifact } from '@/lib/artifacts'
+import { corroborationText } from '@/lib/corroborationText'
 import { DEMO_BADGES, DEMO_USER } from '@/lib/demo'
 import {
   AUTO_CLOSE_RESOLUTION,
@@ -244,13 +245,18 @@ const STATE_CASES = {
   'banned-fast': {
     ...BANNED_FAST,
     /*
-      THE NOTE MOVES WITH THE CLOSE, for the reason `shifted` moves the match:
-      `BASE_INCIDENT` puts its system note an hour after filing, which on a case
-      closed at `+1:11` would be a note arriving fifty-nine minutes after the
+      THE CORROBORATION MOVES WITH THE CLOSE, for the reason `shifted` moves the
+      match: `BASE_INCIDENT` puts its system row an hour after filing, which on a
+      case closed at `+1:11` would be a row arriving fifty-nine minutes after the
       case was closed. Nothing else about the fixture changes.
+
+      IT KEYED ON `note` UNTIL THIS PASS AND THEREFORE MOVED NOTHING. The row it
+      is about became `kind: 'corroborated'` on 2026-08-29 and this predicate was
+      left behind, so `banned-fast` has been quietly showing the very shape the
+      comment says it exists to prevent.
     */
     events: BANNED_FAST.events.map((e) =>
-      e.kind === 'note' ? { ...e, at: FAST_NOTE } : e,
+      e.kind === 'corroborated' ? { ...e, at: FAST_NOTE } : e,
     ),
   },
 
@@ -370,6 +376,56 @@ const STATE_CASES = {
    * no way to look at that state without a live anticheat escalation sitting in
    * a real queue at the moment you happened to open the page.
    */
+  /*
+   * ═══ THE SHAPE THE OWNER PHOTOGRAPHED ═══
+   *
+   * Twenty consecutive anticheat corroborations thirty seconds apart, the tally
+   * climbing by thirty, with his own in-game report sitting in the middle of
+   * them. "a recurring offense of the anticheat system turns into tons of lines
+   * of corroborations. That shouldn't happen."
+   *
+   * WHAT THERE IS TO LOOK AT HERE IS THE FOLD AND THE BYLINE TOGETHER. The two
+   * halves collapse to one row each with a count and a span; his row stands
+   * alone between them with his name as a link, because it carries a license
+   * where the anticheat carries null. Both facts are asserted, the fold in
+   * `check:timeline` and the byline in `check:corroboration`, and neither can be
+   * SEEN anywhere else before it is deployed.
+   *
+   * HIS ROW IS THE REPORTER'S, WHICH IS THE REAL SEQUENCE. He reported a player
+   * the anticheat had already filed against, so the game turned his report into
+   * a corroboration on the existing case rather than opening a second one.
+   */
+  'corroboration-burst': {
+    ...BASE_INCIDENT,
+    incidentId: 'aaaaaaaa-0000-4000-8000-000000000003',
+    events: [
+      {
+        at: BASE - 3 * HOUR,
+        kind: 'opened',
+        byLicense: null,
+        byName: 'System',
+      },
+      ...Array.from({ length: 20 }, (_, step) => ({
+        at: BASE - 3 * HOUR + 60_000 + step * 30_000,
+        kind: 'corroborated' as const,
+        byLicense: null,
+        byName: 'System',
+        text: corroborationText({
+          count: 3 + step * 30,
+          reason: 'weapon is not one this gamemode issues',
+          severity: 'high',
+        }),
+      })),
+      {
+        at: BASE - 3 * HOUR + 60_000 + 10 * 30_000 + 1_000,
+        kind: 'corroborated',
+        byLicense: REPORTER,
+        byName: 'Marla',
+        text: corroborationText({ count: 1, reason: 'cheating' }),
+      },
+    ],
+  },
+
   system: {
     ...BASE_INCIDENT,
     incidentId: 'aaaaaaaa-0000-4000-8000-000000000002',
