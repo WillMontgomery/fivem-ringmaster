@@ -642,17 +642,18 @@ check(
  * "The '1 refusals this match' line was me." It splits the burst in two and
  * stands alone between the halves.
  *
- * ═══ AND IT IS BUILT THE WAY THE GAME BUILDS IT TODAY, WHICH IS THE WHOLE
+ * ═══ AND IT IS BUILT THE WAY EVERY STORED ROW WAS BUILT, WHICH IS THE WHOLE
  * REASON THIS FILE MISSED THE DEFECT ═══
  *
  * This fixture used to carry `byLicense: 'license:owner'`, a shape NOTHING in
- * either repository produces: the gamemode change that sends a reporter was
- * deliberately not written, so `api/ingest` passes no author and
- * `incidents.corroborate` writes `byLicense: null, byName: 'System'` for a
- * person exactly as it does for the anticheat. So the suite was covering only
- * the world after a deploy that has not happened, and the fold's author test —
- * the one its own comment called "the one that protects people" — was inert
- * against every row in the owner's table.
+ * either repository produced at the time: the gamemode change that sends a
+ * reporter had deliberately not been written, so `api/ingest` passed no author
+ * and `incidents.corroborate` wrote `byLicense: null, byName: 'System'` for a
+ * person exactly as it does for the anticheat. So the suite covered only the
+ * world after a deploy that had not happened, and the fold's author test, the
+ * one its own comment called "the one that protects people", was inert against
+ * every row in the owner's table. It is the shape the gamemode sends now, and
+ * `mineCredited` below is that case; this one is every row stored before it.
  *
  * WHAT SEPARATES HIM FROM THE ANTICHEAT ON A STORED ROW IS THE SEVERITY. Both
  * of the gamemode's human paths omit it on purpose (`players.lua`: "NO
@@ -670,8 +671,8 @@ const mine: ConsoleTimelineEvent = {
 }
 
 /*
- * THE SAME ROW AFTER THE GAMEMODE HALF LANDS, so both worlds are covered rather
- * than whichever one the fixture happened to be written in.
+ * THE SAME ROW AS THE GAMEMODE HALF NOW SENDS IT, so both worlds are covered
+ * rather than whichever one the fixture happened to be written in.
  */
 const mineCredited: ConsoleTimelineEvent = {
   ...mine,
@@ -702,7 +703,7 @@ check(
   splitFolded[1]?.source === 'console' ? splitFolded[1].event : null,
 )
 
-/* And the same, once the gamemode starts putting his name on it. */
+/* And the same, on the rows the gamemode puts his name on. */
 const splitCredited = foldCorroborations(
   mergeTimeline([...burst, mineCredited], []),
 )
@@ -715,16 +716,17 @@ check(
 )
 
 /*
- * ═══ TWO PEOPLE, ONE CASE, ONE CATEGORY — AND THIS IS THE ONE THAT FAILED ═══
+ * ═══ TWO PEOPLE, ONE CASE, ONE CATEGORY, AND THIS IS THE ONE THAT FAILED ═══
  *
  * Two different players press the report key on the same open case a minute
  * apart. `players.lua` numbers them off one counter, so the console stores
  * "1 refusals this match · last: cheating" and "2 refusals this match · last:
- * cheating" — and today BOTH carry `byLicense: null, byName: 'System'`, because
- * no reporter is sent. The keypress path has exactly one reason,
- * `BR.Config.defaultReportCategory()`, so the fingerprints are identical by
- * construction and not by coincidence: the accused-scoped one-action-per-match
- * rule means two adjacent human rows are guaranteed to be two DIFFERENT people.
+ * cheating", and on every row stored before the gamemode began sending a
+ * reporter BOTH carry `byLicense: null, byName: 'System'`. The keypress path
+ * has exactly one reason, `BR.Config.defaultReportCategory()`, so the
+ * fingerprints are identical by construction and not by coincidence: the
+ * accused-scoped one-action-per-match rule means two adjacent human rows are
+ * guaranteed to be two DIFFERENT people.
  *
  * Folding them deletes one person's report from the record and attributes the
  * survivor to the anticheat. `br_core/server/incident.lua` says what that is
@@ -768,7 +770,7 @@ check(
 /*
  * WHAT THE DISCRIMINATOR IS, ON ITS OWN. The human paths send no severity and
  * the anticheat paths always send one, so `worst:` at the end of the sentence
- * is the machine's signature — and it is the only signature a row stored before
+ * is the machine's signature, and it is the only signature a row stored before
  * any of this can carry, because the owner does not hand-edit DynamoDB.
  */
 check(
@@ -866,9 +868,9 @@ check(
 /*
  * ═══ A RUN CANNOT REACH FURTHER THAN A MATCH ═══
  *
- * A case is not match scoped — `players.lua` attaches a keypress report to
+ * A case is not match scoped. `players.lua` attaches a keypress report to
  * `BR.Incident.openFor` and its own comment says "A day-old case corroborated
- * in tonight's round restarts at 2" — so two corroborations three days apart
+ * in tonight's round restarts at 2", so two corroborations three days apart
  * with nothing stored between them are CONSECUTIVE ROWS. Folded, they read
  * "refusals this match … happened 2 times in 72 hours", a sentence that
  * contradicts itself and presents two nights of behavior as one offense.
@@ -894,7 +896,7 @@ check(
 /*
  * THE EDGE, BOTH SIDES OF IT. An hour is inside the reach and a millisecond
  * past it is not, so the largest span the page can ever print for a run is one
- * hour — which is also the largest thing a match can be.
+ * hour, which is also the largest thing a match can be.
  */
 const atTheEdge = foldCorroborations(
   mergeTimeline(
@@ -1002,7 +1004,7 @@ check(
  *
  * The byline tested `byLicense === null`, and `incidents.ts` writes
  * `byLicense: input.actor.license ?? ''` for a signed-in admin with no grants
- * row — a state `lib/grants.ts` calls normal and fully privileged, and one that
+ * row, a state `lib/grants.ts` calls normal and fully privileged, and one that
  * is already stored on every case such an admin has closed. Empty string is not
  * null, so their name on the closing row became a link to `/players/?from=…`,
  * and there is no `/players` route: `next build` lists `/players/[license]` and
@@ -1062,9 +1064,9 @@ const spanCases: Array<[number, string]> = [
   /*
    * THE HANDOVER, WHICH USED TO GO BACKWARDS. `minutes < 90` was tested on the
    * ROUNDED minutes and the hours were rounded from the raw span, so 89 minutes
-   * read "89 minutes", 89 and a half read "1 hour" — SHORTER — and 90 read "2
-   * hours", a third longer than it was. The rung now changes exactly where its
-   * own rounding carries, which is also what makes "1 hour" reachable at all:
+   * read "89 minutes" and 89 and a half read "1 hour", which is SHORTER, while
+   * 90 read "2 hours", a third longer than it was. The rung now changes exactly
+   * where its own rounding carries, which is also what makes "1 hour" reachable:
    * under the old branch the first hour value that could ever print was 2.
    */
   [60 * MIN, '1 hour'],
@@ -1079,7 +1081,7 @@ for (const [ms, said] of spanCases) {
 /*
  * AND IT NEVER GOES BACKWARDS, swept rather than sampled. A longer run must
  * never print a shorter duration: that is the one property of this sentence an
- * admin reads it for, and the sampled cases above could not see it — the band
+ * admin reads it for, and the sampled cases above could not see it: the band
  * where it broke was half a minute wide, between two of them.
  */
 const UNIT_MS: Record<string, number> = {
@@ -2836,7 +2838,7 @@ check(
  * neither half was visible from here. `incidents.ts` writes `byLicense: ''` for
  * an admin with no grants row, and an empty string is not null, so the closing
  * row of every case such an admin resolved drew their name as a link to
- * `/players/?from=…` — a route `next build` does not list. And it reached EVERY
+ * `/players/?from=…`, a route `next build` does not list. And it reached EVERY
  * console kind, so the name on the row that opens a case became a hyperlink the
  * owner never asked for.
  *

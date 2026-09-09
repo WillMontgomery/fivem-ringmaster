@@ -12,8 +12,8 @@
  *
  * `linksToProfile` had no cases at all. Its own header says what it is for and
  * what breaks it: "If a link is added to that page and not added here, the
- * breadcrumb silently stops working for it." A link WAS added to that page —
- * the byline of a corroboration a person filed — and it was not added here, so
+ * breadcrumb silently stops working for it." A link WAS added to that page, the
+ * byline of a corroboration a person filed, and it was not added here, so
  * the href carried `?from=<case>` to a page that dropped it and drew "back to
  * live players". The owner's own words are what that parameter exists to
  * answer: "the breadcrumbs there say 'back to live players' and it should
@@ -21,7 +21,7 @@
  *
  * SILENT IS THE WORD THAT MATTERS. Nothing failed, nothing logged, and it even
  * WORKED whenever the corroborator happened to appear in one of the subject's
- * kill rows — intermittent rather than absent, which is the harder bug to see.
+ * kill rows: intermittent rather than absent, which is the harder bug to see.
  *
  * ═══ AND THE OTHER HALF IS THAT THE TWO LISTS MUST MATCH ═══
  *
@@ -84,7 +84,7 @@ check(
 /**
  * ANTICHEAT CASE, SO THERE IS NO REPORTER TO MATCH. The owner corroborates it
  * in game against a player he never traded a kill with. He is not the subject,
- * not the reporter, not the linked license, and not a party to any kill — the
+ * not the reporter, not the linked license, and not a party to any kill, so the
  * byline is the ONLY link on that page to his profile.
  */
 const anticheatCase = {
@@ -168,7 +168,7 @@ check(
 // ---------------------------------------------------------------------------
 
 if (failed) {
-  console.error(`\ncheck:profilelink — ${failed} of ${ran} case(s) failed`)
+  console.error(`\ncheck:profilelink failed ${failed} of ${ran} case(s)`)
   console.error(
     'The breadcrumb back to an incident is only drawn for a profile that ' +
       'incident actually links to. See src/lib/profileLink.ts.',
@@ -176,6 +176,6 @@ if (failed) {
   process.exit(1)
 }
 console.log(
-  `check:profilelink — ${ran} cases: the href, the parameter, and the link set ` +
-    'the breadcrumb trusts, including the corroborator',
+  `check:profilelink passed ${ran} cases: the href, the parameter, and the ` +
+    'link set the breadcrumb trusts, including the corroborator',
 )

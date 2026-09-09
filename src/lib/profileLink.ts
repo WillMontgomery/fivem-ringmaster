@@ -88,14 +88,14 @@ export function fromIncidentParam(
  * carrying `?from=<case>` to a profile that is not the subject, is not the
  * reporter (an anticheat case has none), is not the linked license, and need
  * never have traded a kill with the subject. Every clause missed him, the
- * parameter was dropped, and the breadcrumb read "back to live players" — the
+ * parameter was dropped, and the breadcrumb read "back to live players", the
  * one sentence this module exists to answer. It worked only when he happened to
  * appear in a kill row, which is worse than not working.
  *
  * ONLY A CORROBORATION'S AUTHOR, MATCHING THE MARKUP EXACTLY. The rows that open
  * and close a case draw their author as plain text, so an admin's license on a
  * `resolved` event is not a link this page carries and must not open a
- * breadcrumb — `lib/corroborationText`'s `linksAuthor` is the other half of this
+ * breadcrumb. `lib/corroborationText`'s `linksAuthor` is the other half of this
  * pair, and the kind is spelled here rather than imported because this module
  * has no runtime imports and every shape it reads is restated structurally.
  *

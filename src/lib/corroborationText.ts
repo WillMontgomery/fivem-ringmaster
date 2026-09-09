@@ -31,13 +31,16 @@
  * ═══ AND ONLY THE ANTICHEAT'S ROWS ARE EVER FOLDED ═══
  *
  * A person's corroboration is a person's evidence and may not be absorbed into
- * somebody else's tally. That cannot be decided on the author, because there
- * is not one: until the gamemode sends a reporter, every corroboration is
- * stored `byLicense: null, byName: 'System'`, and the rows already in the
- * owner's table will never carry one whatever ships next. {@link gradesSeverity}
- * is what decides it instead, on the sentence, so it holds for the rows he has
- * today. A run also never reaches further than a match can last; see
- * {@link MATCH_REACH_MS}.
+ * somebody else's tally. TWO SEPARATE TESTS KEEP ONE OUT OF A RUN, and each
+ * covers rows the other cannot reach. The author is one: the gamemode now puts
+ * `reporterLicense` and `reporterName` on both of its human paths and on none
+ * of the anticheat's, so a corroboration written after that build deploys names
+ * the person who filed it. {@link gradesSeverity} is the other, read off the
+ * sentence, and it is the only thing standing over the rows ALREADY in the
+ * owner's table: those were stored `byLicense: null, byName: 'System'` for a
+ * person exactly as for the machine, he does not hand-edit DynamoDB, and no
+ * deploy reaches backwards to credit them. A run also never reaches further
+ * than a match can last; see {@link MATCH_REACH_MS}.
  *
  * NO NEW WORDS ON THE PAGE BEYOND THE ONES THE OWNER WROTE. Every character
  * before the appended clause is the row's existing text; the clause itself is
@@ -57,8 +60,9 @@ const SEP = ' · '
  * The two labeled clauses, named once so the builder and the matchers below
  * cannot disagree about them.
  *
- * `worst:` IS LOAD-BEARING AND NOT DECORATION. See {@link gradesSeverity}: it
- * is the one thing on a stored row that says the anticheat wrote it.
+ * `worst:` IS LOAD-BEARING AND NOT DECORATION. See {@link gradesSeverity}: on a
+ * row stored before the gamemode began naming a human reporter, it is the one
+ * thing left that says the anticheat wrote it.
  */
 const REASON_PREFIX = 'last: '
 const SEVERITY_PREFIX = 'worst: '
@@ -93,18 +97,19 @@ export function corroborationText(input: {
 }
 
 /**
- * ═══ THE ONE THING A STORED ROW SAYS ABOUT WHO WROTE IT ═══
+ * ═══ WHAT A ROW WITH NO AUTHOR STILL SAYS ABOUT WHO WROTE IT ═══
  *
  * Does this sentence carry a graded severity, which only the anticheat sends.
  *
- * THE PROBLEM THIS SOLVES, IN THE STATE THAT IS ACTUALLY SHIPPING. The fold
- * below must never swallow a person's report into somebody else's tally. The
- * obvious test is the author, and the author is not there: until the gamemode
- * starts sending `reporterLicense`, EVERY corroboration reaches this console
- * with `byLicense: null, byName: 'System'`, a person's and the anticheat's
- * alike. The owner does not hand-edit DynamoDB, so the rows already in his
- * table will never carry it whatever the gamemode does next. A guard that only
- * works after a deploy is not a guard for those rows.
+ * THE PROBLEM THIS SOLVES IS THE ROWS THAT ARE ALREADY STORED. The fold below
+ * must never swallow a person's report into somebody else's tally. The obvious
+ * test is the author, and on a row written from here on the author is there:
+ * the gamemode sends `reporterLicense` on both human paths and on none of the
+ * anticheat's. It is not there on anything written before that, because every
+ * corroboration reached this console as `byLicense: null, byName: 'System'`, a
+ * person's and the anticheat's alike. The owner does not hand-edit DynamoDB, so
+ * those rows will never carry an author whatever the gamemode does next, and
+ * the author test is blind to every one of them. This test can still read them.
  *
  * SEVERITY IS THE DISCRIMINATOR, AND IT IS STRUCTURAL RATHER THAN A HEURISTIC.
  * Both of the gamemode's human paths omit it deliberately and say why in the
@@ -112,8 +117,8 @@ export function corroborationText(input: {
  * keypress report, "NO SEVERITY, for the reason BR.IncidentBuild.fromReport
  * gives: a human's category is not a measurement, and grading it here would
  * invent confidence that does not exist." All three anticheat paths in
- * `br_core/server/incident.lua` send one — the refusal doubling forwards
- * `ev.severity`, the strip and the vehicle handlers both read
+ * `br_core/server/incident.lua` send one: the refusal doubling forwards
+ * `ev.severity`, and the strip and the vehicle handlers both read
  * `BR.ShotTier[...]`. So `worst:` on the row means a machine graded it.
  *
  * IT FAILS TOWARDS NOT FOLDING, WHICH IS THE DIRECTION THAT MATTERS. An
@@ -194,8 +199,8 @@ function plural(n: number, unit: string): string {
  *
  * This tested `minutes < 90` on the ROUNDED minutes and then rounded the raw
  * span into hours, and those two roundings disagreed in the band between them:
- * 89 minutes read "89 minutes", 89 and a half read "1 hour" — a longer span
- * printing a shorter duration — and 90 read "2 hours", a third more than it
+ * 89 minutes read "89 minutes" and 89 and a half read "1 hour", a longer span
+ * printing a shorter duration, while 90 read "2 hours", a third more than it
  * was. A duration that goes backwards as the run gets longer is worse than an
  * imprecise one, because the page is then evidence of nothing.
  *
@@ -203,8 +208,8 @@ function plural(n: number, unit: string): string {
  * hand over when they round to sixty, and sixty seconds IS one minute, so the
  * next rung's first reading is "1 minute" and never a smaller number than the
  * last one it replaced. Minutes hand over to hours on the same rule, which is
- * also what makes "1 hour" reachable — under `< 90` it never was, because 90
- * minutes divided by an hour rounds to 2. Every reading is within half of its
+ * also what makes "1 hour" reachable at all. Under `< 90` it never was, because
+ * 90 minutes divided by an hour rounds to 2. Every reading is within half of its
  * own unit of the truth, which is all that rounding to a unit can promise.
  *
  * A ZERO SPAN STILL READS AS A DURATION. Two corroborations can share an
@@ -237,13 +242,13 @@ type ConsoleRow = Extract<TimelineRow, { source: 'console' }>
  * what that costs: "A day-old case corroborated in tonight's round restarts at
  * 2." Two corroborations days apart with nothing stored between them are
  * consecutive ROWS, and an unbounded fold turned them into one line reading
- * "refusals this match … happened 2 times in 72 hours" — a sentence that
+ * "refusals this match … happened 2 times in 72 hours", a sentence that
  * contradicts itself and presents two nights as one recurring offense.
  *
  * ONE HOUR, WHICH IS THE LONGEST A MATCH CAN BE. The gamemode's own
  * `br_lib/shared/incident_build.lua` sets `MATCH_ENDS_BY_MS = 60 * 60 * 1000`
  * against a round that runs about twenty minutes, and this console already
- * spends the same number for the same reason — `matchTimeline`'s
+ * spends the same number for the same reason in `matchTimeline`'s
  * `OFFSET_REACH_MS`, "one hour is three matches". A run that reaches further
  * than a match can is not one recurring offense, whatever the sentences say.
  *
@@ -256,23 +261,34 @@ const MATCH_REACH_MS = 60 * 60_000
 /**
  * A row that may join a run: an anticheat corroboration with a readable clock.
  *
- * ═══ THE TEST THAT PROTECTS PEOPLE IS `gradesSeverity`, NOT THE AUTHOR ═══
+ * ═══ TWO LOCKS, AND NEITHER OF THEM IS THE SPARE ═══
  *
- * This tested `byLicense === null` and called that "the one that protects
- * people". It protects nobody today. The gamemode does not send a reporter yet,
- * so a person's corroboration is stored `byLicense: null, byName: 'System'`,
- * byte for byte the same as the anticheat's — and the keypress path always
- * sends ONE reason, `BR.Config.defaultReportCategory()`, so two players
- * reporting the same case fingerprinted alike, folded, and one of them was
- * deleted from the page. That is the regression against the complaint that
- * started this: his row did not merely lack a name, it could vanish.
+ * A person's corroboration must never be absorbed into a run.
+ * `!row.event.byLicense` and {@link gradesSeverity} each refuse one, they
+ * refuse over DIFFERENT rows, and dropping either leaves a set of rows with
+ * nothing over them. Do not collapse this to a single test.
  *
- * {@link gradesSeverity} is the discriminator that works on the rows already in
- * the table, and it is where the argument for it lives.
+ * THE AUTHOR TEST COVERS EVERY ROW WRITTEN FROM HERE ON. The gamemode's
+ * `br_core/server/players.lua` now puts `reporterLicense` and `reporterName` on
+ * both of its human paths and `br_ringmaster` forwards them; the three
+ * anticheat paths in `br_core/server/incident.lua` send neither, on purpose, so
+ * that an absent reporter reads as "the system did this" rather than as "we did
+ * not look". With that build on the box a credited row is excluded on its own
+ * account, and nothing has to be inferred from its sentence.
  *
- * THE AUTHOR TEST STAYS, AS THE SECOND LOCK RATHER THAN THE ONLY ONE, and it is
- * truthy now: once the gamemode sends `reporterLicense`, a credited row is
- * excluded on its own account without waiting on the sentence.
+ * `gradesSeverity` COVERS THE ROWS ALREADY IN DYNAMODB, WHICH NOTHING ELSE CAN.
+ * Everything stored before that build was written `byLicense: null,
+ * byName: 'System'`, a person's byte for byte the same as the anticheat's. The
+ * owner does not hand-edit DynamoDB and no deploy reaches backwards, so those
+ * rows will never carry an author and the author test cannot see them at all.
+ * The severity is the only mark left on them saying which one wrote it.
+ *
+ * WHAT AN UNGUARDED ROW ACTUALLY COSTS. The keypress path sends ONE reason for
+ * every report it ever makes, `BR.Config.defaultReportCategory()`, so two
+ * players reporting the same case fingerprint alike. Take away whichever lock
+ * covers those two rows and they fold into one, with one player's report gone
+ * from the page. That is the regression against the complaint that started
+ * this: his row would not merely lack a name, it could vanish.
  */
 function foldable(row: TimelineRow): row is ConsoleRow {
   return (

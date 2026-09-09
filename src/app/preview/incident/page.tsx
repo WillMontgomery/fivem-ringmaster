@@ -391,13 +391,14 @@ const STATE_CASES = {
    * `check:timeline` and the byline in `check:profilelink`, and neither can be
    * SEEN anywhere else before it is deployed.
    *
-   * TWO HUMAN ROWS, WHICH IS THE STATE OF THE CREDIT ITSELF. The first is what
-   * the game sends TODAY — no reporter at all, so the console writes
-   * `byLicense: null, byName: 'System'` for a person exactly as for the machine,
-   * and the row reads "System" however this page is written. The second is the
-   * same report once the gamemode starts sending `reporterLicense`, which is the
-   * only one that draws a name and a link. Showing one of them alone would be
-   * this harness claiming a state that is not deployed.
+   * TWO HUMAN ROWS, WHICH IS THE STATE OF THE CREDIT ITSELF. The first is the
+   * shape every stored corroboration has: no reporter at all, so the console
+   * wrote `byLicense: null, byName: 'System'` for a person exactly as for the
+   * machine, and the row reads "System" however this page is written. The second
+   * is the same report as the gamemode sends it now that it carries
+   * `reporterLicense`, which is the only one that draws a name and a link.
+   * Showing one of them alone would be this harness claiming that half the rows
+   * on a real case do not exist.
    *
    * THE ROWS ARE THE REPORTER'S, WHICH IS THE REAL SEQUENCE. He reported a
    * player the anticheat had already filed against, so the game turned his

@@ -574,14 +574,14 @@ check(
  * in the batch with it, discarding the per-event `at` the envelope carries and
  * `lib/ingest` validates. While each corroboration was its own row that was
  * imprecise; now that the timeline collapses a run into one line saying how
- * long it reached, it is false — a flushed outbox batch shares a millisecond
+ * long it reached, it is false. A flushed outbox batch shares a millisecond,
  * and the page said "happened 12 times in 1 second" about six minutes of a
  * match.
  *
  * `realTime` IS THE FUNCTION THE ENVELOPE'S CLOCK PAIR EXISTS FOR, and it had
  * no callers anywhere in this repository. `ev.at` is a `GetGameTimer()` reading
  * and is not a date on its own, so a route that read `ev.at` and used it raw
- * would put every corroboration in 1970 — which is why this greps the
+ * would put every corroboration in 1970, which is why this greps the
  * conversion and not the field.
  */
 check(
