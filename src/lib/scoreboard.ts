@@ -1,3 +1,4 @@
+import { feedFailed, type Feed } from './feedHealth'
 import { levelFor } from './xp'
 
 /**
@@ -805,9 +806,17 @@ export const SQUAD_MAX_ROWS = 6
 export function squadFrom(
   players: readonly LivePlayer[],
   viewer: string,
-  feed: 'live' | 'stale' | 'dead' | 'offline',
+  /**
+   * THE CONSOLE'S OWN WORD, IMPORTED RATHER THAN SPELLED OUT AGAIN. Writing the
+   * four words here would be a second opinion about what a feed can be, which is
+   * the defect `lib/feedHealth` exists to prevent and says so at length about
+   * `DEAD_MS`. And `feedFailed` is imported for the same reason: "which of these
+   * words is a failure" is already decided, in one place, for `/api/health` and
+   * the header chip, and this slide has no business deciding it differently.
+   */
+  feed: Feed,
 ): { squadId: string; members: LivePlayer[] } | null {
-  if (feed === 'dead' || feed === 'offline') return null
+  if (feedFailed(feed)) return null
 
   const me = players.find((p) => p.license === viewer)
   if (!me) return null
