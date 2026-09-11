@@ -80,6 +80,79 @@ const schema = z.object({
   // console's prefix so the two can be granted separately in IAM.
   DDB_GAME_TABLE_PREFIX: z.string().default('br-'),
 
+  // --- Warmup stat board -----------------------------------------------
+  /**
+   * Leave admins off the warmup leaderboard (#247). DEFAULT OFF, which is the
+   * owner's choice: "Config flag defaulting off is good with me".
+   *
+   * THE FILTER IS LIVE AND TESTED IN BOTH POSITIONS, not commented out. With
+   * this unset the board ranks everybody, including admins, and does not read
+   * the grants table at all; with it `true`, `lib/scoreboardStore.ts` reads that
+   * table once per snapshot and drops those licenses from every card and from
+   * the ranks on the per-player half. `src/lib/scoreboard.check.ts` drives both.
+   *
+   * ═══ WHAT "BEST EFFORT" MEANS HERE, PRECISELY ═══
+   *
+   * The owner's words were "Even if we cache that data as a best-effort thing.
+   * We definitely shouldn't query Discord every time for that." Nothing in this
+   * console caches Discord role membership and nothing ever has -
+   * `lib/discordRole.ts` asks Discord live before every write and explains why a
+   * TTL there would be a hole. So the only durable answer available is
+   * `ringmaster-grants`, the hand-written Discord-to-license link rows.
+   *
+   * THE STALENESS IS NOT A CACHE WINDOW, IT IS THE ROWS THEMSELVES. An admin who
+   * holds the Discord role but has no grant row is NOT hidden, because nothing
+   * writes them one; someone whose row outlived their role stays hidden. Both are
+   * fixed with `scripts/grant.mjs` and neither is fixed by waiting. Turning this
+   * on and finding an admin still on the board is that, not a bug in the filter.
+   *
+   * A STRING, PARSED STRICTLY. `SCOREBOARD_HIDE_ADMINS=yes` stops the process at
+   * boot naming the variable rather than being read as false, because a flag that
+   * silently means "off" whenever it is misspelled is a flag that is off.
+   */
+  SCOREBOARD_HIDE_ADMINS: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /**
+   * HOW MUCH THE WARMUP BOARD MOVES (#247). DEFAULT `full`, because the owner
+   * asked for motion: "We need something with some pizzazz! Some animated
+   * background and transitions and colors."
+   *
+   * ═══ THIS KNOB EXISTS BECAUSE THE MOTION IS THE ONLY PART OF THIS FEATURE
+   *     THAT COSTS ANYTHING PER SECOND ═══
+   *
+   * A DUI is a Chromium instance rendering offscreen on EACH PLAYER'S OWN
+   * machine. CEF calls its paint handler only when the page changes, at up to
+   * `windowless_frame_rate` (default 30), and FiveM's accelerated path shares a
+   * D3D11 texture with dirty-rect tracking disabled, so every repaint moves the
+   * whole 1280x720 surface. A still page therefore costs NOTHING and an animated
+   * one costs a steady stream of full-surface updates, on every machine in the
+   * warmup pad at once.
+   *
+   * The three levels are the three honest points on that trade, and they are an
+   * environment variable rather than a constant so the choice can be made on the
+   * pad and reversed without a redeploy:
+   *
+   *   full         the view transition AND a continuous background drift. The
+   *                drift never stops, so the board repaints for as long as the
+   *                prop exists. This is what he asked for.
+   *   transitions  the view transition only. The surface is STILL between swaps;
+   *                the cost is about six tenths of a second of frames once every
+   *                ten to fifteen seconds and nothing at all in between.
+   *   off          no animation anywhere. The instant swap, and a surface that
+   *                repaints twice a minute.
+   *
+   * A STRING, PARSED STRICTLY, for the same reason as the flag above:
+   * `SCOREBOARD_MOTION=none` stops the process at boot naming the variable
+   * rather than being read as one of these by accident.
+   *
+   * IT IS READ PER REQUEST, NOT AT MODULE LOAD, so a restart is all it takes.
+   * See `src/app/scoreboard/route.ts` and `lib/scoreboardPage.ts`.
+   */
+  SCOREBOARD_MOTION: z.enum(['full', 'transitions', 'off']).default('full'),
+
   // --- Ingest ----------------------------------------------------------
   // Shared secret the game server presents on its push. The endpoint is only
   // reachable over the peered CIDR, so this is defence in depth rather than

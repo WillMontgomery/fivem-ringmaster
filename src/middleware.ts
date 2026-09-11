@@ -77,6 +77,26 @@ const SESSION_COOKIES = [
  *
  * `/login` is excluded because bouncing it is a redirect loop, and `/preview`
  * is the design harness, which 404s in production regardless.
+ *
+ * `/scoreboard` IS THE FIRST EXEMPTION THAT IS NOT ONE OF THOSE THREE SHAPES,
+ * and it needs its own sentence because it is the first path here that is
+ * deliberately public (#247). It is the warmup-area stat board, fetched by a DUI
+ * on a player's own machine with no session and no cookie, and the owner chose
+ * that: "build a page which requires no auth and provides info when given a
+ * user's license key". Without this line the bounce sends it a 307 to `/login`,
+ * and a client that follows redirects paints a Discord login form onto a prop in
+ * the middle of the warmup area.
+ *
+ * IT IS A PAGE PATH RATHER THAN AN `/api` ONE, so it does not inherit the API
+ * skip above, and that is not an accident of naming either: the owner specified
+ * the URL as `https://ringmaster.blitz-royale.com/scoreboard?id=...`.
+ *
+ * IT SKIPS THE BOUNCE AND NOTHING ELSE. The origin refusal above still runs, as
+ * it does for every path; the route exports only `GET`, reads only, and takes
+ * one argument that must match forty hex characters before it reaches DynamoDB.
+ * `src/lib/scoreboard.check.ts` drives the shipped middleware in production mode
+ * to prove both halves: that this path is not bounced, and that an ordinary page
+ * still is.
  */
 function bounceExempt(pathname: string): boolean {
   return (
@@ -85,7 +105,8 @@ function bounceExempt(pathname: string): boolean {
     pathname === '/login' ||
     pathname.startsWith('/login/') ||
     pathname === '/preview' ||
-    pathname.startsWith('/preview/')
+    pathname.startsWith('/preview/') ||
+    pathname === '/scoreboard'
   )
 }
 
