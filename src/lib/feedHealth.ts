@@ -111,6 +111,71 @@ export function feedNow(ageMs: number | null): Feed {
 }
 
 /**
+ * ═══ HOW OLD THE PICTURE IS BETWEEN POLLS, WITHOUT TRUSTING THE VIEWER'S CLOCK
+ *     ═══
+ *
+ * THE BUG THIS EXISTS TO DELETE. The header chip used to compute
+ * `Date.now() - lastPushAt`, where `Date.now()` is the BROWSER's wall clock and
+ * `lastPushAt` was stamped on the CONSOLE SERVER's. Those are two different
+ * clocks, so the subtraction is not an age, it is an age plus the difference
+ * between two machines. The owner's own machine was three to four seconds fast,
+ * which put the reading directly on the 6000ms `STALE_MS` boundary, and the chip
+ * flipped between `Live` and `Falling behind` on very nearly every render. Fixing
+ * his clock stopped the symptom. It did not fix the code, and a viewer's clock
+ * must never be able to make the console lie about the feed.
+ *
+ * SO THE AGE IS THE SERVER'S, ADVANCED BY A MONOTONIC CLOCK. `/api/state`
+ * already computes `view.ageMs` from two readings of ONE clock - its own - and
+ * already ships it. The component records that number together with a
+ * `performance.now()` reading taken at the moment it arrived, and between polls
+ * renders `serverAgeMs + (performance.now() - at)`. Two clocks are still
+ * involved and neither is compared to the other: one supplies the ORIGIN and one
+ * supplies the ELAPSED.
+ *
+ * `performance.now()` AND NOT `Date.now()`, AND THAT IS THE WHOLE POINT.
+ * `performance.now()` is monotonic and is not moved by an NTP step, a hypervisor
+ * time sync, a daylight saving change or somebody setting the date by hand. The
+ * same paragraph is already written above about a NEGATIVE age, which is what a
+ * backwards wall clock produced on the server side of this same arithmetic; this
+ * is the browser side of the same defect.
+ *
+ * ═══ AND THERE IS DELIBERATELY NO HYSTERESIS ═══
+ *
+ * A band around the threshold would also have stopped the flicker, and it would
+ * have been the wrong fix: the reading was wrong, not noisy. It would also have
+ * had to live in `feedNow`, which is a PURE function shared with
+ * `GET /api/health` - making it stateful would give the endpoint an operator
+ * pages on a memory of what it said last time, which is a different contract
+ * from the one `check-health-route.mjs` holds it to.
+ *
+ * NULL IS CARRIED THROUGH AND NEVER FILLED IN. A poll that legitimately answers
+ * "this console has never been pushed to" must reach `feedNow` as null so it
+ * renders `No data`. The chip used to write `polled.view.lastPushAt ?? seed`,
+ * which threw that answer away and kept ageing from a stale seed until it
+ * eventually claimed `Feed lost` - a statement about a feed that had stopped,
+ * for a console that never had one.
+ */
+export interface FeedAnchor {
+  /** The age the SERVER computed, or null if it has never been pushed to. */
+  serverAgeMs: number | null
+  /** A `performance.now()` reading from the moment that age arrived. */
+  at: number
+}
+
+export function ageFrom(anchor: FeedAnchor, mark: number): number | null {
+  if (anchor.serverAgeMs === null) return null
+  /**
+   * CLAMPED AT ZERO ON THE ELAPSED HALF ONLY. `performance.now()` cannot go
+   * backwards, so this can only fire if a reading is taken from a different time
+   * origin than the anchor - which is a bug, and adding a negative number to a
+   * real age would report the feed as FRESHER than the server said it was.
+   * Adding nothing reports it as exactly what the server said, which is the safe
+   * direction and is also what the very first render does.
+   */
+  return anchor.serverAgeMs + Math.max(0, mark - anchor.at)
+}
+
+/**
  * IS THIS FEED A STATED FAILURE — the same shape of question `dispatchFaults`
  * and `faults` answer for the other two channels, and answered here so that
  * `lib/healthVerdict` has one list to consult rather than three spellings of

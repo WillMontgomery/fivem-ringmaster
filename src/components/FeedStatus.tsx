@@ -3,7 +3,7 @@
 import { Radio, WifiOff } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
-import { feedNow, type Feed } from '@/lib/feedHealth'
+import { ageFrom, feedNow, type Feed, type FeedAnchor } from '@/lib/feedHealth'
 import { useLiveState } from '@/lib/livePoll'
 import { cn } from '@/lib/utils'
 
@@ -99,26 +99,66 @@ export function FeedStatus({
   /**
    * The shared poller — same tick, same object, as the board below it, so the
    * chip can never claim an age the table contradicts. `useLiveState` is
-   * unchanged since this component was deleted; `view.lastPushAt` still rides
-   * every payload, because it is what proves a deployed server came back.
+   * unchanged since this component was deleted; `view.ageMs` rides every
+   * payload, computed on the console's own clock from its own two readings.
    */
   const polled = useLiveState(live)
-  const lastPushAt = polled?.view.lastPushAt ?? initialLastPushAt
+
+  /**
+   * ═══ THE AGE COMES FROM THE SERVER AND ONLY THE ELAPSED TIME COMES FROM HERE
+   *     ═══
+   *
+   * This component used to compute `Date.now() - lastPushAt`, and those two
+   * numbers are from two different machines' clocks. A viewer a few seconds fast
+   * landed the result on the `STALE_MS` boundary and the chip flipped between
+   * `Live` and `Falling behind` on nearly every render. `lib/feedHealth` carries
+   * the full account and `ageFrom` is the arithmetic; the two lines below are
+   * what feed it.
+   *
+   * THE SEED IS SERVER-MINUS-SERVER, so the first client render produces exactly
+   * the number the markup it is hydrating was rendered from, whatever the
+   * viewer's clock says. Both `now` and `lastPushAt` were read on the console.
+   *
+   * `mark` IS A SECOND `performance.now()` RATHER THAN THE ANCHOR'S, because a
+   * `useState` initializer cannot see the state beside it. The two readings are
+   * microseconds apart and the difference is the elapsed time at first render,
+   * which is what it should be.
+   */
+  const [anchor, setAnchor] = useState<FeedAnchor>(() => ({
+    serverAgeMs: initialLastPushAt === null ? null : Math.max(0, initialNow - initialLastPushAt),
+    at: performance.now(),
+  }))
+  const [mark, setMark] = useState(() => performance.now())
+
+  /**
+   * A POLL RE-ANCHORS. `view.ageMs` is taken WHOLE, including its null: a
+   * console that has never been pushed to answers null and must render `No
+   * data`. The previous `?? initialLastPushAt` discarded exactly that answer and
+   * kept ageing from a stale seed until the chip claimed `Feed lost`.
+   *
+   * A FAILED POLL RE-ANCHORS NOTHING. `useLiveState` only replaces its payload
+   * on a successful fetch, so a run of failures leaves this effect unfired and
+   * the age keeps climbing from the last good anchor — which is the chip doing
+   * its job rather than freezing.
+   */
+  useEffect(() => {
+    if (polled === null) return
+    const at = performance.now()
+    setAnchor({ serverAgeMs: polled.view.ageMs, at })
+    setMark(at)
+  }, [polled])
 
   /**
    * THE AGE HAS TO TICK ON ITS OWN, not only when a poll lands — a feed that
    * has stopped produces no polls, which is precisely the state this chip
-   * exists to report. It starts from the server-rendered `now` so the first
-   * client render matches the markup it is hydrating.
+   * exists to report.
    */
-  const [now, setNow] = useState(initialNow)
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1_000)
+    const t = setInterval(() => setMark(performance.now()), 1_000)
     return () => clearInterval(t)
   }, [])
 
-  const ageMs = lastPushAt === null ? null : Math.max(0, now - lastPushAt)
-  const tone = feedNow(ageMs)
+  const tone = feedNow(ageFrom(anchor, mark))
   const t = TONE[tone]
 
   return (
