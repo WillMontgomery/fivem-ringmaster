@@ -1,7 +1,17 @@
 import { env } from '@/lib/env'
-import { boardHeaders, normalizeLicense, playerPanelFrom, rankBoard } from '@/lib/scoreboard'
-import { renderScoreboard } from '@/lib/scoreboardPage'
+import { feedNow } from '@/lib/feedHealth'
+import {
+  boardHeaders,
+  normalizeLicense,
+  playerPanelFrom,
+  rankBoard,
+  squadFrom,
+  squadPanelFrom,
+  type BoardRow,
+} from '@/lib/scoreboard'
+import { PHASE_COUNT, renderScoreboard } from '@/lib/scoreboardPage'
 import { boardSnapshot, playerRowFor } from '@/lib/scoreboardStore'
+import { liveView } from '@/lib/state'
 
 /**
  * The warmup-area stat board (#247).
@@ -128,6 +138,35 @@ function refuse(status: number, body: string): Response {
   })
 }
 
+/**
+ * Where each of the background's moving layers starts in its own loop.
+ *
+ * ═══ THE OWNER RULED SYNCHRONIZATION OUT, SO THIS IS THE WHOLE MECHANISM ═══
+ *
+ * "the content doesn't need to be time synced on everyone's client. Each one
+ * having a different background is fine - nobody will know. It also means the
+ * background may be randomized per client at load if that looks better, since
+ * variety costs nothing here."
+ *
+ * So there is no seed, no start time, no clock in the payload and nothing for
+ * two clients to agree about. Each page load draws four numbers in [0, 1) and
+ * `lib/scoreboardPage.ts` turns each into a negative `animation-delay`, which
+ * starts that layer part-way through its loop. Two players standing at the same
+ * prop see the same board with the background at different points, which he
+ * explicitly said is fine, and which was going to be true anyway: every client
+ * runs its own browser and paints its own texture.
+ *
+ * `Math.random()` AND NOT A CRYPTOGRAPHIC SOURCE. This decides where a gradient
+ * sits. Nothing is keyed on it, nothing is stored, and it is regenerated on the
+ * next page load.
+ *
+ * IT IS HERE AND NOT IN THE RENDERER so the renderer stays pure and the check
+ * can render one board twice and compare the two documents.
+ */
+function randomPhases(): number[] {
+  return Array.from({ length: PHASE_COUNT }, () => Math.random())
+}
+
 export async function GET(req: Request): Promise<Response> {
   const license = normalizeLicense(new URL(req.url).searchParams.get('id'))
   if (!license) return refuse(400, 'bad id')
@@ -180,8 +219,59 @@ export async function GET(req: Request): Promise<Response> {
    */
   const player = row ? playerPanelFrom(row, snapshot.rows, { hidden }) : null
 
-  return new Response(renderScoreboard({ board, player, motion }), {
-    status: 200,
-    headers: boardHeaders('text/html; charset=utf-8'),
-  })
+  /**
+   * ═══ THE THIRD SLIDE, RESOLVED FROM THE LIVE FEED RATHER THAN FROM THE URL
+   *     ═══
+   *
+   * Owner: "Let's also add a slide when in squads where the player will get to
+   * see the stats of their squad mates!" The URL carries one license and nothing
+   * else, so who is beside them has to come from somewhere; `liveView` is the
+   * snapshot the game pushes to `/api/ingest` every two seconds, held in this
+   * process, and it carries `license` and `squadId` per player. The profile page
+   * reads the same array the same way.
+   *
+   * `feedNow` IS WHAT DECIDES WHETHER TO BELIEVE IT, and it is the console's own
+   * shared verdict rather than a threshold invented here. A `dead` feed is
+   * fifteen missed pushes; the squad it describes may be from a previous match,
+   * and the honest answer to "who is in your squad" is then two slides instead
+   * of a wrong three. See `squadFrom`, which holds that rule and is driven
+   * through all four feed words by the check.
+   *
+   * ONE MORE READ AND NO MORE DATABASE. The squad's careers come out of the
+   * snapshot this route has already built - a Map over rows that are already in
+   * memory - rather than a `GetItem` per mate. Four extra partition reads per
+   * player per warmup, times a full field, would be a hundred and ninety-two
+   * reads to answer a question a minute of staleness cannot get wrong: a career
+   * total moves once per player per match, and this is being read during warmup,
+   * which is the part of the cycle when nothing is being added to it.
+   *
+   * THE VIEWER'S OWN ROW IS THE FRESH ONE, because this route already fetched it
+   * and `playerRowFor` exists precisely so somebody who finished a match thirty
+   * seconds ago sees it. Their squad mates are as fresh as the snapshot. Mixing
+   * the two is right for the same reason `rankOf` measures a fresh value against
+   * a cached ranking: the alternative is holding somebody's own number back to
+   * match a snapshot that has forgotten the match they just played.
+   */
+  const live = liveView(Date.now())
+  const squadMembers = squadFrom(live.players, license, feedNow(live.ageMs))
+
+  const careers = new Map<string, BoardRow>()
+  for (const r of snapshot.rows) careers.set(r.license, r)
+  if (row) careers.set(license, row)
+
+  const squad = squadMembers
+    ? squadPanelFrom({
+        members: squadMembers.members,
+        careerOf: (l) => careers.get(l) ?? null,
+        viewer: license,
+      })
+    : null
+
+  return new Response(
+    renderScoreboard({ board, player, squad, motion, phases: randomPhases() }),
+    {
+      status: 200,
+      headers: boardHeaders('text/html; charset=utf-8'),
+    },
+  )
 }

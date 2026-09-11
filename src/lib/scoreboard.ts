@@ -64,8 +64,9 @@ import { levelFor } from './xp'
  * player of headroom given back on a client already holding a battle royale
  * map, and it is spent whether anybody is looking at the prop or not.
  *
- * IT IS ALSO THE UNIT OF EVERY REPAINT, which is the number that matters once
- * this page animates. See the motion note in `lib/scoreboardPage.ts`.
+ * IT IS ALSO THE UNIT OF THE BLIT FiveM DOES EVERY GAME FRAME, for every DUI
+ * that exists, animated or not. See the motion note in `lib/scoreboardPage.ts`
+ * for why that sentence used to be a per-repaint number and should not have been.
  *
  * WHAT 1080p WOULD BUY, HONESTLY: more legible small text at a distance. It
  * does not, because the limit is not the page's resolution. A prop's texture is
@@ -108,20 +109,37 @@ export const PLAYER_DWELL_MS = 10_000
 export const BOARD_DWELL_MS = 15_000
 
 /**
+ * How long the squad slide is held, when there is one.
+ *
+ * ═══ A THIRD NUMBER, BECAUSE IT IS A THIRD READING JOB ═══
+ *
+ * Owner: "Let's also add a slide when in squads where the player will get to see
+ * the stats of their squad mates!" That slide is up to four rows of five or six
+ * numbers, which sits between the per-player half (five numbers about you, read
+ * in a glance) and the leaderboard (five cards of five rows). So its dwell sits
+ * between the two as well, and it is a third NAME rather than a reuse of either
+ * for the same reason those two are separate: the owner tunes these on the pad
+ * and a shared constant makes the next change a refactor.
+ */
+export const SQUAD_DWELL_MS = 12_000
+
+/**
  * How long one view takes to hand over to the other.
  *
- * ═══ THIS IS THE ONLY NUMBER THAT SETS THE TRANSITION'S COST ═══
+ * ═══ THIS IS HOW LONG THE SWAP RUNS, AND THAT IS ALL IT IS ═══
  *
- * The transition is the expensive part of this page and it is expensive for
- * exactly this long. A DUI repaints only when the page changes, and FiveM's
- * accelerated offscreen path copies the WHOLE 1280x720 surface per repaint -
- * dirty-rect tracking is disabled in `nui-core`, so a small moving element costs
- * the same texture traffic as a large one. What can be controlled from here is
- * the DURATION and the FRAME COST, not the area.
+ * AN EARLIER VERSION OF THIS COMMENT CALLED THE TRANSITION "the expensive part
+ * of this page" AND PRICED IT IN MEGABYTES PER SECOND. That was wrong, it was
+ * relayed to the owner as a constraint, and the correction is written out in
+ * full in `lib/scoreboardPage.ts` under THE MOTION. The short version: FiveM
+ * hands CEF a shared D3D11 texture and blits it on EVERY GAME FRAME whether or
+ * not the page painted, so a still page and a moving one cost the client's
+ * renderer exactly the same there. Motion is not free, but what it costs is
+ * frame production inside CEF, not texture traffic.
  *
- * 620ms IS LONG ENOUGH TO READ AS A TRANSITION AND SHORT ENOUGH TO STOP. At
- * CEF's default windowless frame rate of 30fps that is nineteen frames per swap,
- * once every ten to fifteen seconds. Doubling it doubles the bill.
+ * 620ms IS LONG ENOUGH TO READ AS A TRANSITION AND SHORT ENOUGH TO STOP. The
+ * owner liked it as it is - "Nice transition between pages!" - so the number is
+ * not being tuned.
  */
 export const TRANSITION_MS = 620
 
@@ -228,7 +246,7 @@ export interface BoardRow {
 export type CategoryKey = 'wins' | 'kills' | 'matches' | 'revives' | 'level' | 'spend'
 
 /**
- * A category the board can actually rank.
+ * Everything a category knows how to do, whether or not it may do it yet.
  *
  * TWO LABELS, BECAUSE THE TWO HALVES OF THE PAGE ARE MAKING DIFFERENT CLAIMS.
  * `label` is what the leaderboard card says and is the owner's own wording,
@@ -248,40 +266,49 @@ export type CategoryKey = 'wins' | 'kills' | 'matches' | 'revives' | 'level' | '
  * 12 player in an arbitrary heap and let the board reorder itself between
  * refreshes for no visible reason.
  *
- * `accent` IS PAINT, NOT MOTION. Each card carries its own color so the five
- * read as five things rather than one grey wall. It is a static fill decided
- * once at render; it costs a repaint of nothing.
+ * `accent` IS INK, NOT AN EDGE. Each category carries its own color so the
+ * cards read as several things rather than one grey wall - but it is spent on
+ * TEXT and never on a bar, a rule or a border. Owner: "Don't add the low-effort
+ * color borders. We don't need those and it makes the product look
+ * AI-generated." See the stylesheet in `lib/scoreboardPage.ts`.
  */
-export interface AvailableCategory {
+interface CategoryShape {
   key: CategoryKey
   label: string
   tileLabel: string
   accent: string
-  available: true
   sortValue: (row: BoardRow) => number
   display: (row: BoardRow) => string
+}
+
+/** A category the board can actually rank. */
+export interface AvailableCategory extends CategoryShape {
+  available: true
 }
 
 /**
  * A category the owner asked for that the data cannot answer yet.
  *
- * ═══ THIS ENTRY IS THE POINT, NOT AN OVERSIGHT ═══
+ * ═══ IT CARRIES ITS RANKING AND ITS FORMATTING ANYWAY, AND THAT IS THE POINT
+ *     ═══
  *
- * `blockedBy` is a note to the next reader of this file and NEVER reaches the
- * page. The category is declared so that the shape of the board is already
- * decided when the missing number arrives: the catalog gains a `sortValue` and
- * a `display`, `available` flips, and every consumer below (the ranking, the
- * per-player half, the layout, the check) picks it up with no other edit.
+ * This used to be a narrower type with no `sortValue` and no `display`, so
+ * turning a blocked category on meant writing both of them under time pressure
+ * on the day the data landed. It carries them now, which makes the whole change
+ * ONE BOOLEAN: flip `available` to true, drop `blockedBy`, and the ranking, the
+ * per-player half, the squad slide, the column arithmetic and the check all pick
+ * it up with no other edit. `scoreboard.check.ts` proves that by ranking the
+ * blocked category through the very same code paths, with `available` forced on
+ * in the check alone.
  *
- * AND IT IS DECLARED SO THAT IT CANNOT BE RENDERED AS ZERO IN THE MEANTIME.
- * `enabledCategories()` is the only way to get a list of categories and it
- * filters on `available`, so there is no path from here to a spenders board of
- * five people who have apparently spent nothing. A zero on a leaderboard is not
- * an absence, it is a claim about somebody.
+ * `blockedBy` IS A NOTE TO THE NEXT READER OF THIS FILE AND NEVER REACHES THE
+ * PAGE. AND THE CATEGORY IS DECLARED SO THAT IT CANNOT BE RENDERED AS ZERO IN
+ * THE MEANTIME: `enabledCategories()` is the only way to get a list of
+ * categories and it filters on `available`, so there is no path from here to a
+ * spenders board of five people who have apparently spent nothing. A zero on a
+ * leaderboard is not an absence, it is a claim about somebody.
  */
-export interface BlockedCategory {
-  key: CategoryKey
-  label: string
+export interface BlockedCategory extends CategoryShape {
   available: false
   /** Why it cannot be ranked. Read by people, never rendered. */
   blockedBy: string
@@ -402,18 +429,41 @@ export const CATEGORIES: readonly Category[] = [
      * no spend, so the first months of any such board are a partial history
      * presented as a lifetime one. That is the owner's call to make knowingly.
      *
-     * THERE IS NO SPENDERS CARD, AND THAT IS ALSO DELIBERATE. He listed five
-     * cards and this was not among them; a sixth card nobody asked for is not
-     * ours to add. This entry keeps the data layer ready and renders nothing.
+     * ═══ HE HAS NOW ASKED FOR THE CARD, SO THE CARD IS BUILT AND SWITCHED OFF
+     *     ═══
+     *
+     * Owner, 2026-09-11: "Let's also add a 'Biggest spenders' category on the
+     * scoreboard as well, and highest level too". Highest level already existed.
+     * This one is written out in full - the label, the tile label, the accent,
+     * the ranking and the formatting - and held behind `available: false`,
+     * because rendering it today would put six cards of "0" on a wall and call
+     * them the biggest spenders in the game. The ONLY edit left is flipping the
+     * boolean below and deleting `blockedBy`; `scoreboard.check.ts` ranks this
+     * exact object with `available` forced on and asserts the card comes out
+     * right, so the flip is proven rather than hoped for.
      */
     key: 'spend',
     label: 'BIGGEST SPENDERS',
+    /**
+     * ⚠ THE ONE LABEL ON THIS PAGE THE OWNER DID NOT WRITE. Every other tile
+     * label is his card label with his ranking word removed (MOST WINS -> WINS),
+     * and that rule does not survive here: "BIGGEST SPENDERS" minus the
+     * superlative is "SPENDERS", which is a word for a person and reads as a
+     * claim when it sits over one player's own number. VOLTS SPENT is the
+     * quantity itself, in the game's own name for its currency. It cannot reach
+     * a screen while `available` is false, and it is in the report as something
+     * for him to rule on before it can.
+     */
+    tileLabel: 'VOLTS SPENT',
+    accent: '#ffd08a',
     available: false,
+    sortValue: (r) => r.voltsSpent,
+    display: (r) => formatCount(r.voltsSpent),
     blockedBy:
       'voltsSpent is on br_ddb HISTORY_NUMBERS (the match# rows) but not on ' +
       'STATS_ADDS, so the sk=profile row this board scans carries no lifetime ' +
-      'total. Add it to STATS_ADDS and to deltasFor in br_stats/persist.lua, ' +
-      'then give this entry a sortValue.',
+      'total. Add voltsSpent to STATS_ADDS in js-src/br_ddb/src/stats.js and to ' +
+      'deltasFor in br_stats/server/persist.lua, then flip available to true.',
   },
 ]
 
@@ -489,6 +539,18 @@ function rankable(row: BoardRow): boolean {
 export interface RankOptions {
   hidden?: ReadonlySet<string>
   viewer?: string | null
+  /**
+   * Which categories to rank. Defaults to `enabledCategories()`, which is what
+   * every caller in the application passes by omission.
+   *
+   * IT EXISTS SO THE BLOCKED CATEGORY CAN BE PROVEN RATHER THAN PROMISED.
+   * `BiggestSpenders` is written out in full and switched off, and the claim
+   * made about it is that flipping one boolean produces a correct card. The only
+   * way to hold that claim is to rank the real object through this real function
+   * with `available` forced on, which is what `scoreboard.check.ts` does with
+   * this argument and nothing else does.
+   */
+  categories?: readonly AvailableCategory[]
 }
 
 /**
@@ -531,7 +593,7 @@ export function rankBoard(
   const eligible = rows.filter((r) => rankable(r) && !hidden.has(r.license))
 
   const categories: RankedCategory[] = []
-  for (const category of enabledCategories()) {
+  for (const category of options.categories ?? enabledCategories()) {
     const entries = eligible
       .filter((r) => category.sortValue(r) > 0)
       .sort((a, b) => {
@@ -630,17 +692,201 @@ export interface PlayerPanel {
 export function playerPanelFrom(
   row: BoardRow,
   rows: readonly BoardRow[],
-  options: { hidden?: ReadonlySet<string> } = {},
+  options: {
+    hidden?: ReadonlySet<string>
+    /** See {@link RankOptions.categories}. Defaults to `enabledCategories()`. */
+    categories?: readonly AvailableCategory[]
+  } = {},
 ): PlayerPanel {
   return {
     name: row.name,
-    stats: enabledCategories().map((category) => ({
+    stats: (options.categories ?? enabledCategories()).map((category) => ({
       key: category.key,
       label: category.tileLabel,
       accent: category.accent,
       value: category.display(row),
       rank: rankOf(rows, category, category.sortValue(row), options),
     })),
+  }
+}
+
+/**
+ * ═══ THE SQUAD SLIDE (#247) ═══
+ *
+ * Owner: "Let's also add a slide when in squads where the player will get to see
+ * the stats of their squad mates!"
+ *
+ * THE ROUTE IS GIVEN ONE LICENSE AND NOTHING ELSE, so the squad has to be
+ * answered here rather than asked for. What answers it is the console's own LIVE
+ * SNAPSHOT: the game pushes every connected player to `/api/ingest` every two
+ * seconds, `BR.Roster.ringmaster` carries `license` and `squadId` on each row
+ * (`RINGMASTER_FIELDS`, `br_core/server/roster.lua`), and `lib/state.ts` holds
+ * the latest one in this process. The scoreboard route reads it directly, the
+ * same way `app/players/[license]/page.tsx` already does.
+ *
+ * ═══ AND IT REALLY CAN ANSWER IT, WHICH WAS NOT OBVIOUS ═══
+ *
+ * Checked in the gamemode rather than assumed, because a slide that looks right
+ * and is not would be worse than no slide:
+ *
+ *   SQUAD IDS ARE STAMPED AT WARMUP, NOT AT MATCH START. `BR.Match.onEnter`
+ *   calls `BR.Party.formSquads(m)` the moment the match enters WARMUP
+ *   (`br_core/server/match.lua`), which is the same edge that creates this very
+ *   board: `br_core/client/board.lua`'s `onPad()` is
+ *   `BR.State.me.state == BR.PlayerState.WARMUP` and nothing else. So for the
+ *   whole life of the DUI the squad is already formed.
+ *
+ *   THE FORMAT IS `m<5 hex>sq<n>` SINCE #291 and nothing here parses it. The id
+ *   is compared as an opaque string, so the shape may change again without
+ *   touching this file. `components/MatchCard.tsx` is still the one place that
+ *   reads the trailing index.
+ *
+ *   SOLO PLAYERS HAVE NO SQUAD ID AT ALL, and that is by construction rather
+ *   than by luck: `formSquads` clears `squadId` for every member and then
+ *   RETURNS before assigning any when `mode == SOLO` (`br_core/server/party.lua`).
+ *   So the rule the owner asked for - three slides in squads, two in solos -
+ *   falls out of the data instead of needing a mode flag the route does not have.
+ *
+ *   THE PRE-MATCH `partyId` IS NOT IN THE SNAPSHOT and is deliberately not used.
+ *   It is not on `RINGMASTER_FIELDS`, so a party that has not yet become a squad
+ *   is invisible here. That is the correct answer for this surface anyway: the
+ *   board only exists during warmup, and by warmup the party IS the squad.
+ */
+export interface LivePlayer {
+  /** Qualified, as the game sends it: `license:<40 hex>`. Null before br_stats fills it. */
+  license: string | null
+  name: string
+  squadId: string | null
+}
+
+/**
+ * The most squad rows this slide will ever lay out.
+ *
+ * THE GAME'S OWN LIMIT IS FOUR (`BR.Config.Match.maxSquadSize`), so this is not
+ * a rule, it is a LAYOUT GUARD: a config change on a box this console does not
+ * own must not be able to push a sixth row off a surface that cannot scroll. If
+ * squads ever do grow past this the slide shows the first rows by name order and
+ * the layout survives, which is the failure worth having.
+ */
+export const SQUAD_MAX_ROWS = 6
+
+/**
+ * Who is in the viewer's squad right now, or nothing.
+ *
+ * ═══ FIVE WAYS THIS RETURNS NULL, AND EVERY ONE OF THEM IS THE HONEST ANSWER
+ *     ═══
+ *
+ *   THE FEED IS NOT TRUSTWORTHY. `feed` is the console's own one-word verdict
+ *   from `lib/feedHealth`, derived from the age of the last push. `dead` is
+ *   fifteen missed pushes and `offline` is a console that has never been pushed
+ *   to; in both cases the snapshot is either absent or old enough that it may be
+ *   describing a previous match, and a squad slide built from that would name
+ *   people who are not there. `stale` is allowed through deliberately: it is
+ *   three missed pushes on a two-second cadence, and a squad is formed ONCE at
+ *   the top of warmup and then does not change, so six seconds of lag cannot
+ *   move anybody between squads.
+ *
+ *   THE VIEWER IS NOT IN THE SNAPSHOT. Nothing can be said about a squad we
+ *   cannot find the person in.
+ *
+ *   THE VIEWER HAS NO SQUAD ID. Solos, or a player still in the lobby. This is
+ *   the common case and it is not a failure.
+ *
+ *   FEWER THAN TWO MEMBERS. Owner's rule, verbatim: "Never render an empty or
+ *   single-member squad slide." A squad of one is what a squads match looks like
+ *   when everybody else has disconnected, and a slide reading "your squad" over
+ *   one row is a worse answer than the two slides a solo player gets.
+ *
+ * ORDERED BY NAME, ASCENDING, and the viewer is not floated to the top. It is
+ * the same tie-break the leaderboard uses and for the same reason: something has
+ * to order these, and an order that changes between page loads is a board that
+ * appears to reshuffle for no reason. The viewer is found by their highlight.
+ */
+export function squadFrom(
+  players: readonly LivePlayer[],
+  viewer: string,
+  feed: 'live' | 'stale' | 'dead' | 'offline',
+): { squadId: string; members: LivePlayer[] } | null {
+  if (feed === 'dead' || feed === 'offline') return null
+
+  const me = players.find((p) => p.license === viewer)
+  if (!me) return null
+
+  const squadId = me.squadId
+  if (typeof squadId !== 'string' || squadId === '') return null
+
+  const members = players
+    .filter((p) => p.squadId === squadId && typeof p.license === 'string')
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, SQUAD_MAX_ROWS)
+
+  if (members.length < 2) return null
+  return { squadId, members }
+}
+
+export interface SquadMate {
+  /** Player authored. Escaped at render. */
+  name: string
+  /** Is this the person standing in front of the board? */
+  you: boolean
+  /** One per category, in catalog order, already formatted. */
+  values: string[]
+}
+
+export interface SquadPanel {
+  /** The column headings: the tile labels, in catalog order. */
+  labels: { key: CategoryKey; label: string; accent: string }[]
+  mates: SquadMate[]
+}
+
+/**
+ * The squad slide, from the live members and whatever careers we hold.
+ *
+ * ═══ THE NAME COMES FROM THE SNAPSHOT AND THE NUMBERS COME FROM THE TABLE ═══
+ *
+ * Two sources on purpose. The snapshot's `name` is who is standing on the pad
+ * right now, straight off `GetPlayerName`, and it exists for everybody. The
+ * profile row's name is who they were at the end of their last match and is
+ * absent for anybody who has never finished one. On a slide whose whole subject
+ * is the four people beside you, the live name is the true one.
+ *
+ * A MATE WITH NO CAREER ROW SHOWS ZEROS, AND THAT IS NOT THE SAME MISTAKE THE
+ * LEADERBOARD REFUSES TO MAKE. A zero on a leaderboard is a RANKING claim: it
+ * says these five are the best in the game at something none of them has done. A
+ * zero here is a fact about one named person who has genuinely not won a match
+ * yet, next to their squad mates who have. Dropping them instead would be the
+ * real lie: it would show a squad of three when four people are about to drop
+ * together.
+ */
+export function squadPanelFrom(input: {
+  members: readonly LivePlayer[]
+  careerOf: (license: string) => BoardRow | null
+  viewer: string
+  categories?: readonly AvailableCategory[]
+}): SquadPanel {
+  const categories = input.categories ?? enabledCategories()
+
+  return {
+    labels: categories.map((c) => ({ key: c.key, label: c.tileLabel, accent: c.accent })),
+    mates: input.members.map((m) => {
+      const license = m.license ?? ''
+      const career = license === '' ? null : input.careerOf(license)
+      const row: BoardRow = career ?? {
+        license,
+        name: m.name,
+        wins: 0,
+        kills: 0,
+        matches: 0,
+        revives: 0,
+        xp: 0,
+        voltsSpent: 0,
+      }
+      return {
+        name: m.name,
+        you: license !== '' && license === input.viewer,
+        values: categories.map((c) => c.display(row)),
+      }
+    }),
   }
 }
 

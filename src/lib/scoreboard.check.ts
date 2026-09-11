@@ -44,11 +44,24 @@
  * Each of these was reverted and run during development and the counts are in
  * the commit that introduced them: deleting `/scoreboard` from `bounceExempt`
  * fails F and nothing else; dropping `esc()` from the name interpolation fails D;
- * making the two dwell constants one value fails D; giving the `spend` category
- * a `sortValue` fails C; putting `box-shadow` in a transition fails D; making
- * `off` emit a transition fails D; dropping `viewer` from `rankBoard` fails B;
- * removing the header from `boardHeaders` fails I; editing one byte of a woff2
- * without regenerating fails H.
+ * making the two dwell constants one value fails D; putting `box-shadow` in a
+ * transition fails D; making `off` emit a transition fails D; dropping `viewer`
+ * from `rankBoard` fails B; removing the header from `boardHeaders` fails I;
+ * editing one byte of a woff2 without regenerating fails H.
+ *
+ * AND THE SAME WAS DONE FOR EVERY ASSERTION ADDED WITH THE SQUAD SLIDE, THE
+ * ANIMATED BACKGROUND AND THE REMOVAL OF THE COLOR BORDERS. Seventeen mutations,
+ * each applied to the real source, run, and reverted; none passed. Putting an
+ * accent bar back on a card fails 24 cases; putting the accent border back on the
+ * viewer's row fails 16; deleting the background fails 13; making every client
+ * share one background phase fails 1; leaving an orb's loop open fails 1;
+ * drifting the sheet a fractional period fails 1; promoting a layer that does not
+ * move fails 3; transitioning `filter` fails 2; believing a dead feed about a
+ * squad fails 2; rendering a squad of one fails 1; uncapping the squad fails 1;
+ * dropping the name sort fails 2; dropping a mate with no career row fails 5;
+ * flipping the spenders card on fails 8; pinning the column width back to 240
+ * fails 6; showing the squad slide to a solo player fails 3; and dropping `esc()`
+ * from the live squad name fails 7.
  */
 
 /**
@@ -119,10 +132,28 @@ import {
   playerPanelFrom,
   rankBoard,
   rankOf,
+  squadFrom,
+  squadPanelFrom,
+  SQUAD_DWELL_MS,
+  SQUAD_MAX_ROWS,
+  type AvailableCategory,
+  type BlockedCategory,
   type BoardRow,
+  type LivePlayer,
 } from './scoreboard'
 import { EMBEDDED_FACES } from './scoreboardFonts'
-import { CONTRAST_PAIRS, esc, renderScoreboard, type MotionLevel } from './scoreboardPage'
+import {
+  CONTRAST_PAIRS,
+  INNER_WIDTH,
+  PALETTE,
+  PHASE_COUNT,
+  SQUAD_HEAD_H,
+  columnWidth,
+  esc,
+  renderScoreboard,
+  squadRowHeight,
+  type MotionLevel,
+} from './scoreboardPage'
 import {
   SNAPSHOT_TTL_MS,
   newSnapshotCache,
@@ -132,14 +163,18 @@ import {
 import { levelFor } from './xp'
 
 let failed = 0
+/** Every case actually executed, loops included, so the gate reports real counts. */
+let ran = 0
 function fail(label: string, detail: string): void {
   failed++
   console.error(`  FAIL  ${label} - ${detail}`)
 }
 function expect(label: string, got: unknown, want: unknown): void {
+  ran++
   if (got !== want) fail(label, `got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`)
 }
 function expectTrue(label: string, got: boolean): void {
+  ran++
   if (!got) fail(label, 'was false')
 }
 
@@ -443,6 +478,183 @@ console.log('\nB. the per-player half')
 }
 
 // ===========================================================================
+// B2. THE SQUAD, RESOLVED FROM THE LIVE SNAPSHOT
+// ===========================================================================
+
+console.log('\nB2. who is in the squad, and when we may not say')
+
+/**
+ * ═══ THE ONLY THING THE ROUTE IS GIVEN IS A LICENSE ═══
+ *
+ * Owner: "Let's also add a slide when in squads where the player will get to see
+ * the stats of their squad mates!" and, on the risk: "If the live snapshot
+ * cannot answer who is in the squad right now, say so plainly rather than
+ * falling back to something that looks right and is not."
+ *
+ * So the rules below are the "say so plainly" half, written as returns of null.
+ * Every one of them was checked against the gamemode rather than assumed:
+ * `BR.Party.formSquads` runs on the WARMUP edge (`br_core/server/match.lua`),
+ * which is the same edge `br_core/client/board.lua` creates this DUI on, and it
+ * RETURNS before assigning anything in solo mode (`br_core/server/party.lua`).
+ * So a warmup squads player always has a `squadId` and a warmup solo player
+ * never does.
+ */
+const SQ = 'm0a3f1sq2'
+const L = (n: number) => `license:${String(n).repeat(40).slice(0, 40)}`
+
+const PAD: LivePlayer[] = [
+  { license: L(1), name: 'zulu', squadId: SQ },
+  { license: L(2), name: 'alpha', squadId: SQ },
+  { license: L(3), name: 'mike', squadId: SQ },
+  { license: L(4), name: 'other squad', squadId: 'm0a3f1sq1' },
+  { license: L(5), name: 'solo', squadId: null },
+  /** br_stats has not filled a license in yet. Cannot be matched to anybody. */
+  { license: null, name: 'nameless', squadId: SQ },
+]
+
+{
+  const found = squadFrom(PAD, L(1), 'live')
+  expectTrue('a squadded viewer resolves a squad', found !== null)
+  expect('and it is their own', found?.squadId, SQ)
+  expect('with only the members of it', found?.members.length, 3)
+  expectTrue(
+    'a row with no license is not a member, because nothing can be looked up for it',
+    !found?.members.some((m) => m.license === null),
+  )
+  expect('ordered by name, so the slide does not reshuffle', found?.members[0]?.name, 'alpha')
+  expect('and deterministically all the way down', found?.members[2]?.name, 'zulu')
+  expectTrue(
+    'the other squad is nowhere on it',
+    !found?.members.some((m) => m.name === 'other squad'),
+  )
+}
+
+expect(
+  'a solo player gets no slide at all, which is the two-slide case',
+  squadFrom(PAD, L(5), 'live'),
+  null,
+)
+expect(
+  'a viewer who is not on the server gets none either',
+  squadFrom(PAD, `license:${'f'.repeat(40)}`, 'live'),
+  null,
+)
+expect('and neither does an empty pad', squadFrom([], L(1), 'live'), null)
+
+/**
+ * A SQUAD OF ONE IS NOT A SQUAD. Owner: "Never render an empty or single-member
+ * squad slide." It is what a squads match looks like once everybody else has
+ * disconnected, and a slide about your squad showing one row is a worse answer
+ * than the two slides a solo player gets.
+ */
+expect(
+  'a squad whose other members have all left renders nothing',
+  squadFrom([{ license: L(1), name: 'zulu', squadId: SQ }], L(1), 'live'),
+  null,
+)
+
+/**
+ * ═══ AND THE FEED HAS TO BE WORTH BELIEVING ═══
+ *
+ * `dead` is fifteen missed pushes and `offline` is a console that has never been
+ * pushed to. In both cases the snapshot may be describing a previous match, and
+ * naming three people who are not standing there is precisely the "looks right
+ * and is not" the owner ruled out. `stale` is three missed pushes on a
+ * two-second cadence and is allowed: a squad is formed ONCE at the top of warmup
+ * and does not change, so six seconds of lag cannot move anybody.
+ */
+expectTrue('a live feed answers', squadFrom(PAD, L(1), 'live') !== null)
+expectTrue('a stale feed still answers, because a squad does not move', squadFrom(PAD, L(1), 'stale') !== null)
+expect('a dead feed refuses', squadFrom(PAD, L(1), 'dead'), null)
+expect('an offline console refuses', squadFrom(PAD, L(1), 'offline'), null)
+
+/**
+ * THE LAYOUT GUARD. `maxSquadSize` is four in the gamemode's config, on a box
+ * this console does not own and does not get told about. A squad of nine would
+ * otherwise lay out nine rows on a surface that cannot scroll.
+ */
+{
+  const huge = Array.from({ length: 9 }, (_, i) => ({
+    license: L(i + 1),
+    name: `p${i}`,
+    squadId: SQ,
+  }))
+  expect(
+    'an oversized squad is capped rather than overflowing the surface',
+    squadFrom(huge, L(1), 'live')?.members.length,
+    SQUAD_MAX_ROWS,
+  )
+}
+
+console.log('\nB2. the squad panel')
+
+{
+  const members = squadFrom(PAD, L(1), 'live')!.members
+  const careers = new Map<string, BoardRow>([
+    [L(1), { ...row({ name: 'stale name', wins: 7, kills: 70 }), license: L(1) }],
+    [L(2), { ...row({ name: 'alpha', wins: 2, kills: 20 }), license: L(2) }],
+  ])
+
+  const panel = squadPanelFrom({
+    members,
+    careerOf: (l) => careers.get(l) ?? null,
+    viewer: L(1),
+  })
+
+  expect('one row per member', panel.mates.length, 3)
+  expect('one heading per category', panel.labels.length, enabledCategories().length)
+  expect(
+    'and the headings are the tile labels, which are the owner words',
+    panel.labels.map((l) => l.label).join('|'),
+    enabledCategories().map((c) => c.tileLabel).join('|'),
+  )
+  expect('one value per category per row', panel.mates[0]?.values.length, enabledCategories().length)
+
+  expect('exactly one row is the viewer', panel.mates.filter((m) => m.you).length, 1)
+  expect('and it is them', panel.mates.find((m) => m.you)?.name, 'zulu')
+
+  /**
+   * THE NAME IS THE LIVE ONE. The career row carries who they were at the end of
+   * their last match; the snapshot carries who is standing on the pad. On a
+   * slide whose subject is the three people beside you, the live name is the
+   * true one - and it is the only one a player who has never finished a match
+   * has at all.
+   */
+  expect('the live name wins over the stored one', panel.mates.find((m) => m.you)?.name, 'zulu')
+
+  expect(
+    'a mate with a career shows it',
+    panel.mates.find((m) => m.name === 'alpha')?.values[0],
+    '2',
+  )
+  /**
+   * AND A MATE WITH NO CAREER ROW SHOWS ZEROS RATHER THAN BEING DROPPED. This is
+   * not the mistake the leaderboard refuses to make. A zero on a leaderboard is
+   * a RANKING claim - it presents five people who have done nothing as the best
+   * in the game. A zero here is a fact about one named person who has genuinely
+   * not won a match, next to squad mates who have. Dropping them would be the
+   * real lie: a squad of two shown when three people are about to drop together.
+   */
+  expect(
+    'a mate who has never finished a match is still on the slide',
+    panel.mates.filter((m) => m.name === 'mike').length,
+    1,
+  )
+  /**
+   * "ZEROS" MEANS WHAT EACH CATEGORY MAKES OF A ZERO ROW, not the character 0.
+   * `level` renders `levelFor(0)`, which is 1, because a player at no xp is
+   * level one and not level nought - the same derivation the lobby and the
+   * profile use. Asserting the literal string would have pinned a bug.
+   */
+  const nobody = row({ name: 'mike' })
+  expect(
+    'with what a zero row renders as, category by category',
+    panel.mates.find((m) => m.name === 'mike')?.values.join('|'),
+    enabledCategories().map((c) => c.display(nobody)).join('|'),
+  )
+}
+
+// ===========================================================================
 // C. THE CATALOG
 // ===========================================================================
 
@@ -555,6 +767,127 @@ console.log('\nC. biggest spenders: the data layer is ready and the card is not'
     'the store projects voltsSpent, so the data layer is ready today',
     storeText.includes("'#spent': 'voltsSpent'"),
   )
+
+  /**
+   * ═══ AND THE CARD IS PROVEN, NOT PROMISED ═══
+   *
+   * The claim this file makes about the blocked category is that flipping ONE
+   * BOOLEAN produces a working card. A comment saying so is worth nothing: the
+   * whole failure mode of a blocked feature is that it has never once been run,
+   * so the day the number lands somebody discovers the ranking was never
+   * written, or the column arithmetic does not fit six, under time pressure.
+   *
+   * So the real object is taken off the real catalog, `available` is forced on
+   * HERE AND NOWHERE ELSE, and it is driven through the real `rankBoard`, the
+   * real `playerPanelFrom` and the real renderer. Nothing in `src` changes.
+   */
+  const flipped = { ...(spend as BlockedCategory), available: true } as AvailableCategory
+  const withSpend = [...enabledCategories(), flipped]
+
+  /** Every category non-zero, so all six really do rank and lay out. */
+  const ROWS_WITH_SPEND: BoardRow[] = [
+    row({ name: 'alpha', wins: 3, kills: 3, matches: 3, revives: 3, xp: 30, voltsSpent: 900 }),
+    row({ name: 'bravo', wins: 2, kills: 2, matches: 2, revives: 2, xp: 20, voltsSpent: 12_500 }),
+    row({ name: 'charlie', wins: 1, kills: 1, matches: 1, revives: 1, xp: 10, voltsSpent: 0 }),
+  ]
+
+  const ranked = rankBoard(ROWS_WITH_SPEND, { categories: withSpend })
+  const card = ranked.categories.find((c) => c.key === 'spend')
+
+  expectTrue('with the flag flipped, the card ranks', card !== undefined)
+  expect('and it is the owner label', card?.label, 'BIGGEST SPENDERS')
+  expect('the biggest spender is first', card?.entries[0]?.name, 'bravo')
+  expect('and the number is grouped like every other number', card?.entries[0]?.value, '12,500')
+  expectTrue(
+    'a player who has spent nothing is not on it, same as every other card',
+    !card?.entries.some((e) => e.name === 'charlie'),
+  )
+
+  const panel = playerPanelFrom(ROWS_WITH_SPEND[1]!, ROWS_WITH_SPEND, { categories: withSpend })
+  const tile = panel.stats.find((s) => s.key === 'spend')
+  expect('the per-player half gains a tile', tile?.value, '12,500')
+  expect('with its rank', tile?.rank, 1)
+  expect('and the tile label is the one that is not his', tile?.label, 'VOLTS SPENT')
+
+  /**
+   * SIX CARDS FIT THE SURFACE, which is the half of this that used to be a
+   * literal 240 and would have silently dropped a column off a page that cannot
+   * scroll. See `columnWidth`.
+   */
+  const six = renderScoreboard({
+    board: ranked,
+    player: panel,
+    motion: 'off',
+  })
+  expect('six columns are laid out', six.split('class="col"').length - 1, 12)
+  expectTrue(
+    'and the card width is the six-column one, not the five-column one',
+    six.includes(`width: ${columnWidth(6)}px`) && !six.includes('width: 240px'),
+  )
+}
+
+console.log('\nC. the column arithmetic fits, at every count')
+
+/**
+ * ═══ THE PROPERTY IS "AS WIDE AS POSSIBLE WITHOUT OVERFLOWING", AT ANY COUNT
+ *     ═══
+ *
+ * A DUI cannot scroll, so a row of cards one pixel too wide does not wrap into a
+ * scrollable region, it wraps into a region that does not exist and the last card
+ * is simply not on the wall. Nothing errors. The board looks finished.
+ *
+ * BOTH DIRECTIONS ARE ASSERTED. Too wide loses a column; too narrow leaves a
+ * column-width of dead space on the right that reads as a missing card. So the
+ * width has to be the LARGEST that fits, which is what pins it to one value
+ * rather than to a range.
+ */
+for (let n = 3; n <= 8; n++) {
+  const w = columnWidth(n)
+  const used = n * w + (n - 1) * 12
+  expectTrue(`${n} columns fit in ${INNER_WIDTH}px (${used}px used)`, used <= INNER_WIDTH)
+  expectTrue(
+    `${n} columns waste less than a pixel each (${INNER_WIDTH - used}px left)`,
+    INNER_WIDTH - used < n,
+  )
+}
+expect('five columns are still exactly 240px, as they have been', columnWidth(5), 240)
+
+/**
+ * THE SQUAD ROWS FIT AT EVERY SIZE THE GUARD ALLOWS. The game's own
+ * `maxSquadSize` is four, so four is the count that matters and it gets the
+ * taller floor; five and six exist only because `SQUAD_MAX_ROWS` protects the
+ * layout against a config change on a box this console does not own, and for
+ * those the bar is that they fit and stay legible rather than that they look
+ * generous.
+ */
+/**
+ * ═══ AND THEY FIT WHILE THEY ARE STILL ARRIVING, WHICH IS THE HALF THAT WAS
+ *     WRONG ═══
+ *
+ * Every card, tile and squad row enters from 20px below where it settles. On the
+ * leaderboard that is free - the cards end 75px clear of the bottom. On the
+ * squad slide the rows are sized to FILL the panel, so the last one entered at
+ * 724px on a 720px surface and had its bottom edge and its rounded corner
+ * clipped for the length of the transition. Measured in a real browser, not
+ * reasoned about: a still screenshot of the finished state shows nothing wrong.
+ *
+ * So the bound below is the ENTERING position, not the settled one.
+ */
+const ENTRANCE_PX = 20
+for (let n = 2; n <= SQUAD_MAX_ROWS; n++) {
+  const h = squadRowHeight(n)
+  const content = n * h + (n - 1) * 12 + SQUAD_HEAD_H + 12
+  /** Centered in the panel, so the slack is split evenly above and below. */
+  const slackBelow = Math.floor((688 - content) / 2)
+  expectTrue(`${n} squad rows fit in 688px (${content}px used)`, content <= 688)
+  expectTrue(
+    `${n} squad rows are still inside the surface while they arrive (${slackBelow}px of travel room)`,
+    slackBelow >= ENTRANCE_PX,
+  )
+  expectTrue(
+    `${n} squad rows clear the 34px numeral they carry (${h}px)`,
+    h >= (n <= 4 ? 130 : 85),
+  )
 }
 
 // ===========================================================================
@@ -598,10 +931,43 @@ const BOARD_ONLY = renderScoreboard({
   motion: 'full',
 })
 
-const LEVELS: Array<[MotionLevel, string]> = [
+/**
+ * THE SAME BOARD WITH A SQUAD ON IT.
+ *
+ * THE HOSTILE NAME IS ON A SQUAD MATE AND NOT ON THE VIEWER, deliberately. The
+ * leaderboard's names come from a DynamoDB row; the squad slide's come from the
+ * live snapshot, which is `GetPlayerName` on the game box. Two sources, two
+ * interpolations, and the escaping has to hold at both - so the injection is
+ * driven through the one the first HOSTILE_ROWS does not reach.
+ */
+const SQUAD_RENDER = renderScoreboard({
+  board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
+  player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
+  squad: squadPanelFrom({
+    members: [
+      { license: VIEWER, name: 'quiet', squadId: SQ },
+      { license: L(2), name: HOSTILE, squadId: SQ },
+      { license: L(3), name: 'mike', squadId: SQ },
+    ],
+    careerOf: () => null,
+    viewer: VIEWER,
+  }),
+  motion: 'full',
+})
+
+/** The label is only ever printed, so it is wider than `MotionLevel`. */
+const LEVELS: Array<[string, string]> = [
   ['full', FULL],
   ['transitions', TRANSITIONS],
   ['off', OFF],
+  /**
+   * THE SQUAD DOCUMENT GOES THROUGH EVERY GENERAL ASSERTION IN THIS SECTION,
+   * not only the ones below that are about squads: the escaping, the fixed
+   * surface, the CEF 103 parse, the compositable allowlist, the fetch ban and
+   * the absence of a message listener are all properties of THE DOCUMENT, and a
+   * third panel is a third chance to break each of them.
+   */
+  ['full+squad', SQUAD_RENDER],
 ]
 
 console.log(
@@ -650,17 +1016,75 @@ expectTrue(
   !BOARD_ONLY.includes('class="you"'),
 )
 
+console.log('\nD. no color borders, anywhere')
+
+/**
+ * ═══ THE OWNER'S NOTE, AND WHY IT IS A GATE RATHER THAN A DELETION ═══
+ *
+ * "Don't add the low-effort color borders. We don't need those and it makes the
+ * product look AI-generated."
+ *
+ * Deleting the 4px bars was five minutes. Keeping them deleted is the problem:
+ * a category carries an `accent` and the accent has to go SOMEWHERE, so the next
+ * person adding a card reaches for the same shape without knowing it was ruled
+ * out. What holds it is the rule below, which is about the COLOR and not about
+ * the word "border": every appearance of a category's own color in the document
+ * must be a `color:` declaration, which is ink. A `background:`, a
+ * `border-left-color:`, a `border-top:` or a bar of any kind fails it, including
+ * ones nobody has thought of.
+ *
+ * THE NEUTRAL ONE-PIXEL EDGE IS UNAFFECTED AND THAT IS DELIBERATE. `PALETTE.edge`
+ * is not a category color; it is what separates a card from the page. He
+ * objected to the rainbow, not to the card.
+ */
+for (const [name, doc] of LEVELS) {
+  for (const category of CATEGORIES) {
+    const parts = doc.split(category.accent)
+    for (let i = 1; i < parts.length; i++) {
+      const before = parts[i - 1]!
+      expectTrue(
+        `${name}: ${category.key}'s color is used as ink and not as an edge` +
+          ` (...${before.slice(-22)})`,
+        before.endsWith('color:'),
+      )
+    }
+  }
+  expectTrue(`${name}: no accent bar element survives`, !doc.includes('class="rule"'))
+  expectTrue(`${name}: and no rule to style one`, !/\.rule\s*\{/.test(doc))
+  expectTrue(`${name}: no border-left-color anywhere`, !doc.includes('border-left-color'))
+  expectTrue(`${name}: no 4px border anywhere`, !/border[a-z-]*:\s*4px/.test(doc))
+}
+
+/**
+ * AND THE HIGHLIGHT THE OWNER ASKED FOR IS STILL THERE. Removing the accent bar
+ * from the viewer's row must not have removed the row's fill with it: "if the
+ * player viewing the scoreboard is anywhere on it - highlight that row."
+ */
+expectTrue(
+  'the highlighted row still has its fill',
+  FULL.includes(`.card li.you, .mate.you {\n  background: ${PALETTE.you};`),
+)
+
 console.log('\nD. the motion, and what it is allowed to animate')
 
 /**
  * ═══ THE ONLY PROPERTIES THAT MAY BE ANIMATED ON THIS SURFACE ═══
  *
- * A DUI repaints the WHOLE 1280x720 texture whenever the page changes, on every
- * machine in the lobby. `transform` and `opacity` are the two properties
- * Chromium can run on the compositor without re-rastering the layer, so they are
- * the two that cost one composite per frame instead of a paint. `visibility` is
- * on the list because it is animated DISCRETELY - it flips once at the end of a
- * fade and never interpolates.
+ * WHILE ANYTHING ON THIS PAGE IS ANIMATING, CEF's COMPOSITOR IS DRIVEN AT UP TO
+ * 240 FRAMES A SECOND on every machine in the pad - `NUIWindow.cpp` hardcodes
+ * `windowless_frame_rate = 240` and no convar or native changes it. The page
+ * cannot lower that rate. What it CAN decide is what each of those frames costs,
+ * and `transform` and `opacity` are the two properties Chromium runs on the
+ * compositor against layers that are already rastered: no style recalc, no
+ * layout, no paint, no re-raster. Anything else on that list pays all of it on
+ * Blink's main thread, 240 times a second. `visibility` is allowed because it is
+ * animated DISCRETELY - it flips once at the end of a fade and never
+ * interpolates.
+ *
+ * (THIS PARAGRAPH USED TO PRICE IT IN TEXTURE TRAFFIC AND THAT WAS WRONG. FiveM
+ * blits the whole surface every game frame whether the page moved or not, from a
+ * shared D3D11 texture, so there is no per-repaint upload to economize on. See
+ * `lib/scoreboardPage.ts`, which carries the correction and the sources.)
  *
  * EVERYTHING ELSE IS BANNED BY THIS LIST RATHER THAN BY A NAMED BLACKLIST, which
  * is the half that survives: a blacklist of `filter`, `box-shadow` and `width`
@@ -761,10 +1185,15 @@ expectTrue(
   'transitions: and nothing in it is an infinite animation',
   !/@keyframes/.test(stripComments(TRANSITIONS)),
 )
-expectTrue(
-  'transitions: but nothing repeats forever, because there is no drifting layer',
-  !TRANSITIONS.includes('class="drift"'),
-)
+for (const [name, doc] of [
+  ['transitions', TRANSITIONS],
+  ['off', OFF],
+] as Array<[string, string]>) {
+  expectTrue(`${name}: no moving layer is in the document at all`, !doc.includes('class="orb'))
+  expectTrue(`${name}: nor the striped sheet`, !doc.includes('class="drift"'))
+  expectTrue(`${name}: and nothing is promoted, because nothing moves`, !doc.includes('will-change'))
+  expectTrue(`${name}: no animation-delay`, !doc.includes('animation-delay'))
+}
 expect(
   'transitions: the emitted transition length is TRANSITION_MS',
   /TRANSITION_MS = (\d+)/.exec(TRANSITIONS)?.[1],
@@ -775,46 +1204,161 @@ expectTrue(
   TRANSITIONS.includes(`opacity ${TRANSITION_MS}ms`),
 )
 
-console.log('\nD. full adds exactly one continuously moving thing')
+console.log('\nD. the animated background, which only full has')
 
-expectTrue('full: the drifting layer is emitted', FULL.includes('class="drift"'))
+/**
+ * ═══ THE OWNER ASKED FOR THIS BY NAME AND THIS IS WHAT HOLDS ITS SHAPE ═══
+ *
+ * "Also give us an animated background (be sure it will work on CEF 103)." What
+ * is asserted is not that it looks good - nothing here can see it - but the four
+ * properties that decide whether it is affordable and whether it renders at all
+ * in the game: HOW MANY layers move, that every one of them is PROMOTED, that
+ * every one of them animates only a property the compositor can run (the
+ * allowlist above already holds that), and that each loop CLOSES so the wall
+ * does not jump once a minute in front of somebody standing at it.
+ */
+const MOVING_LAYERS = ['o1', 'o2', 'o3', 'drift']
+
+for (const layer of MOVING_LAYERS) {
+  expect(
+    `full: exactly one ${layer} layer`,
+    FULL.split(`class="orb ${layer}"`).length - 1 + (FULL.split(`class="${layer}"`).length - 1),
+    1,
+  )
+}
+/**
+ * ═══ EVERY MOVING LAYER IS PROMOTED, AND NOTHING ELSE IS ═══
+ *
+ * `will-change: transform` is what keeps a layer rastered once and moved by the
+ * compositor rather than re-rastered at each new position. It is also a GPU
+ * texture per element, so it is asserted in BOTH directions: the two rules that
+ * need it have it, and there are exactly two of them. A third would be promotion
+ * sprinkled on something that does not move.
+ */
+for (const [rule, selector] of [
+  ['the three orbs', '.orb {'],
+  ['the striped sheet', '.drift {'],
+] as Array<[string, string]>) {
+  const block = FULL.slice(FULL.indexOf(selector))
+  const body = block.slice(0, block.indexOf('}'))
+  expectTrue(`full: ${rule} are promoted`, body.includes('will-change: transform'))
+}
 expect(
-  'full: and there is exactly one of it',
-  FULL.split('class="drift"').length - 1,
-  1,
+  'full: and promotion is spent twice, not sprinkled',
+  (FULL.match(/will-change/g) ?? []).length,
+  2,
 )
 expect(
-  'full: exactly one infinite animation is declared',
+  'full: every one of them loops forever',
   (FULL.match(/infinite/g) ?? []).length,
-  1,
-)
-expectTrue(
-  'full: it is promoted, so the gradient is rastered once and then only moved',
-  FULL.includes('will-change: transform'),
+  /** One shared `.orb` declaration for the three orbs, plus the sheet's shorthand. */
+  2,
 )
 
 /**
- * THE LOOP HAS NO SEAM, AND THAT IS ARITHMETIC RATHER THAN TASTE. The stripes
- * repeat every 160px along a 120deg gradient, whose unit vector is
+ * ═══ EACH ORB'S PATH CLOSES, WHICH IS WHAT STOPS THE JUMP ═══
+ *
+ * A wandering layer whose 100% keyframe is not its 0% keyframe teleports back at
+ * the end of every loop. That is invisible in a preview - nobody watches a
+ * preview for a minute - and it is the single most obvious defect possible on a
+ * wall somebody stands in front of for the length of a warmup.
+ */
+for (const orb of ['o1', 'o2', 'o3']) {
+  const block = new RegExp(`@keyframes ${orb} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? ''
+  const first = /0%\s*\{\s*transform:\s*([^;]+);/.exec(block)?.[1]?.trim()
+  const last = /100%\s*\{\s*transform:\s*([^;]+);/.exec(block)?.[1]?.trim()
+  expectTrue(`full: ${orb} declares both ends of its loop`, !!first && !!last)
+  expect(`full: ${orb}'s loop closes where it started`, last, first)
+  /** And it has to actually go somewhere in between, or it is a still layer. */
+  const stops = [...block.matchAll(/transform:\s*translate3d\(([^)]*)\)/g)].map((m) => m[1])
+  expectTrue(`full: ${orb} actually travels`, new Set(stops).size > 1)
+}
+
+/**
+ * THE SHEET'S LOOP HAS NO SEAM, AND THAT IS ARITHMETIC RATHER THAN TASTE. The
+ * stripes repeat every 160px along a 120deg gradient, whose unit vector is
  * (sqrt(3)/2, 1/2). The keyframe translates by (-138.564, -80), and the
  * projection of that onto the gradient direction has to be a whole number of
- * periods or the layer jumps every cycle - invisible in a preview, obvious on a
- * wall somebody is standing in front of for two minutes.
+ * periods or the layer jumps every cycle.
+ *
+ * READ OUT OF THE `drift` KEYFRAME BY NAME, not out of the first translate in
+ * the document. The orbs above also translate, so a search for "the first move
+ * with a non-zero x and y" now finds an orb and measures the wrong layer - which
+ * is exactly what it did when the orbs landed, and the check failed loudly
+ * rather than quietly measuring something else, which is the whole point.
  */
 {
-  const to = /translate3d\((-?[\d.]+)px, (-?[\d.]+)px, 0\)/g
-  const moves = [...FULL.matchAll(to)].map(([, x, y]) => [Number(x), Number(y)] as const)
-  const drift = moves.find(([x, y]) => x !== 0 && y !== 0)
-  expectTrue('full: the keyframe actually moves', drift !== undefined)
-  if (drift) {
-    const [x, y] = drift
+  const block = /@keyframes drift \{([^]*?)\n\}/.exec(FULL)?.[1] ?? ''
+  const move = /to\s*\{\s*transform:\s*translate3d\((-?[\d.]+)px,\s*(-?[\d.]+)px, 0\)/.exec(block)
+  expectTrue('full: the sheet keyframe actually moves', move !== null)
+  if (move) {
+    const x = Number(move[1])
+    const y = Number(move[2])
     const projection = Math.abs(x * (Math.sqrt(3) / 2) + y * 0.5)
     const periods = projection / 160
     expectTrue(
-      `full: the drift is a whole number of stripe periods (${periods.toFixed(4)})`,
+      `full: the sheet drifts a whole number of stripe periods (${periods.toFixed(4)})`,
       Math.abs(periods - Math.round(periods)) < 0.001,
     )
   }
+}
+
+console.log('\nD. the background starts at a random point, per client')
+
+/**
+ * ═══ THE OWNER RULED SYNCHRONIZATION OUT AND THIS IS THE WHOLE MECHANISM ═══
+ *
+ * "the content doesn't need to be time synced on everyone's client. Each one
+ * having a different background is fine - nobody will know."
+ *
+ * THE DELAYS MUST BE NEGATIVE. A positive `animation-delay` is a PAUSE, so a
+ * page that drew a positive one would sit motionless for up to a minute at the
+ * top of a warmup - the exact opposite of the request, and the kind of thing
+ * that reads as "the background is broken on my machine". A negative delay means
+ * "already running", which starts it mid-loop with no wait.
+ */
+{
+  const delays = [...FULL.matchAll(/animation-delay:\s*(-?[\d.]+)s/g)].map((m) => Number(m[1]))
+  expect('full: one delay per moving layer', delays.length, MOVING_LAYERS.length)
+  /**
+   * AND THE ROUTE DRAWS EXACTLY THAT MANY NUMBERS. `PHASE_COUNT` is what the
+   * route's `randomPhases()` is sized from, so a fifth moving layer added
+   * without raising it would silently get phase zero on every client in the
+   * lobby - the one layer that IS synchronized, which is the failure nobody
+   * would ever see.
+   */
+  expect('full: and the route is told to draw that many', PHASE_COUNT, MOVING_LAYERS.length)
+  expectTrue(
+    'full: and every one of them is negative, so nothing waits to start',
+    delays.every((d) => d <= 0),
+  )
+
+  const same = renderScoreboard({
+    board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
+    player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
+    motion: 'full',
+    phases: [0.1, 0.2, 0.3, 0.4],
+  })
+  const again = renderScoreboard({
+    board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
+    player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
+    motion: 'full',
+    phases: [0.1, 0.2, 0.3, 0.4],
+  })
+  const other = renderScoreboard({
+    board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
+    player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
+    motion: 'full',
+    phases: [0.9, 0.8, 0.7, 0.6],
+  })
+
+  /** The renderer is pure, which is why the route holds the `Math.random()`. */
+  expect('the same phases render the same document', same, again)
+  expectTrue('and different phases render a different one', same !== other)
+  expectTrue(
+    'the difference is only the delays, not the board',
+    same.replace(/animation-delay:[^;]+;/g, '') === other.replace(/animation-delay:[^;]+;/g, ''),
+  )
 }
 
 console.log('\nD. the two dwell times are two, and the transition is added to them')
@@ -837,12 +1381,66 @@ expectTrue(
   FULL.includes('+ TRANSITION_MS'),
 )
 
+expectTrue('the squad dwell is named when there is a squad', SQUAD_RENDER.includes('SQUAD_DWELL_MS'))
+expectTrue('and its value is emitted', SQUAD_RENDER.includes(String(SQUAD_DWELL_MS)))
+
 console.log('\nD. with no per-player half there is nothing to alternate')
 
 expectTrue('no second panel', !BOARD_ONLY.includes('id="player"'))
 expectTrue('no script at all', !BOARD_ONLY.includes('<script'))
 expectTrue('no timer', !BOARD_ONLY.includes('setTimeout'))
 expectTrue('and the leaderboard is still there', BOARD_ONLY.includes('id="board"'))
+
+console.log('\nD. two slides in solos, three in squads')
+
+/**
+ * ═══ THE RULE THE OWNER GAVE, HELD IN THE DOCUMENT RATHER THAN IN A COMMENT
+ *     ═══
+ *
+ * "the slide appears ONLY when the viewer is in a squad, so solos cycles two
+ * slides and squads cycles three."
+ */
+expectTrue('solos: there is no squad panel', !FULL.includes('id="squad"'))
+expect('solos: the cycle names two panels', (FULL.match(/\['(board|player|squad)',/g) ?? []).length, 2)
+
+expectTrue('squads: there is one', SQUAD_RENDER.includes('id="squad"'))
+expect(
+  'squads: the cycle names three',
+  (SQUAD_RENDER.match(/\['(board|player|squad)',/g) ?? []).length,
+  3,
+)
+expect(
+  'and exactly one of them starts visible',
+  (SQUAD_RENDER.match(/class="panel on"/g) ?? []).length,
+  1,
+)
+expectTrue(
+  'which is the leaderboard, because it is what first paint should be',
+  SQUAD_RENDER.includes('<div id="board" class="panel on"'),
+)
+
+console.log('\nD. the squad slide, rendered')
+
+{
+  expect(
+    'one heading per category',
+    SQUAD_RENDER.split('class="mlabel"').length - 1,
+    enabledCategories().length,
+  )
+  expect('one row per mate', SQUAD_RENDER.split('class="mate').length - 1, 3)
+  expect('the viewer is marked once', SQUAD_RENDER.split('class="mate you"').length - 1, 1)
+
+  /**
+   * PLAYER NAMES ON THIS SLIDE ARE THE LIVE ONES AND ARE EQUALLY PLAYER
+   * AUTHORED. They come from `GetPlayerName` rather than from a DynamoDB row,
+   * which is a DIFFERENT source from the leaderboard's names and therefore a
+   * second place the escaping has to hold. The hostile name below is a squad
+   * mate, not the viewer.
+   */
+  expectTrue('a hostile squad mate name does not survive as markup', !SQUAD_RENDER.includes('<script>alert(1)'))
+  expectTrue('it is escaped instead', SQUAD_RENDER.includes('&lt;script&gt;alert(1)&lt;/script&gt;'))
+  expect('and there is still exactly one script element', SQUAD_RENDER.split('<script').length - 1, 1)
+}
 
 console.log('\nD. the page cannot throw on the DUI message it is sent')
 
@@ -952,11 +1550,16 @@ console.log('\nD. the palette is legible')
  *
  * THE CATEGORY ACCENTS ARE PULLED OFF THE CATALOG rather than listed here, so a
  * sixth category added tomorrow is measured on the day it is added.
+ *
+ * AND IT IS `CATEGORIES`, NOT `enabledCategories()`. The blocked spenders
+ * category carries an accent that cannot reach a screen yet, which is exactly
+ * why it has to be measured NOW: the day somebody flips one boolean is not the
+ * day to discover the color they picked is illegible on a card.
  */
 const FLOOR = 4.5
 const PAIRS: Array<[string, string, string]> = [
   ...CONTRAST_PAIRS.map((p) => [...p] as [string, string, string]),
-  ...enabledCategories().map(
+  ...CATEGORIES.map(
     (c) => [`${c.key} accent`, c.accent, '#171c26'] as [string, string, string],
   ),
 ]
@@ -1323,7 +1926,7 @@ void main().then(
       )
       process.exit(1)
     }
-    console.log('check:scoreboard - every case passes')
+    console.log(`check:scoreboard - all ${ran} cases pass`)
   },
   (e: unknown) => {
     // A throw out of the checks themselves is a failure too, and an exit code

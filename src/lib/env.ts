@@ -117,32 +117,47 @@ const schema = z.object({
 
   /**
    * HOW MUCH THE WARMUP BOARD MOVES (#247). DEFAULT `full`, because the owner
-   * asked for motion: "We need something with some pizzazz! Some animated
-   * background and transitions and colors."
+   * asked for motion twice: "We need something with some pizzazz! Some animated
+   * background and transitions and colors", and then "Also give us an animated
+   * background (be sure it will work on CEF 103)."
    *
-   * ═══ THIS KNOB EXISTS BECAUSE THE MOTION IS THE ONLY PART OF THIS FEATURE
-   *     THAT COSTS ANYTHING PER SECOND ═══
+   * ⚠ ONLY `full` RENDERS AN ANIMATED BACKGROUND. `transitions` is the view
+   * transition alone. A deployment running `SCOREBOARD_MOTION=transitions` is a
+   * deployment where the thing he asked for twice is switched off, and there is
+   * nothing on the board to say so.
    *
-   * A DUI is a Chromium instance rendering offscreen on EACH PLAYER'S OWN
-   * machine. CEF calls its paint handler only when the page changes, at up to
-   * `windowless_frame_rate` (default 30), and FiveM's accelerated path shares a
-   * D3D11 texture with dirty-rect tracking disabled, so every repaint moves the
-   * whole 1280x720 surface. A still page therefore costs NOTHING and an animated
-   * one costs a steady stream of full-surface updates, on every machine in the
-   * warmup pad at once.
+   * ═══ WHAT THIS KNOB ACTUALLY TRADES, CORRECTED ═══
    *
-   * The three levels are the three honest points on that trade, and they are an
-   * environment variable rather than a constant so the choice can be made on the
-   * pad and reversed without a redeploy:
+   * THIS COMMENT USED TO SAY CEF PAINTS ONLY WHEN THE PAGE CHANGES, AT UP TO 30
+   * FRAMES A SECOND, WITH DIRTY RECTS DISABLED. All three were wrong, the owner
+   * was told them, and `lib/scoreboardPage.ts` carries the corrected account with
+   * the source it was read from. In short: FiveM blits the whole 1280x720
+   * surface EVERY GAME FRAME whether the page moved or not
+   * (`NUIRenderCallbacks.cpp`), it is a GPU-local copy of a shared D3D11 texture
+   * rather than an upload, and `windowless_frame_rate` is hardcoded to 240 in
+   * `NUIWindow.cpp` with no convar to change it.
    *
-   *   full         the view transition AND a continuous background drift. The
-   *                drift never stops, so the board repaints for as long as the
-   *                prop exists. This is what he asked for.
-   *   transitions  the view transition only. The surface is STILL between swaps;
-   *                the cost is about six tenths of a second of frames once every
-   *                ten to fifteen seconds and nothing at all in between.
-   *   off          no animation anywhere. The instant swap, and a surface that
-   *                repaints twice a minute.
+   * SO THE COST OF MOTION IS FRAME PRODUCTION INSIDE CEF, not texture traffic.
+   * While the page animates, CEF's compositor is driven at up to 240fps on each
+   * player's machine; while it is still, it is driven not at all. Every animated
+   * property on this page is `transform` or `opacity`, which the compositor runs
+   * against already-rastered layers, so those frames cost no style, layout,
+   * paint or raster on Blink's main thread. Measured in a real browser: the
+   * animated background is INDISTINGUISHABLE from no animation at all on main
+   * thread throughput, and one whole slide transition costs about ten
+   * milliseconds of main-thread time, once.
+   *
+   * The three levels, and they are an environment variable rather than a
+   * constant so the choice can be made on the pad and reversed without a
+   * redeploy:
+   *
+   *   full         the view transition AND the animated background: three soft
+   *                orbs and a striped sheet, each on its own promoted layer,
+   *                each started at a random point in its own loop. This is what
+   *                he asked for.
+   *   transitions  the view transition only, and NO animated background. The
+   *                surface is still between swaps.
+   *   off          no animation anywhere. The instant swap.
    *
    * A STRING, PARSED STRICTLY, for the same reason as the flag above:
    * `SCOREBOARD_MOTION=none` stops the process at boot naming the variable
