@@ -154,13 +154,26 @@ export const PALETTE = {
   /** Where every card gradient lands at the bottom. */
   deep: '#0a0e17',
   /**
-   * THE ONE-PIXEL EDGE, AND IT IS NEUTRAL ON PURPOSE AND FOREVER. Owner: "Don't
-   * add the low-effort color borders." The cards are colored now - deeply, in
-   * their own gradients - and not one of those colors is allowed to touch a
-   * border. `scoreboard.check.ts` reads the CSS property every accent lands in
-   * and refuses anything but ink and fill.
+   * THE ONE-PIXEL EDGE, AND IT IS NEUTRAL ON PURPOSE. Owner: "Don't add the
+   * low-effort color borders." The cards are colored in their own gradients and
+   * none of those colors is allowed to touch a border. `scoreboard.check.ts`
+   * reads the CSS property every accent lands in and refuses anything but ink
+   * and fill.
+   *
+   * IT IS br_ui's OWN HAIRLINE NOW AND IT USED TO BE A BESPOKE SLATE. The game's
+   * `.panel` in `ui-src/src/index.css` is `border: 1px solid
+   * rgba(255, 255, 255, 0.10)` with `border-radius: 0`, and the note beside it
+   * says why it is grey rather than accent: "Grey is a panel that has an edge,
+   * not a panel that is shouting." White at 10% over this board's `card`
+   * composites to almost exactly the `#2b3446` that was here, so nothing moved
+   * visually - what changed is that the number is now the game's number, and a
+   * surface that sits over a lighter fill gets a lighter edge for free instead
+   * of wearing a slate that was mixed for one background.
+   *
+   * THE ONE EXCEPTION IS THE VIEWER'S OWN ROW, WHICH THE OWNER ASKED FOR BY
+   * NAME. See `FOCUS_EDGE` and the focused-row block in the stylesheet.
    */
-  edge: '#2b3446',
+  edge: 'rgba(255, 255, 255, 0.10)',
   text: '#f2f5fa',
   label: '#9fb0cc',
   muted: '#8698b5',
@@ -176,6 +189,65 @@ export const PALETTE = {
   cyan: '#22d3ee',
   gold: '#d9ae35',
 } as const
+
+/**
+ * ═══ THE SURFACE VOCABULARY, TAKEN OUT OF br_ui RATHER THAN INVENTED ═══
+ *
+ * Owner, 2026-09-11: "Can we also get the cards to use square corners like the
+ * rest of br_ui and perhaps take some design elements from br_ui as well like
+ * the rows?"
+ *
+ * So this is not a restyle by taste. The gamemode's own interface is in
+ * `ui-src/src/index.css` and it states its geometry in one block, which is
+ * copied here rather than approximated:
+ *
+ *     --r-panel: 0.7rem;
+ *     --cut-max: 0.75rem;
+ *     --cut: 0px;
+ *
+ * and a comment above it: "--cut is the bevel a .plate opens to when it takes
+ * focus; at rest a plate is perfectly square."
+ *
+ * WHAT EACH BORROWED PIECE IS AND WHERE IT CAME FROM:
+ *
+ *   SQUARE CORNERS. `.panel` and `.plate` are both `border-radius: 0`. That
+ *   decision has its own note in br_ui ("The square edge arrived here by
+ *   mistake ... The owner saw it before I did and kept it"), so it is the
+ *   house shape rather than a default nobody chose. Every card, tile, row and
+ *   band on this board is now square. The only `border-radius` left on the
+ *   page is `50%` on the round background layers, which is a circle and not a
+ *   corner.
+ *
+ *   THE TOP LIGHT. `.plate`'s fill is
+ *   `linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.015) 46%)`
+ *   over a near-opaque base. That two-stop sheen, at those exact numbers, is
+ *   what makes a br_ui surface read as a piece of hardware facing a light, and
+ *   it now sits on top of each card's own category gradient.
+ *
+ *   `--edgec`, WHICH IS A MECHANISM AND NOT A COLOR. br_ui: "--edgec drives the
+ *   border AND both redrawn chamfers, so a component that recolours its edge (a
+ *   rarity slot, a selected tab) can never end up with a mismatched diagonal.
+ *   Recolour the variable, never the border." Every surface on this board now
+ *   takes its border from `var(--edgec)`, so the focused row below recolors one
+ *   variable and the chamfers follow it.
+ */
+
+/** br_ui's `--cut-max`, in this page's fixed pixels: 0.75rem at a 16px root. */
+const CUT_PX = 12
+
+/**
+ * The edge of the ONE surface on this page that is allowed a bright one.
+ *
+ * br_ui's inventory sets `--edgec: active ? '#ffffff' : hex` - the rarity color
+ * at rest, plain white when the slot is the one in your hands. The board has no
+ * rest state to contrast against (a row is either yours or it is not), so the
+ * viewer's row takes the category's own light rather than white: see
+ * `tone().bright`, which is that accent mixed 42% toward white, and the
+ * per-category block that assigns it. This is the neutral fallback for a row
+ * whose category or squad color did not resolve, and it is br_ui's own
+ * `.plate` default value.
+ */
+const FOCUS_EDGE = 'rgba(255, 255, 255, 0.30)'
 
 /**
  * ═══ THE COLOR MATH, WHICH IS WHY A CATEGORY CARRIES ONE HEX AND WEARS EIGHT
@@ -311,6 +383,14 @@ export function contrastPairs(
      * color; this is what a card whose class had no rule would show, and it is
      * measured so that the failure mode is dull rather than illegible.
      */
+    /**
+     * THE SLIDE TITLE IS THE ONLY PIECE OF TYPE ON THIS PAGE WITH NO CARD UNDER
+     * IT, so it is measured against the brightest thing the background can be
+     * where it sits: the top-left, where the wash's own lightest stop and the
+     * cyan light both are. That is the same surface the player's name band is
+     * composited over, minus the band itself.
+     */
+    ['slide title', PALETTE.text, mix('#0c1a25', PALETTE.cyan, 0.2)],
     ['card title', PALETTE.label, PALETTE.card],
     ['entry name', PALETTE.text, PALETTE.card],
     ['entry value', PALETTE.text, PALETTE.card],
@@ -423,55 +503,92 @@ const DISPLAY = `'Anton', 'Segoe UI', sans-serif`
 const BODY = `'Barlow', 'Segoe UI', sans-serif`
 
 /**
+ * ═══ THE THREE TITLES, IN HIS WORDS AND HIS CAPITALS ═══
+ *
+ * Owner, 2026-09-11: "The scoreboard page should also have a title at the top
+ * reading 'LEADERBOARD' and the player stats should have one reading 'PLAYER
+ * STATS' and the squad one reading 'SQUAD STATS'."
+ *
+ * THESE ARE THE FIRST WORDS ANYBODY HAS EVER BEEN ASKED TO ADD TO THIS PAGE, and
+ * the standing rule for the surface has been that the only words on it are his
+ * category labels and the players' own names. So they are quoted rather than
+ * composed, they are constants rather than three string literals loose in three
+ * markup functions, and `scoreboard.check.ts` asserts each one appears exactly
+ * once and that no fourth piece of prose appears beside them.
+ *
+ * NOTHING ELSE GOES HERE. No subtitle, no caption, no "YOUR SQUAD", no squad
+ * number, no player count, no timestamp, no empty state. Anything that seems to
+ * need words goes to the owner as a question instead.
+ */
+const TITLE_BOARD = 'LEADERBOARD'
+const TITLE_PLAYER = 'PLAYER STATS'
+const TITLE_SQUAD = 'SQUAD STATS'
+
+/** The three, in slide order, for the check and for anything that has to list them. */
+export const TITLES = [TITLE_BOARD, TITLE_PLAYER, TITLE_SQUAD] as const
+
+/**
  * ═══ THE ANIMATED BACKGROUND, EMITTED ONLY UNDER `full` ═══
  *
  * Owner: "Also give us an animated background (be sure it will work on CEF
  * 103)." What follows is that background, and every decision in it is either the
  * CEF 103 constraint or the frame-cost one from the header.
  *
- * FIVE MOVING LAYERS AND NOT ONE MORE. Three soft orbs that wander, a blade of
- * light that sweeps across every half minute, and the striped sheet. Each is
- * its own promoted layer, which is a real GPU texture on the player's machine,
- * so the count is the budget: the five come to roughly twelve megabytes of
- * layer raster, once, against a client already holding a battle royale map.
+ * ═══ IT WAS FIVE MOVING LAYERS AND IT IS EIGHTEEN, ON HIS SECOND NOTE ═══
  *
- * AND THEY ARE LOUD NOW, WHICH IS THE POINT OF THIS PASS. The orbs were drawn
- * at 0.13 to 0.20 alpha over a near-black page and the owner's verdict on the
- * result was that the board looked flat and cheap. They are the page's LIGHT
- * rather than its texture: the cyan reaches 0.42, the gold 0.34, and the static
- * wash underneath them carries real color of its own.
+ * Owner, 2026-09-11: "Also please spice up the background further. We need more
+ * moving pieces to this."
  *
- * ONLY `transform` MOVES. The orbs are radial gradients rasterized ONCE at load
- * and then translated by the compositor; the sheet is a repeating linear
- * gradient rasterized once and translated. Nothing animates a gradient stop, a
- * `background-position`, a `filter` or a size, all of which look identical in a
- * desktop preview and put a full re-raster on Blink's main thread 240 times a
- * second in the game.
+ * AND THE HOLDING BACK THAT NUMBER USED TO EXPRESS IS GONE ON PURPOSE. The five
+ * were five because an earlier pass believed continuous motion cost roughly
+ * 110 MB/s of texture traffic per client, which was measured to be wrong and is
+ * corrected in full in the header above: FiveM blits the whole surface every
+ * game frame from a shared D3D11 handle whether the page moved or not, so a
+ * still board and a moving one cost the game's renderer the same. What motion
+ * costs is frame production inside CEF, and what THAT costs depends only on
+ * whether each frame is a composite or a repaint.
+ *
+ * SO THE EIGHTEEN ARE ALL COMPOSITES AND THE COUNT IS FREE TO GROW:
+ *
+ *   THREE ORBS that wander on closed paths. The page's light.
+ *   TWO SWEEPS that cross the board in opposite directions on periods that do
+ *     not divide each other, so they never pass at the same place twice.
+ *   TWO STRIPED SHEETS at different angles, periods and speeds, whose
+ *     interference moves at neither one's rate.
+ *   ONE BREATHING POOL of cyan, which animates opacity and does not move at all.
+ *   TEN MOTES, five to fourteen pixels square, each on its own closed wander.
+ *
+ * WHAT IT COSTS IS RASTER, NOT FRAMES, AND THAT IS WHY THE SHAPES ARE WHAT THEY
+ * ARE. A promoted layer is a real GPU texture on the player's machine: the two
+ * new full-surface layers are about seven megabytes between them, and all ten
+ * motes together are about eleven KILOBYTES. The budget went on count where
+ * count is nearly free and on area only where area buys depth. Roughly twenty
+ * megabytes of layer raster in total, once, on a client already holding a
+ * battle royale map.
+ *
+ * ONLY `transform` AND `opacity` MOVE. The orbs, the motes and the sweeps are
+ * gradients rasterized ONCE at load and then translated by the compositor; the
+ * sheets are repeating linear gradients rasterized once and translated; the pool
+ * is rastered once and re-composited at a new alpha. Nothing animates a gradient
+ * stop, a `background-position`, a `filter` or a size, all of which look
+ * identical in a desktop preview and put a full re-raster on Blink's main thread
+ * 240 times a second in the game.
  *
  * EVERYTHING HERE IS OLDER THAN CHROME 103 BY YEARS. `@keyframes`, `transform`,
  * `radial-gradient`, `repeating-linear-gradient`, `border-radius`, `opacity`,
  * `will-change` and a negative `animation-delay`. No `color-mix`, no `oklch`, no
  * `:has()`, no container query, no nesting, no view transition.
  *
- * ═══ EACH ORB'S PATH IS A CLOSED LOOP, WHICH IS WHY THERE IS NO JUMP ═══
+ * ═══ EVERY WANDERING PATH IS A CLOSED LOOP, WHICH IS WHY THERE IS NO JUMP ═══
  *
- * The 100% keyframe is identical to the 0% keyframe on every orb, so the
- * animation restarts exactly where it ended. `ease-in-out` between stops is what
- * turns four corners into a wander rather than four visible direction changes,
- * and the durations are long enough (40 to 70 seconds) that nothing on this wall
- * reads as motion you are meant to watch.
+ * The 100% keyframe is identical to the 0% keyframe on every orb and every mote,
+ * so the animation restarts exactly where it ended. `ease-in-out` between stops
+ * is what turns four corners into a wander rather than four visible direction
+ * changes, and the durations are long enough (20 to 67 seconds) that nothing on
+ * this wall reads as motion you are meant to watch.
  *
- * THE SHEET'S LOOP IS SEAMLESS BY ARITHMETIC RATHER THAN BY REPETITION. Its
- * stripes repeat every 160px measured along the gradient's own direction. At
- * 120deg that direction is the unit vector (sqrt(3)/2, 1/2), and the translation
- * (-138.564, -80) projects onto it as exactly -160px: one period. Any other pair
- * of numbers gives a jump once per cycle, which is invisible in a preview and
- * obvious to somebody standing in front of a wall for two minutes.
- * `scoreboard.check.ts` recomputes the projection rather than trusting this.
- *
- * 1440x820 IS THE SMALLEST SHEET THAT CAN COVER ITS TRAVEL. 1280 + 139 and
- * 720 + 80, rounded up. A 200% x 200% layer would have been the lazy way to be
- * safe and would have cost about nine megabytes of raster on its own.
+ * The two sweeps and the two sheets are seamless by different arguments, and
+ * both are written out beside the rules themselves rather than here.
  *
  * ═══ AND THE PHASES ARE RANDOM PER CLIENT ═══
  *
@@ -487,18 +604,66 @@ const BODY = `'Barlow', 'Segoe UI', sans-serif`
  * twice and compare it. The route supplies the real numbers. See `PHASE_COUNT`.
  */
 
-/** One phase per moving layer: three orbs, the light sweep, then the sheet. */
-export const PHASE_COUNT = 5
+/**
+ * ═══ HOW MANY MOTES THERE ARE, AND WHY THEY ARE THE CHEAP WAY TO ADD MOTION
+ *     ═══
+ *
+ * Owner, 2026-09-11: "please spice up the background further. We need more
+ * moving pieces to this."
+ *
+ * THE OBVIOUS WAY TO ADD MOVING PIECES IS THE EXPENSIVE ONE. Another full-board
+ * sheet or another 900px orb is another five megabytes of layer raster on every
+ * machine in the pad, and there is a ceiling to how many of those the page can
+ * spend before it is holding more texture than the board is worth.
+ *
+ * A MOTE IS 5 TO 14 PIXELS SQUARE. Ten of them together are about eleven
+ * KILOBYTES of raster - three orders of magnitude under one sheet - and they are
+ * the layers a person actually reads as "things moving", because they are
+ * discrete objects on their own paths rather than a texture sliding behind the
+ * cards. The compositor cost is ten more quads, which is what a compositor is
+ * for.
+ *
+ * SO THE BUDGET WENT ON COUNT RATHER THAN AREA, and that is the whole shape of
+ * this pass: two more full-surface layers where they buy depth, ten tiny ones
+ * where they buy life.
+ */
+const MOTES = 10
 
 /**
- * The loop lengths, in seconds, in the same order as the phases.
+ * ═══ EVERY MOVING LAYER ON THE PAGE, IN THE ORDER ITS PHASE IS DRAWN ═══
  *
- * DELIBERATELY NOT MULTIPLES OF EACH OTHER. Five layers on 41, 53, 67, 29 and
- * 20 second loops only return to the same arrangement once every few hours, so
+ * THIS IS A LIST NOW AND IT WAS TWO PARALLEL ARRAYS - a `PHASE_COUNT` of 5 and a
+ * `PERIODS` of five numbers, indexed against each other by position. That is a
+ * shape that works right up until somebody adds a layer and updates one of them,
+ * and the failure is the quiet kind: a layer whose phase index runs off the end
+ * of the array gets phase zero on every client in the lobby, which is the one
+ * layer that IS synchronized. Nobody would ever see it.
+ *
+ * NOW THERE IS ONE LIST, `PHASE_COUNT` IS ITS LENGTH, and the route is sized
+ * from that. Adding a layer is adding a row.
+ *
+ * THE PERIODS ARE DELIBERATELY NOT MULTIPLES OF EACH OTHER. Eighteen layers on
+ * loops from 20 to 67 seconds return to the same arrangement roughly never, so
  * the background does not visibly repeat inside one warmup even before the
- * random phase offsets are applied.
+ * random per-client phase offsets are applied.
  */
-const PERIODS = [41, 53, 67, 29, 20] as const
+const LAYERS: ReadonlyArray<{ key: string; period: number }> = [
+  { key: 'o1', period: 41 },
+  { key: 'o2', period: 53 },
+  { key: 'o3', period: 67 },
+  { key: 'bm1', period: 29 },
+  { key: 'bm2', period: 43 },
+  { key: 'drift', period: 20 },
+  { key: 'weave', period: 31 },
+  { key: 'pulse', period: 23 },
+  ...Array.from({ length: MOTES }, (_, i) => ({
+    key: `mt${i}`,
+    /** 30 to 60 seconds, spread so no two adjacent motes share a loop. */
+    period: 30 + ((i * 5) % 11) * 3,
+  })),
+]
+
+export const PHASE_COUNT = LAYERS.length
 
 /**
  * `-<n>s`, from a phase in [0, 1).
@@ -510,13 +675,143 @@ const PERIODS = [41, 53, 67, 29, 20] as const
  * mid-loop with no wait. A phase of a whole period covers the loop exactly once.
  */
 function delayFor(phase: number, index: number): string {
-  const period = PERIODS[index] ?? 20
+  const period = LAYERS[index]?.period ?? 20
   const clamped = Number.isFinite(phase) ? Math.min(Math.max(phase, 0), 1) : 0
   return `-${(clamped * period).toFixed(2)}s`
 }
 
+/** The period of the layer with this key, so a rule can name its own loop. */
+function periodOf(key: string): number {
+  return LAYERS.find((l) => l.key === key)?.period ?? 20
+}
+
+/** The phase index of the layer with this key. */
+function indexOf(key: string): number {
+  return LAYERS.findIndex((l) => l.key === key)
+}
+
+/**
+ * A deterministic value in [0, 1) from one integer.
+ *
+ * ═══ THIS IS NOT RANDOMNESS AND MUST NOT BECOME IT ═══
+ *
+ * The mote field needs to look scattered rather than gridded, which means ten
+ * positions, ten sizes and forty path offsets that do not fall on an arithmetic
+ * progression. `Math.random()` would produce those and would also make
+ * `renderScoreboard` impure, which is the one property `scoreboard.check.ts`
+ * leans on hardest: it renders the same board twice and compares the two
+ * documents byte for byte.
+ *
+ * SO THE SCATTER IS A PURE FUNCTION OF THE MOTE'S INDEX. The per-client variety
+ * the owner asked for is entirely in the PHASES, which the route draws and
+ * passes in - the field's shape is the same on every machine and its timing is
+ * not, which is the half that is actually visible.
+ *
+ * A PLAIN LINEAR CONGRUENTIAL STEP, and the seeds are small enough (under a few
+ * hundred) that the multiply stays exact in a double.
+ */
+function scatter(seed: number): number {
+  return ((seed * 1103515245 + 12345) % 2147483648) / 2147483648
+}
+
+/**
+ * ═══ THE MOTE FIELD ═══
+ *
+ * Ten small soft dots, each on its own closed wander, each started at its own
+ * random point in its own loop. They are the "more moving pieces" the owner
+ * asked for and they are the cheapest thing on this page by three orders of
+ * magnitude - see `MOTES`.
+ *
+ * EVERY PATH CLOSES, for the same reason the orbs' do: a 100% keyframe that is
+ * not the 0% keyframe teleports the layer back in full view once per loop. That
+ * is invisible in a preview and it is the single most obvious defect available
+ * on a wall somebody stands in front of for a whole warmup. The check recomputes
+ * it rather than trusting this sentence.
+ *
+ * THEY LIVE IN THE MARGIN, MOSTLY, AND THAT IS DELIBERATE NOW THAT THERE IS ONE.
+ * The safe area leaves a 90px band down each side and 50px top and bottom in
+ * which nothing is ever drawn but background, so the field is weighted toward
+ * the edges of the surface where it is actually visible rather than scattered
+ * evenly under opaque cards.
+ */
+function moteStyles(phases: readonly number[]): string {
+  const rules: string[] = []
+  const frames: string[] = []
+
+  for (let i = 0; i < MOTES; i++) {
+    const key = `mt${i}`
+    const at = indexOf(key)
+    /**
+     * 7 TO 19 PIXELS, AND IT WAS 5 TO 14. Rendered at 1280x720 and looked at,
+     * the smaller field was very nearly invisible against the wash - which is
+     * the exact note the orbs got last pass ("the board looked flat and cheap")
+     * arriving again on a different layer. Motion nobody can see is motion that
+     * was not added.
+     */
+    const size = 7 + Math.floor(scatter(i * 7 + 1) * 4) * 4
+    /**
+     * WEIGHTED TO THE EDGES. `edge` is 0 for the left band and 1 for the right,
+     * alternating, and the lateral position is drawn inside that band plus a
+     * little of the panel it borders. A mote under a card is a mote nobody sees.
+     */
+    const edge = i % 2
+    const x = Math.round(
+      edge === 0
+        ? scatter(i * 11 + 3) * 300
+        : BOARD_WIDTH - 300 + scatter(i * 11 + 3) * 300,
+    )
+    const y = Math.round(scatter(i * 13 + 5) * (BOARD_HEIGHT + 60) - 30)
+    const alpha = (0.28 + scatter(i * 17 + 7) * 0.4).toFixed(2)
+    /** A drifting mote is mostly vertical, with enough lateral wander to read. */
+    const amp = 70 + Math.round(scatter(i * 19 + 9) * 130)
+    const lat = 26 + Math.round(scatter(i * 23 + 11) * 54)
+    const tint = i % 3 === 0 ? PALETTE.gold : PALETTE.cyan
+
+    rules.push(`
+.${key} {
+  left: ${x}px;
+  top: ${y}px;
+  width: ${size}px;
+  height: ${size}px;
+  background-image: radial-gradient(circle closest-side,
+    ${rgba(tint, Number(alpha))} 0%,
+    ${rgba(tint, Number(alpha) * 0.35)} 55%,
+    ${rgba(tint, 0)} 100%);
+  animation-name: ${key};
+  animation-duration: ${periodOf(key)}s;
+  animation-delay: ${delayFor(phases[at] ?? 0, at)};
+}`)
+
+    frames.push(`
+@keyframes ${key} {
+  0%   { transform: translate3d(0, 0, 0); }
+  25%  { transform: translate3d(${lat}px, ${-Math.round(amp * 0.45)}px, 0); }
+  50%  { transform: translate3d(${Math.round(lat * 0.3)}px, ${-amp}px, 0); }
+  75%  { transform: translate3d(${-lat}px, ${-Math.round(amp * 0.55)}px, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}`)
+  }
+
+  return `
+/* ── THE MOTES ───────────────────────────────────────────────────────────────
+   ONE PROMOTED-LAYER DECLARATION FOR ALL TEN. 'will-change' is a GPU texture
+   per element and these are 5 to 14 pixels square, so ten of them together
+   cost about eleven kilobytes - but the DECLARATION is written once, which is
+   what keeps the page's promotion budget countable. */
+.mote {
+  position: absolute;
+  border-radius: 50%;
+  will-change: transform;
+  animation-iteration-count: infinite;
+  animation-timing-function: ease-in-out;
+}${rules.join('')}${frames.join('')}`
+}
+
 function driftStyles(phases: readonly number[]): string {
-  const d = (i: number): string => delayFor(phases[i] ?? 0, i)
+  const d = (key: string): string => {
+    const at = indexOf(key)
+    return delayFor(phases[at] ?? 0, at)
+  }
 
   return `
 .orb {
@@ -536,8 +831,8 @@ function driftStyles(phases: readonly number[]): string {
     ${rgba(PALETTE.cyan, 0.1)} 45%,
     ${rgba(PALETTE.cyan, 0)} 100%);
   animation-name: o1;
-  animation-duration: ${PERIODS[0]}s;
-  animation-delay: ${d(0)};
+  animation-duration: ${periodOf('o1')}s;
+  animation-delay: ${d('o1')};
 }
 .o2 {
   left: 740px;
@@ -549,8 +844,8 @@ function driftStyles(phases: readonly number[]): string {
     ${rgba(PALETTE.gold, 0.07)} 45%,
     ${rgba(PALETTE.gold, 0)} 100%);
   animation-name: o2;
-  animation-duration: ${PERIODS[1]}s;
-  animation-delay: ${d(1)};
+  animation-duration: ${periodOf('o2')}s;
+  animation-delay: ${d('o2')};
 }
 .o3 {
   left: 320px;
@@ -562,42 +857,8 @@ function driftStyles(phases: readonly number[]): string {
     rgba(45, 212, 191, 0.06) 45%,
     rgba(45, 212, 191, 0) 100%);
   animation-name: o3;
-  animation-duration: ${PERIODS[2]}s;
-  animation-delay: ${d(2)};
-}
-/* ── THE SWEEP ───────────────────────────────────────────────────────────────
-   A tall soft blade of light that crosses the whole board every ${PERIODS[3]}
-   seconds and is off the surface the rest of the time. It is the one layer that
-   is meant to be NOTICED rather than felt: the orbs are weather and this is an
-   event, which is what keeps a wall somebody stands in front of for a whole
-   warmup from being one still picture.
-
-   ITS LOOP DOES NOT NEED TO CLOSE THE WAY AN ORB'S DOES, and that is geometry
-   rather than an exemption. An orb wanders inside the frame, so a 100% keyframe
-   that is not the 0% one teleports in full view. This one STARTS AND ENDS
-   COMPLETELY OUTSIDE the 1280px surface - its right edge is still left of zero
-   at 0%, its left edge is already past 1280 at 100% - so the instant it resets
-   there is nothing on screen to jump. scoreboard.check.ts recomputes both
-   ends against the board width rather than taking that on trust. */
-.beam {
-  position: absolute;
-  top: -320px;
-  left: -560px;
-  width: 300px;
-  height: 1400px;
-  background-image: linear-gradient(90deg,
-    rgba(190, 235, 255, 0) 0%,
-    rgba(190, 235, 255, 0.05) 38%,
-    rgba(214, 244, 255, 0.10) 50%,
-    rgba(190, 235, 255, 0.05) 62%,
-    rgba(190, 235, 255, 0) 100%);
-  will-change: transform;
-  animation: beam ${PERIODS[3]}s linear infinite;
-  animation-delay: ${d(3)};
-}
-@keyframes beam {
-  from { transform: translate3d(0px, 0, 0) rotate(16deg); }
-  to   { transform: translate3d(2360px, 0, 0) rotate(16deg); }
+  animation-duration: ${periodOf('o3')}s;
+  animation-delay: ${d('o3')};
 }
 @keyframes o1 {
   0%   { transform: translate3d(0, 0, 0); }
@@ -620,10 +881,142 @@ function driftStyles(phases: readonly number[]): string {
   75%  { transform: translate3d(-220px, 60px, 0); }
   100% { transform: translate3d(0, 0, 0); }
 }
-.drift {
+
+/* ── THE BREATHING LIGHT ─────────────────────────────────────────────────────
+   The one layer that animates OPACITY rather than position, which is the other
+   property Chromium runs on the compositor without re-rastering. It does not
+   move at all: it is a soft pool of the project's cyan sitting over the top of
+   the board that swells and fades on a ${periodOf('pulse')} second cycle, so
+   the light on the surface changes even in the stretch between two sweeps.
+
+   IT IS THE CHEAPEST KIND OF MOTION THERE IS. A layer whose opacity changes is
+   rastered once and re-composited at a new alpha; nothing about its content is
+   recomputed. */
+.pulse {
+  position: absolute;
+  left: 180px;
+  top: -300px;
+  width: 720px;
+  height: 720px;
+  border-radius: 50%;
+  background-image: radial-gradient(circle closest-side,
+    ${rgba(PALETTE.cyan, 0.17)} 0%,
+    ${rgba(PALETTE.cyan, 0.05)} 52%,
+    ${rgba(PALETTE.cyan, 0)} 100%);
+  will-change: opacity;
+  animation: pulse ${periodOf('pulse')}s ease-in-out infinite;
+  animation-delay: ${d('pulse')};
+}
+@keyframes pulse {
+  0%   { opacity: 0.30; }
+  50%  { opacity: 1; }
+  100% { opacity: 0.30; }
+}
+
+/* ── THE SWEEPS, AND THERE ARE TWO OF THEM NOW ───────────────────────────────
+   A tall soft blade of light that crosses the whole board and is off the
+   surface the rest of the time. These are the layers meant to be NOTICED
+   rather than felt: the orbs are weather and a sweep is an event.
+
+   TWO, CROSSING, ON PERIODS THAT DO NOT DIVIDE EACH OTHER. Owner: "We need more
+   moving pieces to this." One blade every ${periodOf('bm1')} seconds is a wall
+   that does something occasionally; a second one travelling the other way on
+   ${periodOf('bm2')} seconds, tilted the other way and in the warm half of the
+   palette, means the two pass each other at a different place on the board
+   every time and the surface never settles into one repeating event.
+
+   THEIR LOOPS DO NOT NEED TO CLOSE THE WAY AN ORB'S DOES, and that is geometry
+   rather than an exemption. An orb wanders inside the frame, so a 100% keyframe
+   that is not the 0% one teleports in full view. These START AND END COMPLETELY
+   OUTSIDE the 1280px surface - the first one's right edge is still left of zero
+   at 0% and its left edge is already past 1280 at 100%, and the second one does
+   the same journey backwards - so the instant either resets there is nothing on
+   screen to jump. scoreboard.check.ts recomputes both ends of both blades
+   against the board width, from the angle, the size and the travel, rather than
+   taking any of that on trust. */
+.beam {
+  position: absolute;
+  height: 1400px;
+  will-change: transform;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+.bm1 {
+  top: -320px;
+  left: -560px;
+  width: 300px;
+  background-image: linear-gradient(90deg,
+    rgba(190, 235, 255, 0) 0%,
+    rgba(190, 235, 255, 0.05) 38%,
+    rgba(214, 244, 255, 0.10) 50%,
+    rgba(190, 235, 255, 0.05) 62%,
+    rgba(190, 235, 255, 0) 100%);
+  animation-name: bm1;
+  animation-duration: ${periodOf('bm1')}s;
+  animation-delay: ${d('bm1')};
+}
+.bm2 {
+  top: -320px;
+  left: 1560px;
+  width: 200px;
+  background-image: linear-gradient(90deg,
+    rgba(255, 214, 150, 0) 0%,
+    rgba(255, 214, 150, 0.035) 40%,
+    rgba(255, 228, 176, 0.075) 50%,
+    rgba(255, 214, 150, 0.035) 60%,
+    rgba(255, 214, 150, 0) 100%);
+  animation-name: bm2;
+  animation-duration: ${periodOf('bm2')}s;
+  animation-delay: ${d('bm2')};
+}
+@keyframes bm1 {
+  from { transform: translate3d(0px, 0, 0) rotate(16deg); }
+  to   { transform: translate3d(2360px, 0, 0) rotate(16deg); }
+}
+@keyframes bm2 {
+  from { transform: translate3d(0px, 0, 0) rotate(-12deg); }
+  to   { transform: translate3d(-2280px, 0, 0) rotate(-12deg); }
+}
+
+/* ── THE SHEETS, AND THERE ARE TWO OF THOSE NOW TOO ──────────────────────────
+   A sheet is a repeating stripe pattern rasterized ONCE and translated by the
+   compositor forever. Nothing about it animates a gradient stop, a
+   background-position or a size, all of which look identical in a desktop
+   preview and put a full re-raster on Blink's main thread instead.
+
+   THE SECOND ONE CROSSES THE FIRST, which is the whole reason for it. One
+   sheet drifting at 120deg reads as a texture sliding; two sheets on different
+   angles, different stripe periods and different speeds read as a surface with
+   depth, because the interference between them moves at neither one's rate.
+
+   EACH LOOP IS SEAMLESS BY ARITHMETIC RATHER THAN BY REPETITION, and the rule
+   is the same for both: translate by exactly one stripe period ALONG the
+   gradient's own direction. A 'repeating-linear-gradient(Ddeg, ...)' runs along
+   the unit vector (sin D, -cos D) in screen coordinates, so a period of P
+   travels (P sin D, -P cos D). At 120deg with P = 160 that is (138.564, 80),
+   and the first sheet takes it NEGATED, so it runs backwards along its own
+   stripes. At 150deg with P = 132 it is (66, 114.315), which the second sheet
+   takes as written - so the two travel in opposing directions. ANY OTHER PAIR OF
+   NUMBERS GIVES A JUMP ONCE PER CYCLE, which is invisible in a preview and
+   obvious to somebody standing in front of a wall for two minutes.
+   scoreboard.check.ts recomputes the projection for both sheets, reading the
+   angle and the period out of the gradient rather than being told them.
+
+   AND EACH SHEET IS THE SMALLEST RECTANGLE THAT COVERS ITS OWN TRAVEL, WHICH
+   ALSO DECIDES WHERE IT STARTS. The first drifts up and left, so it sits at the
+   origin and is 1280+139 by 720+80. The second drifts down and right, so it
+   starts ABOVE AND LEFT of the surface by its own travel and is 1280+70 by
+   720+120. A 200% x 200% layer would have been the lazy way to be safe and would
+   have cost about nine megabytes of raster each. */
+.sheet {
   position: absolute;
   top: 0;
   left: 0;
+  will-change: transform;
+  animation-iteration-count: infinite;
+  animation-timing-function: linear;
+}
+.drift {
   width: 1440px;
   height: 820px;
   opacity: 0.75;
@@ -642,14 +1035,40 @@ function driftStyles(phases: readonly number[]): string {
     rgba(255, 255, 255, 0) 106px,
     rgba(255, 255, 255, 0) 160px
   );
-  will-change: transform;
-  animation: drift ${PERIODS[4]}s linear infinite;
-  animation-delay: ${d(4)};
+  animation-name: drift;
+  animation-duration: ${periodOf('drift')}s;
+  animation-delay: ${d('drift')};
+}
+.weave {
+  top: -120px;
+  left: -70px;
+  width: 1360px;
+  height: 840px;
+  opacity: 0.6;
+  background-image: repeating-linear-gradient(
+    150deg,
+    rgba(255, 255, 255, 0.05) 0px,
+    rgba(255, 255, 255, 0.05) 2px,
+    rgba(255, 255, 255, 0) 2px,
+    rgba(255, 255, 255, 0) 61px,
+    ${rgba(PALETTE.gold, 0.06)} 61px,
+    ${rgba(PALETTE.gold, 0.06)} 63px,
+    rgba(255, 255, 255, 0) 63px,
+    rgba(255, 255, 255, 0) 132px
+  );
+  animation-name: weave;
+  animation-duration: ${periodOf('weave')}s;
+  animation-delay: ${d('weave')};
 }
 @keyframes drift {
   from { transform: translate3d(0, 0, 0); }
   to   { transform: translate3d(-138.564px, -80px, 0); }
-}`
+}
+@keyframes weave {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(66px, 114.315px, 0); }
+}
+${moteStyles(phases)}`
 }
 
 /**
@@ -705,14 +1124,14 @@ function transitionStyles(columns: number): string {
     opacity ${TRANSITION_MS}ms ease,
     visibility 0s linear 0s;
 }
-.card, .tile, .mate {
+.card, .tile, .mate, .stitle {
   opacity: 0;
   transform: translate3d(0, ${ENTRANCE_PX}px, 0);
   transition:
     opacity ${CARD_MS}ms ease,
     transform ${CARD_MS}ms cubic-bezier(0.22, 0.8, 0.28, 1);
 }
-.panel.on .card, .panel.on .tile, .panel.on .mate {
+.panel.on .card, .panel.on .tile, .panel.on .mate, .panel.on .stitle {
   opacity: 1;
   transform: translate3d(0, 0, 0);
 }
@@ -728,10 +1147,15 @@ ${delays}
 /**
  * ═══ THE COLUMN ARITHMETIC, WHICH IS NOW DERIVED AND WAS A LITERAL ═══
  *
- * 1280 - 2 x 16 padding = 1248, and five 240px cards with four 12px gutters is
- * 1248. It fitted to the pixel, which is why 240 was never a round number chosen
- * by eye: a card one pixel wider wraps the last column onto a second row that has
- * nowhere to go on a surface that cannot scroll.
+ * IT USED TO BE 1280 - 2 x 16 padding = 1248, and five 240px cards with four
+ * 12px gutters is 1248. It fitted to the pixel, which is why 240 was never a
+ * round number chosen by eye: a card one pixel wider wraps the last column onto a
+ * second row that has nowhere to go on a surface that cannot scroll.
+ *
+ * AND FITTING THE RAW BOARD WIDTH TO THE PIXEL IS EXACTLY WHY THE OUTER CARDS
+ * WERE BEING CROPPED BY THE PROP'S BEZEL. The divisor is `INNER_WIDTH` now,
+ * which is the SAFE AREA rather than the surface - see `SAFE_INSET` below, which
+ * is the one number that decides it.
  *
  * AND IT WAS EXACTLY AS BRITTLE AS THAT SOUNDS. The owner has asked for a sixth
  * card ("Let's also add a 'Biggest spenders' category"), and a sixth 240px card
@@ -747,10 +1171,92 @@ ${delays}
  * the longest label is still inside it. The type choice and the column count are
  * the same decision.
  */
-const PANEL_PAD = 16
 const GUTTER = 12
-export const INNER_WIDTH = BOARD_WIDTH - 2 * PANEL_PAD
-export const INNER_HEIGHT = BOARD_HEIGHT - 2 * PANEL_PAD
+
+/**
+ * ═══ THE SAFE AREA, WHICH IS A BUG FIX AND NOT A MARGIN PREFERENCE ═══
+ *
+ * Owner, 2026-09-11: "It doesn't look like the crop landed with the redesign."
+ *
+ * WHAT IS ACTUALLY WRONG. The board is painted onto a prop whose MODEL BOX is
+ * wider than its LIT SCREEN, so the physical bezel of the prop crops the outer
+ * edges of the page. In game the first and last cards are cut off mid-character.
+ * The page is not overflowing and nothing here is mis-measured: the document is
+ * exactly 1280x720 and 1280x720 of it is being drawn. A strip of it is simply
+ * behind plastic.
+ *
+ * THE FIX IS THIS SIDE'S AND NOT THE GAME'S, WHICH IS THE OWNER'S INSTRUCTION.
+ * "we need to not change the position or size of the DUI any further. It has to
+ * stay as-is and we need to address the visuals on the ringmaster side." So
+ * `widthM` is not touched and is not proposed.
+ *
+ * AND RENDERING AT 1920x1080 WOULD NOT HAVE HELPED, WHICH HE ASKED. The aspect
+ * ratio is unchanged, so exactly the same FRACTION of the page falls outside the
+ * bezel; all it would buy is more pixels in the part that is cropped, at 8.3 MB
+ * of live RGBA per client against 3.7. Worse, 1280x720 is pinned on both sides
+ * (`BR.Config.Board.width/height`) and a mismatch crops the page silently with
+ * no error anywhere. The two numbers stay.
+ *
+ * SO THE PAGE INSETS ITS OWN CONTENT, THE WAY BROADCAST TELEVISION DOES. Title
+ * safe is the oldest solution to exactly this problem - a signal that has to
+ * survive being displayed on a device whose visible area you do not control -
+ * and the answer is to put nothing that must be read near the edge.
+ *
+ * ═══ SEVEN PERCENT, AND IT IS ONE NUMBER SO HE CAN DIAL IT ═══
+ *
+ * `SAFE_INSET` is the FRACTION of each axis given up on each side, and it is the
+ * only number that has to change to re-fit the board to whatever his bezel
+ * actually eats. Everything else - the panel padding, the column width, the
+ * squad row height, the content height the three slides lay out inside - is
+ * derived from it. Nothing below reads `BOARD_WIDTH` for layout any more, which
+ * is the property that was missing: the columns used to be computed to fit
+ * `1280 - 32` to the pixel, which is precisely why content ran to the very edge.
+ *
+ * WHY 0.07. Broadcast title-safe is conventionally 5% per side on a modern
+ * signal and 10% on an old one, and the prop is nearer the old case: a physical
+ * frame rather than a tolerance. 7% is the middle of the 6-8% range that is the
+ * usual starting point, it costs 90px of the 1280 and 50px of the 720 on each
+ * side, and it leaves 1100x620 - which is still wider than the six-column layout
+ * needs and taller than the tallest slide. If he reports the crop is still
+ * biting, this goes to 0.08 and nothing else moves.
+ *
+ * THE BACKGROUND STILL PAINTS THE FULL 1280x720 and deliberately so. Only the
+ * CONTENT is inset; `.wash`, `.vig` and every moving layer are sized to the whole
+ * surface, so the cropped margin is background rather than nothing. A board with
+ * a black frame around it would read as a mistake from the first glance.
+ */
+export const SAFE_INSET = 0.07
+export const SAFE_X = Math.round(BOARD_WIDTH * SAFE_INSET)
+export const SAFE_Y = Math.round(BOARD_HEIGHT * SAFE_INSET)
+
+export const INNER_WIDTH = BOARD_WIDTH - 2 * SAFE_X
+export const INNER_HEIGHT = BOARD_HEIGHT - 2 * SAFE_Y
+
+/**
+ * The title band, and what is left under it for the slide itself.
+ *
+ * HIS THREE WORDS GO HERE. "The scoreboard page should also have a title at the
+ * top reading 'LEADERBOARD' and the player stats should have one reading 'PLAYER
+ * STATS' and the squad one reading 'SQUAD STATS'." They are the first words he
+ * has ever asked to be ADDED to this page, so they are exact and there is
+ * nothing beside them - no subtitle, no caption, no count.
+ *
+ * `CONTENT_HEIGHT` IS WHAT EVERY SLIDE DIVIDES UP, and it is the height with the
+ * title already taken out. The alternative - letting each slide subtract the
+ * title itself - is three places to get it wrong on a surface that cannot
+ * scroll, and the squad slide is the one that would have lost.
+ */
+/**
+ * 54 AND NOT 46, AND THE FOUR PIXELS ARE ARITHMETIC RATHER THAN TASTE. The band
+ * is `border-box`, so its 10px of padding and its 1px rule come OUT of it: at 46
+ * the content box was 35px holding a 40px line box, which overflowed a band that
+ * hides its overflow. It happened to look right because Anton's ink is about
+ * three quarters of its em and fitted anyway - which is a layout that is correct
+ * by luck and stops being correct the first time the type size moves.
+ */
+export const TITLE_H = 54
+const TITLE_GAP = 14
+export const CONTENT_HEIGHT = INNER_HEIGHT - TITLE_H - TITLE_GAP
 
 export function columnWidth(columns: number): number {
   if (columns < 1) return INNER_WIDTH
@@ -843,6 +1349,9 @@ function categoryStyles(
       return `
 .c-${key} .card {
   background-image:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.10) 0%,
+      rgba(255, 255, 255, 0.015) 46%),
     radial-gradient(340px 220px at 50% -8%,
       ${rgba(accent, 0.26)} 0%,
       ${rgba(accent, 0.06)} 55%,
@@ -860,7 +1369,12 @@ function categoryStyles(
 .c-${key} li:nth-child(2) .pos { color: ${t.second}; }
 .c-${key} li:nth-child(3) .pos { color: ${t.third}; }
 .c-${key} li:nth-child(1) .val { color: ${t.bright}; }
+/* THE ONE COLORED EDGE ON THIS PAGE, AND IT IS THE OWNER'S OWN REQUEST. See the
+   focused-row block in the stylesheet: this is the value br_ui's inventory sets
+   to white when a slot takes focus, and it drives the border AND both redrawn
+   chamfers from one declaration, which is the point of the variable. */
 .c-${key} .card li.you {
+  --edgec: ${t.bright};
   background-image: linear-gradient(90deg,
     ${rgba(accent, 0.3)} 0%,
     ${rgba(accent, 0.11)} 52%,
@@ -869,6 +1383,9 @@ function categoryStyles(
 }
 .c-${key} .tile {
   background-image:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.10) 0%,
+      rgba(255, 255, 255, 0.015) 46%),
     radial-gradient(300px 230px at 50% 104%,
       ${rgba(accent, 0.32)} 0%,
       ${rgba(accent, 0.08)} 55%,
@@ -912,8 +1429,18 @@ function squadStyles(
       if (!mate.color) return ''
       const c = mate.color
       const base = mate.you ? PALETTE.you : PALETTE.card
+      /**
+       * THE VIEWER'S OWN ROW TAKES THE INVENTORY'S FOCUS EDGE IN THEIR OWN BLIP
+       * COLOR. Everywhere else on the board that edge is the CATEGORY's light,
+       * because the row belongs to a category; on this slide a row belongs to a
+       * PERSON, and the one color that is already theirs is the one on the
+       * minimap. Mixed 42% toward white by the same rule `tone().bright` uses,
+       * so a dark blip color still reads as a lit edge rather than as a border
+       * that failed to paint.
+       */
+      const focus = mate.you ? `\n  --edgec: ${mix(c, '#ffffff', 0.42)};` : ''
       return `
-.mate.sqc-${i} {
+.mate.sqc-${i} {${focus}
   background-image:
     linear-gradient(90deg,
       ${rgba(c, 0.12)} 0%,
@@ -1072,13 +1599,62 @@ ${motion === 'full' ? driftStyles(phases) : ''}
   width: ${BOARD_WIDTH}px;
   height: ${BOARD_HEIGHT}px;
   box-sizing: border-box;
-  padding: ${PANEL_PAD}px;
+  /* THE SAFE AREA. Not a margin taste: the prop's bezel crops the page and this
+     is how much of it. One constant, and every other number on the slide is
+     derived from what is left. See SAFE_INSET. */
+  padding: ${SAFE_Y}px ${SAFE_X}px;
   opacity: 0;
   visibility: hidden;
 }
 .panel.on {
   opacity: 1;
   visibility: visible;
+}
+
+/* ── THE TITLE ───────────────────────────────────────────────────────────────
+   Owner, 2026-09-11: "The scoreboard page should also have a title at the top
+   reading 'LEADERBOARD' and the player stats should have one reading 'PLAYER
+   STATS' and the squad one reading 'SQUAD STATS'."
+
+   HIS WORDS, HIS CAPITALS, AND NOTHING BESIDE THEM. These are the first words
+   ever added to this page that are not a category label or a player's own name,
+   so they are exact and they are alone: no subtitle, no caption, no squad
+   number, no count of anything.
+
+   THE TYPE IS br_ui's SCREEN HEADING, COPIED RATHER THAN MATCHED BY EYE. Every
+   sub-screen in the game sets its title as
+   'font-display text-[3rem] uppercase tracking-[0.1em] leading-none'
+   (ui-src/src/screens/Locker.tsx, Market.tsx). That is Anton, uppercase, 0.1em
+   of tracking and a collapsed line box, and it is what is here at the size this
+   surface reads at.
+
+   'leading-none' PLUS FLEX CENTERING IS THE WHOLE REASON BOTH ARE PRESENT, and
+   it is the same note '.mname' carries: Anton's line box has a deep descent, so
+   a title vertically centered by its LINE BOX sits visibly high in its band.
+   Collapsing the box to the type size and centering the box puts the glyphs
+   where the middle is.
+
+   THE HAIRLINE UNDER IT IS br_ui's PANEL EDGE and it is not a decoration with a
+   color in it - it is PALETTE.edge, the same neutral white-alpha every card on
+   this page is outlined in. Without it a single word floats in the top left of a
+   dark surface with nothing relating it to the slide underneath. */
+.stitle {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: ${TITLE_H}px;
+  margin: 0 0 ${TITLE_GAP}px 0;
+  padding: 0 0 10px 0;
+  border-bottom: 1px solid ${PALETTE.edge};
+  font-family: ${DISPLAY};
+  font-size: 40px;
+  font-weight: 400;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: ${PALETTE.text};
+  white-space: nowrap;
+  overflow: hidden;
 }
 
 ${motion === 'off' ? '' : transitionStyles(columns)}
@@ -1090,7 +1666,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   align-items: center;
   gap: ${GUTTER}px;
   width: 100%;
-  height: 100%;
+  height: ${CONTENT_HEIGHT}px;
 }
 .col { width: ${w}px; }
 /* ── A CARD IS AN OBJECT, NOT A RECTANGLE WITH TEXT IN IT ─────────────────────
@@ -1114,21 +1690,52 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
 
      A LIGHT EDGE ALONG THE TOP, one inset pixel of white at 7%. It is the
      single cheapest cue that a surface is facing up toward a light, and this
-     page has a light: the wash and the orbs behind it.
+     page has a light: the wash and the orbs behind it. It is br_ui's '.panel'
+     shadow, to the digit.
 
      A NEUTRAL HAIRLINE AROUND IT. Still PALETTE.edge, still grey, still not
-     the category's color. The card is colored by its FILL. */
+     the category's color. The card is colored by its FILL.
+
+   AND IT IS SQUARE NOW, WHICH IS THE GAME'S SHAPE RATHER THAN A PREFERENCE.
+   Owner, 2026-09-11: "Can we also get the cards to use square corners like the
+   rest of br_ui". Both of br_ui's surface classes are 'border-radius: 0' and the
+   note beside them records that the owner saw the square edge arrive by accident
+   and kept it. So the 12px radius is gone from every card, tile, row and band on
+   this page. The only 'border-radius' left is '50%' on the round background
+   layers, which is a circle rather than a corner.
+
+   THE TWO-STOP SHEEN ON TOP OF THE FILL IS br_ui's '.plate', COPIED AT ITS OWN
+   NUMBERS: 'linear-gradient(180deg, rgba(255,255,255,0.10),
+   rgba(255,255,255,0.015) 46%)'. That is what makes a surface in the game read
+   as a piece of hardware facing a light rather than as a tinted rectangle, and
+   it sits over each category's own gradient rather than replacing it.
+
+   '--edgec' RATHER THAN A BORDER COLOR, WHICH IS A MECHANISM AND NOT A RENAME.
+   br_ui: "--edgec drives the border AND both redrawn chamfers, so a component
+   that recolours its edge can never end up with a mismatched diagonal. Recolour
+   the variable, never the border." The viewer's row below is exactly such a
+   component, and this is the seam it recolors. */
+.card, .tile, .mate {
+  --edgec: ${PALETTE.edge};
+  /* br_ui's --cut-max at a 16px root. The bevel a focused surface OPENS to; a
+     surface at rest is perfectly square and does not carry a clip-path at all. */
+  --cut-max: ${CUT_PX}px;
+}
 .card {
   box-sizing: border-box;
   width: ${w}px;
   height: ${CARD_H}px;
   background-color: ${PALETTE.card};
-  background-image: linear-gradient(176deg,
-    ${mix(PALETTE.card, '#ffffff', 0.06)} 0%,
-    ${PALETTE.card} 42%,
-    ${PALETTE.deep} 100%);
-  border: 1px solid ${PALETTE.edge};
-  border-radius: 12px;
+  background-image:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.10) 0%,
+      rgba(255, 255, 255, 0.015) 46%),
+    linear-gradient(176deg,
+      ${mix(PALETTE.card, '#ffffff', 0.06)} 0%,
+      ${PALETTE.card} 42%,
+      ${PALETTE.deep} 100%);
+  border: 1px solid var(--edgec);
+  border-radius: 0;
   overflow: hidden;
   box-shadow:
     0 16px 34px rgba(0, 0, 0, 0.5),
@@ -1144,10 +1751,17 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   margin: 0;
   box-sizing: border-box;
   height: ${HEAD_H}px;
-  padding: 0 14px;
+  padding: 0 12px;
   line-height: ${HEAD_H - 1}px;
   font-family: ${DISPLAY};
-  font-size: 21px;
+  /* SCALED WITH THE COLUMN, WITH A FLOOR, WHICH IS THE SAME TRICK '.tval' USES
+     AND FOR THE SAME REASON. "MOST REVIVES GIVEN" is eighteen characters and it
+     is the owner's own wording, so it cannot be shortened - it has to be made to
+     fit. At six columns the card is ${columnWidth(6)}px and a 21px label does not
+     go in it. The floor is what stops the answer to a seventh column being type
+     nobody can read from a few meters through a texture; past that the label
+     ellipsizes, which is the honest failure rather than the invisible one. */
+  font-size: ${Math.max(18, Math.min(21, Math.round((21 * w) / 240)))}px;
   font-weight: 400;
   letter-spacing: 0.05em;
   color: ${PALETTE.label};
@@ -1161,11 +1775,23 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   padding: 0;
   list-style: none;
 }
+/* ── THE ROW'S OWN METRICS, TIGHTENED FOR THE SAFE AREA ──────────────────────
+   A column is ${w}px now rather than 240, because the columns divide the SAFE
+   AREA rather than the surface - see SAFE_INSET. That is 30px of name width
+   gone at five columns, on the one piece of type on this page that is somebody
+   else's and cannot be shortened.
+
+   SO THE PADDING, THE NUMERAL COLUMN AND THE TWO TYPE SIZES EACH GIVE BACK A
+   LITTLE, which is together worth more than any one of them: 3px a side of
+   padding, 3px of the rank column, 2px of the value's gutter, and two points
+   off each of the name and the number. A name that used to fit still fits and
+   the row is no more cramped than it was, because everything in it shrank by
+   the same proportion the card did. */
 .card li {
   display: flex;
   align-items: center;
   height: ${ROW_H}px;
-  padding: 0 13px;
+  padding: 0 10px;
   box-sizing: border-box;
 }
 /* THE ROW RULES ARE INSET SHADOWS AND NOT BORDERS, which is arithmetic rather
@@ -1177,8 +1803,8 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 .pos {
-  width: 24px;
-  flex: 0 0 24px;
+  width: 21px;
+  flex: 0 0 21px;
   font-family: ${DISPLAY};
   font-size: 21px;
   color: ${PALETTE.muted};
@@ -1191,7 +1817,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   text-overflow: ellipsis;
   font-family: ${BODY};
   font-weight: 600;
-  font-size: 20px;
+  font-size: 18px;
 }
 /* THE NUMBER IS WHY ANYBODY LOOKED AT THE CARD, so it is set five points
    larger than the name beside it and in the display face rather than the body
@@ -1199,9 +1825,9 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
    see the per-category block. */
 .val {
   flex: 0 0 auto;
-  padding-left: 8px;
+  padding-left: 6px;
   font-family: ${DISPLAY};
-  font-size: 27px;
+  font-size: 25px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1223,10 +1849,84 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
    signal than a slab of a color that belongs to nothing on the page.
 
    THE NUMERAL CHANGES COLOR TOO, and that is a contrast fix rather than a
-   flourish. See contrastPairs. */
+   flourish. See contrastPairs.
+
+   ═══ AND IT IS THE INVENTORY'S FOCUSED SLOT NOW, WHICH IS WHAT HE ASKED FOR ═══
+
+   Owner, 2026-09-11: "the rows we have now, when the player is in the
+   leaderboard it's just highlighted - we should also use the colored+beveled
+   corners for that row like the br_ui inventory does when each slot is in
+   focus."
+
+   THE THING HE IS POINTING AT IS '.plate.is-active' IN ui-src/src/index.css, and
+   it is reproduced here rather than approximated from that sentence. What the
+   game actually does to a slot when it is the one in your hands, in the order it
+   matters:
+
+     THE CORNERS OPEN. '.plate' carries a clip-path polygon whose top-right and
+     bottom-left corners are cut back by '--cut', which is 0 at rest and
+     '--cut-max' under '.is-active'. Two corners, diagonally opposite, not four:
+     that asymmetry is the whole signature and a chamfer on all four reads as a
+     rounded box.
+
+     THE CUT EDGES ARE REDRAWN. Clipping the element removes the BORDER along
+     both diagonals as well, so each cut corner would read as an unfinished edge.
+     br_ui draws them back with two pseudo-elements carrying a 45deg gradient
+     that is transparent, then 1.2px of '--edgec', then transparent. The same
+     gradient, the same 0.6px half-width, is below.
+
+     THE EDGE BRIGHTENS. '--edgec: active ? '#ffffff' : hex' - the rarity color
+     at rest, white when focused. This board has no rest state to contrast
+     against, because a row is either yours or it is not, so the focused row
+     takes its CATEGORY's own light instead of white: 'tone().bright', which is
+     that accent mixed 42% toward white. That is the "coloured" half of his
+     sentence and it is the ONE colored edge anywhere on this page - see the
+     per-category block, and the deliberate exception recorded in
+     'scoreboard.check.ts'.
+
+     THE FILL LIFTS. The game lifts '--plate-fill' from rgba(32,36,50,0.94) to
+     rgba(46,52,70,0.95). This page already did that half: 'PALETTE.you' over the
+     card, with the category's light washed across it.
+
+   WHAT IS DELIBERATELY NOT REPRODUCED IS THE GROWTH. '.plate.is-active' also
+   does 'translateY(-0.25rem) scale(1.06)', which is right for a slot with air
+   around it and wrong for a row in a list: the card's height is its header plus
+   five rows TO THE PIXEL and its overflow is hidden, so a row that grew would be
+   a row with its own edges clipped off. The shape and the color carry it.
+
+   THE REST STATE IS NO CLIP-PATH AT ALL rather than a square polygon, which is
+   the one place this departs from br_ui's structure and it is because nothing
+   here is interactive. The game animates 'clip-path' between the two states and
+   needs both to exist; this page has no transition to run, so an unfocused row
+   pays for no clip at all. */
 .card li.you, .mate.you {
+  --edgec: ${FOCUS_EDGE};
+  --cut: var(--cut-max);
+  position: relative;
   background: ${PALETTE.you};
+  border: 1px solid var(--edgec);
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--cut)) 0,
+    100% var(--cut),
+    100% 100%,
+    var(--cut) 100%,
+    0 calc(100% - var(--cut)));
 }
+.card li.you::after, .card li.you::before,
+.mate.you::after, .mate.you::before {
+  content: '';
+  position: absolute;
+  width: var(--cut);
+  height: var(--cut);
+  background-image: linear-gradient(45deg,
+    rgba(0, 0, 0, 0) calc(50% - 0.6px),
+    var(--edgec) calc(50% - 0.6px),
+    var(--edgec) calc(50% + 0.6px),
+    rgba(0, 0, 0, 0) calc(50% + 0.6px));
+}
+.card li.you::after, .mate.you::after { top: 0; right: 0; }
+.card li.you::before, .mate.you::before { bottom: 0; left: 0; }
 .card li.you .pos { color: ${PALETTE.youMuted}; }
 .card li.you {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
@@ -1241,7 +1941,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   display: flex;
   flex-direction: column;
   justify-content: center;
-  height: 100%;
+  height: ${CONTENT_HEIGHT}px;
 }
 /* THE NAME IS ON A SHELF NOW AND IT USED TO FLOAT. A 64px word alone on a black
    field is the same flatness the cards had: nothing behind it, nothing under
@@ -1256,7 +1956,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   height: 120px;
   line-height: 120px;
   padding: 0 26px;
-  border-radius: 16px;
+  border-radius: 0;
   font-family: ${DISPLAY};
   font-size: 76px;
   font-weight: 400;
@@ -1291,12 +1991,16 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   width: ${w}px;
   height: 300px;
   background-color: ${PALETTE.card};
-  background-image: linear-gradient(178deg,
-    ${mix(PALETTE.card, '#ffffff', 0.06)} 0%,
-    ${PALETTE.card} 44%,
-    ${PALETTE.deep} 100%);
-  border: 1px solid ${PALETTE.edge};
-  border-radius: 12px;
+  background-image:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.10) 0%,
+      rgba(255, 255, 255, 0.015) 46%),
+    linear-gradient(178deg,
+      ${mix(PALETTE.card, '#ffffff', 0.06)} 0%,
+      ${PALETTE.card} 44%,
+      ${PALETTE.deep} 100%);
+  border: 1px solid var(--edgec);
+  border-radius: 0;
   overflow: hidden;
   box-shadow:
     0 16px 34px rgba(0, 0, 0, 0.5),
@@ -1369,7 +2073,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   display: flex;
   flex-direction: column;
   justify-content: center;
-  height: 100%;
+  height: ${CONTENT_HEIGHT}px;
 }
 .shead {
   display: flex;
@@ -1401,29 +2105,41 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   align-items: center;
   height: ${squadRowHeight(squadRows)}px;
   background-color: ${PALETTE.card};
-  background-image: linear-gradient(176deg,
-    ${mix(PALETTE.card, '#ffffff', 0.055)} 0%,
-    ${PALETTE.card} 50%,
-    ${PALETTE.deep} 100%);
-  border: 1px solid ${PALETTE.edge};
-  border-radius: 12px;
+  background-image:
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.10) 0%,
+      rgba(255, 255, 255, 0.015) 46%),
+    linear-gradient(176deg,
+      ${mix(PALETTE.card, '#ffffff', 0.055)} 0%,
+      ${PALETTE.card} 50%,
+      ${PALETTE.deep} 100%);
+  border: 1px solid var(--edgec);
+  border-radius: 0;
   overflow: hidden;
   box-shadow:
     0 10px 22px rgba(0, 0, 0, 0.42),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
-/* A COLLAPSED LINE BOX, BECAUSE ANTON'S LINE BOX IS NOT ITS INK. The face carries a
-   deep descent, so a name in a row centered by align-items sits visibly high
-   in it: the box is centered and the letters are not. Collapsing the line box to
-   the type size puts the glyphs where the row's middle is. */
+/* A NEARLY COLLAPSED LINE BOX, BECAUSE ANTON'S LINE BOX IS NOT ITS INK. The face
+   carries a deep descent, so a name in a row centered by align-items sits
+   visibly high in it: the box is centered and the letters are not. Collapsing
+   the line box toward the type size puts the glyphs where the row's middle is.
+
+   1.2 AND NOT 1, AND THE DIFFERENCE IS A WHOLE CHARACTER. At exactly 1 the line
+   box is the type size, 'overflow: hidden' clips at its bottom edge, and every
+   glyph that descends below the baseline loses its tail - which on a display
+   face is not an aesthetic nicety: an UNDERSCORE is entirely below the baseline,
+   and 'Hollowpoint_77' rendered as 'Hollowpoint 77' on the squad slide. Player
+   names are full of underscores. 1.2 restores the descender and moves the glyphs
+   by a pixel. */
 .mname {
   flex: 0 0 320px;
   min-width: 0;
   padding: 0 22px;
   box-sizing: border-box;
   font-family: ${DISPLAY};
-  font-size: 38px;
-  line-height: 1;
+  font-size: ${squadNameSize(squadRowHeight(squadRows))}px;
+  line-height: 1.2;
   font-weight: 400;
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -1454,7 +2170,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
 }
 .mval {
   font-family: ${DISPLAY};
-  font-size: 40px;
+  font-size: ${squadValueSize(squadRowHeight(squadRows))}px;
   font-weight: 400;
   line-height: 1;
   letter-spacing: -0.01em;
@@ -1482,18 +2198,50 @@ ${squadStyles(mates)}
 /**
  * How tall one squad row is, for a squad of this size.
  *
- * CAPPED AT 168 AND OTHERWISE DIVIDED INTO WHAT IS LEFT. The panel is 688 tall,
- * the heading row and its gutter take 52, the entrance travel reserves
- * `ENTRANCE_PX` at each end, and the rest is shared by the rows and their
- * gutters. A squad of two divides to nearly 300 each, which would be two slabs
- * rather than two rows, so the cap holds them to the height a four is.
+ * CAPPED AT 168 AND OTHERWISE DIVIDED INTO WHAT IS LEFT. `CONTENT_HEIGHT` is
+ * what the slide has after the safe area and the title are taken out, the
+ * heading row and its gutter take 52, the entrance travel reserves `ENTRANCE_PX`
+ * at each end, and the rest is shared by the rows and their gutters. A squad of
+ * two would otherwise divide to over 200 each, which would be two slabs rather
+ * than two rows, so the cap holds them to the height a four is.
+ *
+ * IT DIVIDES `CONTENT_HEIGHT` AND IT USED TO DIVIDE `INNER_HEIGHT`, which is the
+ * squad slide's share of the safe-area fix: this is the one slide whose rows are
+ * sized to FILL what they are given, so it is the one that would have run a row
+ * off the bottom of the surface the moment a title appeared above it.
  */
 export const SQUAD_HEAD_H = 40
 
 export function squadRowHeight(rows: number): number {
   if (rows < 1) return 0
-  const available = INNER_HEIGHT - SQUAD_HEAD_H - GUTTER - 2 * ENTRANCE_PX
+  const available = CONTENT_HEIGHT - SQUAD_HEAD_H - GUTTER - 2 * ENTRANCE_PX
   return Math.min(168, Math.floor((available - (rows - 1) * GUTTER) / rows))
+}
+
+/**
+ * The two type sizes on a squad row, derived from how tall the row came out.
+ *
+ * ═══ THEY WERE FIXED AT 38 AND 40 AND THAT STOPPED BEING SAFE ═══
+ *
+ * A row is `CONTENT_HEIGHT` divided by the squad size, and `CONTENT_HEIGHT` is
+ * smaller than it was twice over: once for the safe area and once for the title.
+ * At the game's own maximum squad of four the row is comfortably over a hundred
+ * pixels and nothing needed to change - but `SQUAD_MAX_ROWS` protects the layout
+ * against a config change on a box this console does not own, and at six rows a
+ * fixed 40px numeral in a 68px row with a 38px name beside it is a row whose
+ * content is taller than the row.
+ *
+ * SO BOTH SIZES ARE A FRACTION OF THE ROW, CAPPED AT WHAT THEY HAVE ALWAYS BEEN.
+ * A four-person squad renders exactly the type it rendered before; a six-person
+ * one shrinks instead of overflowing. This is the same trick `.tval` already uses
+ * to keep a seven-digit number inside a narrow tile.
+ */
+export function squadNameSize(rowHeight: number): number {
+  return Math.min(38, Math.round(rowHeight * 0.35))
+}
+
+export function squadValueSize(rowHeight: number): number {
+  return Math.min(40, Math.round(rowHeight * 0.37))
 }
 
 /**
@@ -1609,7 +2357,11 @@ function boardMarkup(board: Leaderboard): string {
     })
     .join('')
 
-  return `<div id="board" class="panel on"><div class="cards">${columns}</div></div>`
+  return (
+    `<div id="board" class="panel on">` +
+    `<h1 class="stitle">${TITLE_BOARD}</h1>` +
+    `<div class="cards">${columns}</div></div>`
+  )
 }
 
 /**
@@ -1637,7 +2389,9 @@ function playerMarkup(player: PlayerPanel): string {
     .join('')
 
   return (
-    `<div id="player" class="panel"><div class="pstack">` +
+    `<div id="player" class="panel">` +
+    `<h1 class="stitle">${TITLE_PLAYER}</h1>` +
+    `<div class="pstack">` +
     `<div class="name">${esc(player.name)}</div>` +
     `<div class="tiles">${tiles}</div></div></div>`
   )
@@ -1655,8 +2409,10 @@ function playerMarkup(player: PlayerPanel): string {
  * the fill and nothing else. There is deliberately no second cue: a player
  * looking for themselves among four rows is looking for the lit one.
  *
- * NO WORDS EXCEPT THE HEADINGS AND THE NAMES. No title, no "YOUR SQUAD", no
- * squad number. The slide's whole claim is made by who is on it.
+ * NO WORDS EXCEPT THE HEADINGS, THE NAMES AND THE OWNER'S OWN TITLE. `SQUAD
+ * STATS` is his, quoted from his message, and it is the only thing that changed
+ * here: there is still no "YOUR SQUAD", no squad number and no count. The rest
+ * of the slide's claim is made by who is on it.
  */
 function squadMarkup(squad: SquadPanel): string {
   const headings = squad.labels
@@ -1678,7 +2434,9 @@ function squadMarkup(squad: SquadPanel): string {
     .join('')
 
   return (
-    `<div id="squad" class="panel"><div class="squad">` +
+    `<div id="squad" class="panel">` +
+    `<h1 class="stitle">${TITLE_SQUAD}</h1>` +
+    `<div class="squad">` +
     `<div class="shead"><div class="mname"></div><div class="mcells">${headings}</div></div>` +
     `<div class="smates">${rows}</div>` +
     `</div></div>`
@@ -1688,12 +2446,17 @@ function squadMarkup(squad: SquadPanel): string {
 /**
  * The whole document.
  *
- * NO `<title>`, NO HEADING, NO CAPTION, NO EMPTY STATE. The only words on this
- * page are the category labels, which are the owner's own words in his own
- * capitals, and the players' own names. Everything else is numerals. That is a
- * house rule and it is also right for the surface: a prop in a warmup area is
- * read in a glance from a few meters away, and every sentence added to it is a
- * sentence somebody has to skip past to reach the number they came for.
+ * NO `<title>`, NO CAPTION, NO EMPTY STATE. The only words on this page are the
+ * category labels, the three slide titles and the players' own names. The labels
+ * and the titles are both the owner's own words in his own capitals; everything
+ * else is numerals. That is a house rule and it is also right for the surface: a
+ * prop in a warmup area is read in a glance from a few meters away, and every
+ * sentence added to it is a sentence somebody has to skip past to reach the
+ * number they came for.
+ *
+ * THE THREE HEADINGS ARE THE ONE EXCEPTION AND HE WROTE THEM HIMSELF. See
+ * `TITLES`. There is no `<title>` element even so: a DUI has no tab, no window
+ * chrome and nothing that would ever display one.
  *
  * `data-motion` IS ON THE ROOT SO THE SETTING IS VISIBLE FROM OUTSIDE. It is
  * what the measurement harness reads and what somebody looking at the served
@@ -1745,11 +2508,22 @@ export function renderScoreboard(input: {
   for (const s of player?.stats ?? []) seen.set(s.key, { key: s.key, accent: s.accent })
   for (const l of squad?.labels ?? []) seen.set(l.key, { key: l.key, accent: l.accent })
 
-  /** `full` is the only level that emits the moving layers at all. */
+  /**
+   * `full` is the only level that emits the moving layers at all.
+   *
+   * EVERY ONE OF THEM CARRIES ITS FAMILY'S CLASS AS WELL AS ITS OWN, which is
+   * what keeps the promotion budget countable: `will-change` is declared once
+   * per family (`.orb`, `.beam`, `.sheet`, `.mote`, and `.pulse` which is a
+   * family of one) rather than once per element, so the count of promoted
+   * DECLARATIONS stays five while the count of moving layers is eighteen.
+   */
   const drift =
     motion === 'full'
       ? `<div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>` +
-        `<div class="beam"></div><div class="drift"></div>`
+        `<div class="beam bm1"></div><div class="beam bm2"></div>` +
+        `<div class="sheet drift"></div><div class="sheet weave"></div>` +
+        `<div class="pulse"></div>` +
+        Array.from({ length: MOTES }, (_, i) => `<div class="mote mt${i}"></div>`).join('')
       : ''
 
   /**

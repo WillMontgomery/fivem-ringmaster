@@ -145,15 +145,22 @@ import {
 } from './scoreboard'
 import { EMBEDDED_FACES } from './scoreboardFonts'
 import {
+  CONTENT_HEIGHT,
+  INNER_HEIGHT,
   INNER_WIDTH,
   PALETTE,
   PHASE_COUNT,
+  SAFE_INSET,
   SQUAD_HEAD_H,
+  TITLES,
+  TITLE_H,
   columnWidth,
   contrastPairs,
   esc,
   renderScoreboard,
+  squadNameSize,
   squadRowHeight,
+  squadValueSize,
   type MotionLevel,
 } from './scoreboardPage'
 import {
@@ -943,7 +950,53 @@ for (let n = 3; n <= 8; n++) {
     INNER_WIDTH - used < n,
   )
 }
-expect('five columns are still exactly 240px, as they have been', columnWidth(5), 240)
+/**
+ * ═══ AND THE WIDTH IS THE SAFE AREA'S, NOT THE SURFACE'S ═══
+ *
+ * Owner, 2026-09-11: "It doesn't look like the crop landed with the redesign."
+ *
+ * THIS ASSERTION USED TO READ `columnWidth(5) === 240` AND THAT NUMBER WAS THE
+ * BUG. 240 is 1280 minus 32px of padding divided five ways to the pixel, which
+ * is to say the columns were fitted to the whole physical surface - and the prop
+ * the board is painted on has a bezel that covers the outer few percent of it,
+ * so the outer cards were cut off mid-character in game.
+ *
+ * SO IT IS PINNED TO `INNER_WIDTH` NOW, RECOMPUTED RATHER THAN RESTATED. The
+ * value moves the moment `SAFE_INSET` moves, which is exactly what the owner
+ * needs to be able to do: dial one number to what his bezel actually eats and
+ * have the layout follow it without a redesign.
+ */
+expect(
+  'five columns fill the safe area rather than the surface',
+  columnWidth(5),
+  Math.floor((INNER_WIDTH - 4 * 12) / 5),
+)
+expectTrue(
+  'and the safe area is a real inset on both axes',
+  INNER_WIDTH < BOARD_WIDTH && INNER_HEIGHT < BOARD_HEIGHT,
+)
+/**
+ * SIX TO EIGHT PERCENT PER SIDE IS THE BAND THE OWNER NAMED, and it is asserted
+ * as a band rather than as the single value so that tuning it is a one-line
+ * change and abandoning the safe area entirely is not.
+ */
+{
+  const insetX = (BOARD_WIDTH - INNER_WIDTH) / 2 / BOARD_WIDTH
+  const insetY = (BOARD_HEIGHT - INNER_HEIGHT) / 2 / BOARD_HEIGHT
+  expectTrue(
+    `the horizontal inset is title-safe (${(insetX * 100).toFixed(1)}% per side)`,
+    insetX >= 0.05 && insetX <= 0.1,
+  )
+  expectTrue(
+    `the vertical inset is title-safe (${(insetY * 100).toFixed(1)}% per side)`,
+    insetY >= 0.05 && insetY <= 0.1,
+  )
+}
+/**
+ * THE REST OF THE SAFE AREA IS ASSERTED AGAINST THE RENDERED DOCUMENT and is
+ * therefore further down, under "the safe area reaches the document" - this
+ * section runs before the fixtures are rendered.
+ */
 
 /**
  * THE SQUAD ROWS FIT AT EVERY SIZE THE GUARD ALLOWS. The game's own
@@ -971,15 +1024,47 @@ for (let n = 2; n <= SQUAD_MAX_ROWS; n++) {
   const h = squadRowHeight(n)
   const content = n * h + (n - 1) * 12 + SQUAD_HEAD_H + 12
   /** Centered in the panel, so the slack is split evenly above and below. */
-  const slackBelow = Math.floor((688 - content) / 2)
-  expectTrue(`${n} squad rows fit in 688px (${content}px used)`, content <= 688)
+  const slackBelow = Math.floor((CONTENT_HEIGHT - content) / 2)
+  expectTrue(
+    `${n} squad rows fit in ${CONTENT_HEIGHT}px (${content}px used)`,
+    content <= CONTENT_HEIGHT,
+  )
   expectTrue(
     `${n} squad rows are still inside the surface while they arrive (${slackBelow}px of travel room)`,
     slackBelow >= ENTRANCE_PX,
   )
+  /**
+   * ═══ THE ROW CLEARS ITS OWN TYPE, WHICH USED TO BE TWO MAGIC NUMBERS ═══
+   *
+   * This read `h >= (n <= 4 ? 130 : 85)` - two constants standing in for "the
+   * 34px numeral fits", written when the row height was fixed and the type was
+   * fixed too. Both of those stopped being true in the same change: the safe
+   * area and the title between them take 152px out of what the slide divides,
+   * so a six-row squad now gets 68px per row rather than 89.
+   *
+   * A FIXED FLOOR WOULD HAVE FAILED HERE FOR THE WRONG REASON. 68px is not too
+   * short for a row - it is too short for a 40px numeral, which is a different
+   * statement and is fixable by scaling the numeral, which is what
+   * `squadValueSize` now does. So the assertion is the real relationship: the
+   * name and the value both fit inside the row with room for the line box, at
+   * whatever size they came out.
+   */
+  const name = squadNameSize(h)
+  const value = squadValueSize(h)
   expectTrue(
-    `${n} squad rows clear the 34px numeral they carry (${h}px)`,
-    h >= (n <= 4 ? 130 : 85),
+    `${n} squad rows clear the type they carry (${h}px row, ${name}px name, ${value}px value)`,
+    Math.max(name, value) * 1.35 <= h,
+  )
+  /**
+   * AND THE TYPE IS STILL LEGIBLE AT A DISTANCE, THROUGH A TEXTURE. Scaling to
+   * fit is only an answer while the answer is still readable; below this the
+   * honest report is that the squad does not fit, not a row of four-point type.
+   * The game's own maximum squad is four and that case is held to the size the
+   * slide has always rendered.
+   */
+  expectTrue(
+    `${n} squad rows are still readable (${value}px numeral)`,
+    value >= (n <= 4 ? 34 : 22),
   )
 }
 
@@ -1096,6 +1181,114 @@ for (const [name, doc] of LEVELS) {
   expectTrue(`${name}: height is pinned to ${BOARD_HEIGHT}px`, doc.includes(`height: ${BOARD_HEIGHT}px`))
   expectTrue(`${name}: overflow is hidden, a DUI has no scrollbar`, doc.includes('overflow: hidden'))
   expectTrue(`${name}: no media query to make it responsive`, !/@media/.test(doc))
+}
+
+console.log('\nD. the safe area reaches the document')
+
+/**
+ * ═══ THE CROP IS A PHYSICAL BEZEL AND THIS IS THE WHOLE DEFENCE AGAINST IT ═══
+ *
+ * Owner, 2026-09-11: "It doesn't look like the crop landed with the redesign."
+ *
+ * The prop's model box is wider than its lit screen, so a strip down each edge
+ * of this page is behind plastic in game. Nothing in this repository can see
+ * that, and no amount of rendering the page in a browser shows it - which is
+ * exactly why the inset has to be held by the suite rather than by whoever
+ * remembers.
+ */
+for (const [name, doc] of LEVELS) {
+  /**
+   * THE PANEL'S PADDING IS THE INSET. This is the one declaration that decides
+   * whether the safe area exists at all: every other number derives from
+   * `INNER_WIDTH` and `INNER_HEIGHT`, and all of them would still be
+   * self-consistent on a panel padded 16px.
+   */
+  expectTrue(
+    `${name}: the panel is padded to the safe area, not to a margin`,
+    doc.includes(
+      `padding: ${Math.round(BOARD_HEIGHT * SAFE_INSET)}px ${Math.round(BOARD_WIDTH * SAFE_INSET)}px;`,
+    ),
+  )
+  /**
+   * AND THE BACKGROUND STILL COVERS THE WHOLE SURFACE, which is the other half
+   * of the fix and the half a content inset can silently lose. Only the CONTENT
+   * is inset; if the wash and the vignette were inset with it, the board would
+   * wear a black frame that reads as a mistake from the first glance.
+   */
+  for (const layer of ['.wash {', '.vig {'] as const) {
+    const block = doc.slice(doc.indexOf(layer))
+    const body = block.slice(0, block.indexOf('}'))
+    expectTrue(
+      `${name}: ${layer} still paints the full ${BOARD_WIDTH}x${BOARD_HEIGHT}`,
+      body.includes(`width: ${BOARD_WIDTH}px`) && body.includes(`height: ${BOARD_HEIGHT}px`),
+    )
+  }
+  /**
+   * AND NO SLIDE LAYS CONTENT OUT AGAINST THE PANEL. The three slides divide
+   * `CONTENT_HEIGHT`, which is the safe area with the title already taken out of
+   * it. A slide left on `height: 100%` would fill the padded panel and push its
+   * last row up under the title's own band.
+   */
+  for (const selector of ['.cards {', '.pstack {', '.squad {'] as const) {
+    const block = doc.slice(doc.indexOf(selector))
+    const body = block.slice(0, block.indexOf('}'))
+    expectTrue(
+      `${name}: ${selector} is sized to the content height, not the panel`,
+      body.includes(`height: ${CONTENT_HEIGHT}px`),
+    )
+  }
+}
+
+console.log("\nD. the owner's three titles, verbatim and alone")
+
+/**
+ * ═══ HIS WORDS, AND THE FIRST WORDS EVER ADDED TO THIS SURFACE ═══
+ *
+ * 2026-09-11: "The scoreboard page should also have a title at the top reading
+ * 'LEADERBOARD' and the player stats should have one reading 'PLAYER STATS' and
+ * the squad one reading 'SQUAD STATS'."
+ *
+ * ASSERTED THE SAME WAY HIS CATEGORY LABELS ARE, and for the same reason: the
+ * standing rule for this page is that nothing on it is written by anybody but
+ * him, so the risk is not that a title goes missing, it is that a helpful
+ * subtitle appears beside one.
+ */
+{
+  const titled = SQUAD_RENDER
+  for (const [id, title] of [
+    ['board', TITLES[0]],
+    ['player', TITLES[1]],
+    ['squad', TITLES[2]],
+  ] as Array<[string, string]>) {
+    expectTrue(`the ${id} slide carries "${title}"`, titled.includes(`>${title}</h1>`))
+    expect(`and exactly once`, titled.split(`>${title}</h1>`).length - 1, 1)
+  }
+  expect('there are exactly three titles on a three-slide board', titled.split('<h1').length - 1, 3)
+  /**
+   * AND NOTHING IS ADDED BESIDE THEM. Every heading is the title and the closing
+   * tag, with no second element and no text node after the word.
+   */
+  for (const heading of titled.match(/<h1[^>]*>([^]*?)<\/h1>/g) ?? []) {
+    const text = /<h1[^>]*>([^]*?)<\/h1>/.exec(heading)?.[1] ?? ''
+    expectTrue(
+      `the heading "${text}" is the owner's word and nothing else`,
+      (TITLES as readonly string[]).includes(text),
+    )
+  }
+  /** A solo player has two slides and therefore two titles, not three. */
+  expect('a solo board carries two', FULL.split('<h1').length - 1, 2)
+  /**
+   * ON THE COMMENT-STRIPPED DOCUMENT, because the stylesheet quotes the owner's
+   * whole sentence - all three titles - in the prose beside the rule that sets
+   * them. Searching the raw document finds the explanation and reports that a
+   * solo board is showing the squad title.
+   */
+  expectTrue('and not the squad one', !stripComments(FULL).includes(TITLES[2]))
+  /** And the title band is real height rather than a heading with default margins. */
+  expectTrue(
+    'the title has a height of its own, so the slides can subtract it',
+    FULL.includes(`height: ${TITLE_H}px`),
+  )
 }
 
 console.log("\nD. the viewer's row is marked in the markup")
@@ -1216,8 +1409,135 @@ for (const category of enabledCategories()) {
  */
 expectTrue(
   'the highlighted row still has its fill',
-  FULL.includes(`.card li.you, .mate.you {\n  background: ${PALETTE.you};`),
+  new RegExp(
+    `\\.card li\\.you, \\.mate\\.you \\{[^}]*background: ${PALETTE.you};`,
+  ).test(FULL),
 )
+
+console.log("\nD. the viewer's row wears the inventory's focus treatment")
+
+/**
+ * ═══ THE OWNER POINTED AT A SPECIFIC THING HE LOOKS AT EVERY MATCH ═══
+ *
+ * 2026-09-11: "the rows we have now, when the player is in the leaderboard it's
+ * just highlighted - we should also use the colored+beveled corners for that row
+ * like the br_ui inventory does when each slot is in focus. You get the idea?"
+ *
+ * WHAT HE IS POINTING AT IS `.plate.is-active` in the gamemode's
+ * `ui-src/src/index.css`, and this section asserts the PARTS of it rather than
+ * that a row "looks focused", because the parts are what makes it recognizable
+ * as the same object:
+ *
+ *   THE CHAMFER IS ON TWO OPPOSITE CORNERS AND NOT FOUR. br_ui's polygon cuts
+ *   the top-right and the bottom-left. That asymmetry is the signature; four cut
+ *   corners read as a rounded box, which is the shape this whole pass is
+ *   removing.
+ *
+ *   THE CUT EDGES ARE REDRAWN. Clipping an element removes its border along the
+ *   diagonals too, so without the two pseudo-elements each cut corner reads as
+ *   an unfinished edge rather than as a bevel.
+ *
+ *   THE BEVEL AND THE EDGE COME FROM ONE VARIABLE. br_ui: "Recolour the
+ *   variable, never the border." A row whose border was recolored directly would
+ *   end up with diagonals in a different color from its own edge, which is the
+ *   exact failure that note exists to prevent.
+ */
+{
+  const doc = stripComments(FULL)
+  const rule = /\.card li\.you, \.mate\.you \{([^}]*)\}/.exec(doc)?.[1] ?? ''
+
+  expectTrue('the focused row is clipped at all', rule.includes('clip-path: polygon('))
+  /**
+   * READ OUT OF THE POLYGON RATHER THAN MATCHED AS A STRING. The four corners
+   * that matter are the two that are cut and the two that are not, and a
+   * whitespace change to the declaration must not be able to fail this.
+   */
+  const polygon = /clip-path: polygon\(([^)]*\)[^;]*)/.exec(rule)?.[1] ?? ''
+  expectTrue(
+    'the top-right corner is cut back by --cut',
+    polygon.includes('calc(100% - var(--cut)) 0') && polygon.includes('100% var(--cut)'),
+  )
+  expectTrue(
+    'the bottom-left corner is cut back by --cut',
+    polygon.includes('var(--cut) 100%') && polygon.includes('0 calc(100% - var(--cut))'),
+  )
+  expectTrue(
+    'and the other two corners are square, which is the whole signature',
+    polygon.trim().startsWith('0 0,') && polygon.includes('100% 100%'),
+  )
+  expectTrue(
+    'the bevel opens to br_ui\'s --cut-max rather than to a number written here',
+    rule.includes('--cut: var(--cut-max);'),
+  )
+  expectTrue(
+    'and --cut-max is declared on the surfaces themselves, so it can be overridden per surface',
+    doc.includes('--cut-max:'),
+  )
+
+  /** The two diagonals that redraw the border along the cuts. */
+  const diagonals =
+    /\.card li\.you::after, \.card li\.you::before,\n\.mate\.you::after, \.mate\.you::before \{([^}]*)\}/.exec(
+      doc,
+    )?.[1] ?? ''
+  expectTrue('the cut edges are redrawn', diagonals.includes('linear-gradient(45deg'))
+  expectTrue(
+    'in the same variable the border uses, which is the point of the variable',
+    diagonals.includes('var(--edgec)') && rule.includes('border: 1px solid var(--edgec)'),
+  )
+  expectTrue(
+    'and they are the size of the cut',
+    diagonals.includes('width: var(--cut);') && diagonals.includes('height: var(--cut);'),
+  )
+  expectTrue(
+    'one at the top right and one at the bottom left',
+    doc.includes('.card li.you::after, .mate.you::after { top: 0; right: 0; }') &&
+      doc.includes('.card li.you::before, .mate.you::before { bottom: 0; left: 0; }'),
+  )
+
+  /**
+   * ═══ AND THE EDGE IS THE ONE COLORED EDGE ON THE PAGE, DELIBERATELY ═══
+   *
+   * The section above this one refuses a category accent anywhere but ink and
+   * fill, on the owner's note that color borders "makes the product look
+   * AI-generated". This is the exception he asked for by name, so it is written
+   * down as an exception rather than allowed to slip past because the value
+   * happens to be a DERIVED color that the accent scan does not recognize.
+   *
+   * WHAT KEEPS IT FROM BECOMING THE GENERAL CASE AGAIN: `--edgec` may carry a
+   * color only on a rule whose selector contains `.you`. Every other surface on
+   * the page declares it as `PALETTE.edge` and nothing else may.
+   */
+  const declarations = [...doc.matchAll(/([^{;}]*)\{[^}]*--edgec:\s*([^;]+);/g)]
+  expectTrue('some rule sets the focus edge', declarations.length > 0)
+  for (const [, selector, value] of declarations) {
+    const focused = (selector ?? '').includes('.you')
+    expectTrue(
+      `--edgec: ${value?.trim()} is ${focused ? 'on a focused row' : 'the neutral hairline'}`,
+      focused || value?.trim() === PALETTE.edge,
+    )
+  }
+  /**
+   * AND EVERY CATEGORY ACTUALLY LIGHTS ITS OWN ROW, which is the half a ban
+   * cannot assert. Without this the whole section passes on a board where every
+   * focused row wears the same neutral white.
+   */
+  for (const category of enabledCategories()) {
+    expectTrue(
+      `${category.key}'s focused row takes its own light`,
+      new RegExp(`\\.c-${category.key} \\.card li\\.you \\{\\n  --edgec: #`).test(doc),
+    )
+  }
+  /**
+   * THE GROWTH IS DELIBERATELY NOT REPRODUCED. `.plate.is-active` also scales
+   * and lifts, which is right for a slot with air around it and wrong for a row
+   * in a list whose card is sized to its five rows TO THE PIXEL and clips its
+   * overflow. A transform here would clip the row's own edges off.
+   */
+  expectTrue(
+    'and the focused row does not grow, because the card it is in cannot give it room',
+    !/\.card li\.you[^{]*\{[^}]*transform:/.test(doc),
+  )
+}
 
 console.log('\nD. the motion, and what it is allowed to animate')
 
@@ -1260,7 +1580,15 @@ const COMPOSITABLE = new Set(['opacity', 'transform', 'visibility'])
  * SAFE TO RUN OVER THE WHOLE DOCUMENT, base64 font payload included: the
  * sequence `/*` cannot occur in base64, whose alphabet has no asterisk.
  */
-const stripComments = (doc: string): string => doc.replace(/\/\*[\s\S]*?\*\//g, '')
+/**
+ * A DECLARATION AND NOT A `const`, WHICH IS LOAD BEARING IN A FILE THAT RUNS TOP
+ * TO BOTTOM. This is a script: every section below executes as it is reached, and
+ * the focused-row section earlier in the file needs this. A `const` arrow would
+ * be in its temporal dead zone there and the suite would throw rather than fail.
+ */
+function stripComments(doc: string): string {
+  return doc.replace(/\/\*[\s\S]*?\*\//g, '')
+}
 
 for (const [name, full] of LEVELS) {
   const doc = stripComments(full)
@@ -1363,9 +1691,18 @@ for (const [name, doc] of [
   ['transitions', TRANSITIONS],
   ['off', OFF],
 ] as Array<[string, string]>) {
-  expectTrue(`${name}: no moving layer is in the document at all`, !doc.includes('class="orb'))
-  expectTrue(`${name}: nor the sweep`, !doc.includes('class="beam"'))
-  expectTrue(`${name}: nor the striped sheet`, !doc.includes('class="drift"'))
+  /**
+   * READ AS A CLASS PREFIX RATHER THAN AS AN EXACT ATTRIBUTE. Every moving layer
+   * carries a family class and its own, `class="beam bm1"`, so a test for
+   * `class="beam"` matches nothing and passes for the wrong reason - which is
+   * exactly what it did when the second sweep landed.
+   */
+  for (const family of ['orb', 'beam', 'sheet', 'mote', 'pulse']) {
+    expectTrue(
+      `${name}: no ${family} layer is in the document at all`,
+      !new RegExp(`class="${family}[ "]`).test(doc),
+    )
+  }
   /**
    * THE STILL LAYERS DO SURVIVE, and that is the point of the split: `off` is
    * the level for a struggling pad, not a level that looks unfinished. The
@@ -1398,15 +1735,50 @@ console.log('\nD. the animated background, which only full has')
  * allowlist above already holds that), and that each loop CLOSES so the wall
  * does not jump once a minute in front of somebody standing at it.
  */
-const MOVING_LAYERS = ['o1', 'o2', 'o3', 'beam', 'drift']
+/**
+ * ═══ IT WAS FIVE LAYERS AND IT IS EIGHTEEN, ON THE OWNER'S SECOND NOTE ═══
+ *
+ * 2026-09-11: "Also please spice up the background further. We need more moving
+ * pieces to this."
+ *
+ * EVERY MOVING LAYER IS A FAMILY CLASS PLUS ITS OWN, and that is what this list
+ * is keyed on. The family carries the promotion and the loop; the element
+ * carries its geometry, its own period and its own random phase.
+ */
+const MOVING_LAYERS = [
+  ['orb', 'o1'],
+  ['orb', 'o2'],
+  ['orb', 'o3'],
+  ['beam', 'bm1'],
+  ['beam', 'bm2'],
+  ['sheet', 'drift'],
+  ['sheet', 'weave'],
+  ['pulse', ''],
+  ...Array.from({ length: 10 }, (_, i) => ['mote', `mt${i}`]),
+] as Array<[string, string]>
 
-for (const layer of MOVING_LAYERS) {
+/** The ten motes, by name, for the sections that have to walk their keyframes. */
+const MOTES = MOVING_LAYERS.filter(([family]) => family === 'mote').map(([, key]) => key)
+
+for (const [family, key] of MOVING_LAYERS) {
+  const className = key === '' ? family : `${family} ${key}`
   expect(
-    `full: exactly one ${layer} layer`,
-    FULL.split(`class="orb ${layer}"`).length - 1 + (FULL.split(`class="${layer}"`).length - 1),
+    `full: exactly one ${key === '' ? family : key} layer`,
+    FULL.split(`class="${className}"`).length - 1,
     1,
   )
 }
+/**
+ * AND THE COUNT IS ASSERTED IN BOTH DIRECTIONS. A layer added to the page and
+ * not to this list would not be checked for a closed loop, for a compositable
+ * property or for a phase of its own - which is how one silently synchronized
+ * layer gets onto every machine in the pad.
+ */
+expect(
+  'full: and there are no moving layers the suite does not know about',
+  (FULL.match(/class="(orb|beam|sheet|mote|pulse)[ "]/g) ?? []).length,
+  MOVING_LAYERS.length,
+)
 /**
  * ═══ EVERY MOVING LAYER IS PROMOTED, AND NOTHING ELSE IS ═══
  *
@@ -1416,28 +1788,41 @@ for (const layer of MOVING_LAYERS) {
  * need it have it, and there are exactly two of them. A third would be promotion
  * sprinkled on something that does not move.
  */
-for (const [rule, selector] of [
-  ['the three orbs', '.orb {'],
-  ['the sweep', '.beam {'],
-  ['the striped sheet', '.drift {'],
-] as Array<[string, string]>) {
+for (const [rule, selector, property] of [
+  ['the three orbs', '.orb {', 'transform'],
+  ['the two sweeps', '.beam {', 'transform'],
+  ['the two striped sheets', '.sheet {', 'transform'],
+  ['the ten motes', '.mote {', 'transform'],
+  /** The one layer that moves by alpha rather than by position. */
+  ['the breathing pool', '.pulse {', 'opacity'],
+] as Array<[string, string, string]>) {
   const block = FULL.slice(FULL.indexOf(selector))
   const body = block.slice(0, block.indexOf('}'))
-  expectTrue(`full: ${rule} are promoted`, body.includes('will-change: transform'))
+  expectTrue(`full: ${rule} are promoted`, body.includes(`will-change: ${property}`))
 }
+/**
+ * ═══ PROMOTION IS SPENT FIVE TIMES FOR EIGHTEEN LAYERS, WHICH IS THE POINT ═══
+ *
+ * `will-change` is a real GPU texture per element, so the count of DECLARATIONS
+ * is the page's honest promotion budget: five families rather than eighteen
+ * sprinkled declarations. A sixth would be promotion on something that does not
+ * move, or a layer that got its own rule instead of joining a family.
+ *
+ * COUNTED ON THE COMMENT-STRIPPED DOCUMENT. The stylesheet explains itself in
+ * prose and that prose says "will-change" out loud, so counting the raw document
+ * counts the explanation as if it were a declaration - which it did, and the
+ * answer was six.
+ */
 expect(
-  'full: and promotion is spent three times, not sprinkled',
-  (FULL.match(/will-change/g) ?? []).length,
-  3,
+  'full: and promotion is spent five times for eighteen layers, not sprinkled',
+  (stripComments(FULL).match(/will-change:/g) ?? []).length,
+  5,
 )
 expect(
   'full: every one of them loops forever',
-  (FULL.match(/infinite/g) ?? []).length,
-  /**
-   * One shared `.orb` declaration covering the three orbs, plus the sweep's
-   * shorthand and the sheet's.
-   */
-  3,
+  (stripComments(FULL).match(/infinite/g) ?? []).length,
+  /** One shared declaration per family: orb, beam, sheet, mote, pulse. */
+  5,
 )
 
 /**
@@ -1448,15 +1833,40 @@ expect(
  * preview for a minute - and it is the single most obvious defect possible on a
  * wall somebody stands in front of for the length of a warmup.
  */
-for (const orb of ['o1', 'o2', 'o3']) {
-  const block = new RegExp(`@keyframes ${orb} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? ''
+for (const wanderer of ['o1', 'o2', 'o3', ...MOTES]) {
+  const block = new RegExp(`@keyframes ${wanderer} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? ''
   const first = /0%\s*\{\s*transform:\s*([^;]+);/.exec(block)?.[1]?.trim()
   const last = /100%\s*\{\s*transform:\s*([^;]+);/.exec(block)?.[1]?.trim()
-  expectTrue(`full: ${orb} declares both ends of its loop`, !!first && !!last)
-  expect(`full: ${orb}'s loop closes where it started`, last, first)
+  expectTrue(`full: ${wanderer} declares both ends of its loop`, !!first && !!last)
+  expect(`full: ${wanderer}'s loop closes where it started`, last, first)
   /** And it has to actually go somewhere in between, or it is a still layer. */
   const stops = [...block.matchAll(/transform:\s*translate3d\(([^)]*)\)/g)].map((m) => m[1])
-  expectTrue(`full: ${orb} actually travels`, new Set(stops).size > 1)
+  expectTrue(`full: ${wanderer} actually travels`, new Set(stops).size > 1)
+}
+
+/**
+ * ═══ AND THE MOTE FIELD IS SCATTERED RATHER THAN GRIDDED ═══
+ *
+ * Ten dots on an arithmetic progression is a pattern, and a pattern moving behind
+ * a leaderboard reads as a rendering artifact rather than as atmosphere. The
+ * positions come out of a deterministic scatter, so this asserts the PROPERTY
+ * that scatter exists for: no two motes share a position, and they do not all sit
+ * at the same size or on the same loop.
+ */
+{
+  const doc = stripComments(FULL)
+  const lefts = new Set<string>()
+  const sizes = new Set<string>()
+  const durations = new Set<string>()
+  for (const key of MOTES) {
+    const rule = new RegExp(`\\.${key} \\{([^}]*)\\}`).exec(doc)?.[1] ?? ''
+    lefts.add(`${/left: (-?[\d.]+)px/.exec(rule)?.[1]},${/top: (-?[\d.]+)px/.exec(rule)?.[1]}`)
+    sizes.add(/width: ([\d.]+)px/.exec(rule)?.[1] ?? '')
+    durations.add(/animation-duration: ([\d.]+)s/.exec(rule)?.[1] ?? '')
+  }
+  expect('full: every mote is somewhere different', lefts.size, MOTES.length)
+  expectTrue('full: and they are not all the same size', sizes.size > 2)
+  expectTrue('full: nor all on the same loop', durations.size > 4)
 }
 
 /**
@@ -1472,20 +1882,66 @@ for (const orb of ['o1', 'o2', 'o3']) {
  * is exactly what it did when the orbs landed, and the check failed loudly
  * rather than quietly measuring something else, which is the whole point.
  */
-{
-  const block = /@keyframes drift \{([^]*?)\n\}/.exec(FULL)?.[1] ?? ''
+/**
+ * ═══ AND IT IS RECOMPUTED FROM THE SHEET'S OWN ANGLE AND PERIOD NOW ═══
+ *
+ * This used to hardcode `sqrt(3)/2` and `160` - the 120deg direction and the
+ * stripe period of the one sheet that existed. There are two sheets on different
+ * angles with different periods, and two copies of that arithmetic with four
+ * magic numbers between them is two things to get wrong.
+ *
+ * SO THE ANGLE AND THE PERIOD ARE READ OUT OF THE GRADIENT. The angle is the
+ * first argument of the `repeating-linear-gradient`; the period is its largest
+ * stop position, which is where the pattern repeats. A
+ * `repeating-linear-gradient(Ddeg, ...)` runs along the unit vector
+ * (sin D, -cos D) in screen coordinates, so any translation whose projection onto
+ * that vector is a whole number of periods is seamless and everything else jumps
+ * once per cycle.
+ */
+for (const sheet of ['drift', 'weave']) {
+  const rule = new RegExp(`\\.${sheet} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? ''
+  const angle = Number(/repeating-linear-gradient\(\s*(-?[\d.]+)deg/.exec(rule)?.[1])
+  const period = Math.max(
+    ...[...rule.matchAll(/\s([\d.]+)px[,\n)]/g)].map((m) => Number(m[1])),
+    0,
+  )
+
+  const block = new RegExp(`@keyframes ${sheet} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? ''
   const move = /to\s*\{\s*transform:\s*translate3d\((-?[\d.]+)px,\s*(-?[\d.]+)px, 0\)/.exec(block)
-  expectTrue('full: the sheet keyframe actually moves', move !== null)
-  if (move) {
-    const x = Number(move[1])
-    const y = Number(move[2])
-    const projection = Math.abs(x * (Math.sqrt(3) / 2) + y * 0.5)
-    const periods = projection / 160
+
+  expectTrue(`full: the ${sheet} sheet declares an angle and a period`, angle > 0 && period > 0)
+  expectTrue(`full: the ${sheet} keyframe actually moves`, move !== null)
+  if (move && angle > 0 && period > 0) {
+    const radians = (angle * Math.PI) / 180
+    const projection = Math.abs(
+      Number(move[1]) * Math.sin(radians) + Number(move[2]) * -Math.cos(radians),
+    )
+    const periods = projection / period
+    /**
+     * THE TOLERANCE IS ON BOTH ARMS AND IT HAS TO BE. The translation is written
+     * to three decimal places (`114.315px` for `132 cos 30`), so the projection
+     * lands a few ten-thousandths short of a whole period rather than on it -
+     * which is a rounding artifact of the stylesheet and not a seam. A bare
+     * `periods >= 1` reads 0.99999 as "less than one period" and fails a
+     * correct sheet.
+     */
     expectTrue(
-      `full: the sheet drifts a whole number of stripe periods (${periods.toFixed(4)})`,
-      Math.abs(periods - Math.round(periods)) < 0.001,
+      `full: the ${sheet} sheet travels a whole number of its own ${period}px stripe periods (${periods.toFixed(4)})`,
+      Math.abs(periods - Math.round(periods)) < 0.001 && periods >= 0.999,
     )
   }
+}
+/**
+ * AND THE TWO SHEETS ARE ACTUALLY DIFFERENT, which is the only reason there are
+ * two. Two sheets on the same angle at the same speed are one sheet drawn twice.
+ */
+{
+  const angles = ['drift', 'weave'].map((sheet) =>
+    /repeating-linear-gradient\(\s*(-?[\d.]+)deg/.exec(
+      new RegExp(`\\.${sheet} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? '',
+    )?.[1],
+  )
+  expectTrue('full: the two sheets cross rather than agree', angles[0] !== angles[1])
 }
 
 /**
@@ -1508,19 +1964,31 @@ for (const orb of ['o1', 'o2', 'o3']) {
  * angle, the width, the height, the offset and the travel - and four of the
  * five change the answer.
  */
-{
-  const rule = /\.beam \{([^]*?)\n\}/.exec(FULL)?.[1] ?? ''
+/**
+ * BOTH SWEEPS ARE CHECKED AND THEY TRAVEL IN OPPOSITE DIRECTIONS, so "off the
+ * left edge" and "off the right edge" are not fixed sides. What is asserted is
+ * that BOTH ends of the journey are entirely off the surface, whichever way round
+ * they are.
+ */
+for (const sweep of ['bm1', 'bm2']) {
+  const rule = new RegExp(`\\.${sweep} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? ''
+  const shared = /\.beam \{([^]*?)\n\}/.exec(FULL)?.[1] ?? ''
   const num = (property: string): number =>
-    Number(new RegExp(`${property}:\\s*(-?[\\d.]+)px`).exec(rule)?.[1] ?? Number.NaN)
+    Number(
+      new RegExp(`${property}:\\s*(-?[\\d.]+)px`).exec(rule)?.[1] ??
+        new RegExp(`${property}:\\s*(-?[\\d.]+)px`).exec(shared)?.[1] ??
+        Number.NaN,
+    )
 
   const left = num('left')
   const width = num('width')
+  /** The height is on the shared `.beam` rule, which is why `num` reads both. */
   const height = num('height')
 
-  const block = /@keyframes beam \{([^]*?)\n\}/.exec(FULL)?.[1] ?? ''
+  const block = new RegExp(`@keyframes ${sweep} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? ''
   const ends = [...block.matchAll(/translate3d\((-?[\d.]+)px, 0, 0\) rotate\((-?[\d.]+)deg\)/g)]
 
-  expectTrue('full: the sweep declares both ends of its travel', ends.length === 2)
+  expectTrue(`full: the ${sweep} sweep declares both ends of its travel`, ends.length === 2)
   if (ends.length === 2 && Number.isFinite(left + width + height)) {
     const angle = (Number(ends[0]![2]) * Math.PI) / 180
     const footprint =
@@ -1531,20 +1999,50 @@ for (const orb of ['o1', 'o2', 'o3']) {
     const first = at(Number(ends[0]![1]))
     const last = at(Number(ends[1]![1]))
 
+    const clear = (x: number): boolean =>
+      x + footprint / 2 < 0 || x - footprint / 2 > BOARD_WIDTH
+
     expectTrue(
-      `full: the sweep starts off the left edge (right edge at ${(first + footprint / 2).toFixed(0)}px)`,
-      first + footprint / 2 < 0,
+      `full: the ${sweep} sweep starts entirely off the surface (${(first - footprint / 2).toFixed(0)}..${(first + footprint / 2).toFixed(0)}px)`,
+      clear(first),
     )
     expectTrue(
-      `full: and ends off the right edge (left edge at ${(last - footprint / 2).toFixed(0)}px)`,
-      last - footprint / 2 > BOARD_WIDTH,
+      `full: and ends entirely off the other side (${(last - footprint / 2).toFixed(0)}..${(last + footprint / 2).toFixed(0)}px)`,
+      clear(last) && Math.sign(first) !== Math.sign(last),
+    )
+    /** And it has to actually cross, rather than leave and come back. */
+    expectTrue(
+      `full: and it crosses the whole board on the way`,
+      Math.abs(last - first) > BOARD_WIDTH,
     )
     expect(
-      'full: and it does not change angle on the way across',
+      `full: and the ${sweep} sweep does not change angle on the way across`,
       ends[0]![2],
       ends[1]![2],
     )
   }
+}
+/**
+ * AND THE TWO SWEEPS CROSS, which is the only reason there are two: one blade
+ * every half minute is a wall that does something occasionally, two on periods
+ * that do not divide each other never pass at the same place twice.
+ */
+{
+  const angleOf = (sweep: string): string | undefined =>
+    /rotate\((-?[\d.]+)deg\)/.exec(
+      new RegExp(`@keyframes ${sweep} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? '',
+    )?.[1]
+  const durationOf = (sweep: string): string | undefined =>
+    /animation-duration: ([\d.]+)s/.exec(
+      new RegExp(`\\.${sweep} \\{([^]*?)\\n\\}`).exec(FULL)?.[1] ?? '',
+    )?.[1]
+
+  expectTrue('full: the two sweeps are tilted differently', angleOf('bm1') !== angleOf('bm2'))
+  expectTrue('full: and run on different periods', durationOf('bm1') !== durationOf('bm2'))
+  expectTrue(
+    'full: which do not divide each other, so they never repeat an arrangement',
+    Number(durationOf('bm2')) % Number(durationOf('bm1')) !== 0,
+  )
 }
 
 console.log('\nD. the background starts at a random point, per client')
@@ -1577,24 +2075,48 @@ console.log('\nD. the background starts at a random point, per client')
     delays.every((d) => d <= 0),
   )
 
+  /**
+   * A FULL-LENGTH SET OF PHASES, DERIVED FROM `PHASE_COUNT` RATHER THAN WRITTEN
+   * OUT. These were five literals, and five literals against eighteen layers
+   * would have left thirteen of them on the renderer's `?? 0` fallback - so the
+   * "different phases render a different document" case below would have passed
+   * while thirteen layers were identical in both, which is the failure this
+   * whole section exists to catch.
+   */
+  const spread = (from: number): number[] =>
+    Array.from({ length: PHASE_COUNT }, (_, i) => ((from + i * 0.137) % 1))
+
   const same = renderScoreboard({
     board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
     player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
     motion: 'full',
-    phases: [0.1, 0.2, 0.3, 0.4, 0.5],
+    phases: spread(0.1),
   })
   const again = renderScoreboard({
     board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
     player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
     motion: 'full',
-    phases: [0.1, 0.2, 0.3, 0.4, 0.5],
+    phases: spread(0.1),
   })
   const other = renderScoreboard({
     board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
     player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
     motion: 'full',
-    phases: [0.9, 0.8, 0.7, 0.6, 0.15],
+    phases: spread(0.43),
   })
+
+  /**
+   * AND EVERY LAYER'S DELAY ACTUALLY MOVED, not just the first five. Comparing
+   * the two documents as a whole would pass on one changed character.
+   */
+  const delaysOf = (doc: string): string[] =>
+    [...doc.matchAll(/animation-delay:\s*(-?[\d.]+)s/g)].map((m) => m[1] ?? '')
+  expect('full: every layer carries a delay', delaysOf(same).length, PHASE_COUNT)
+  expect(
+    'full: and every one of them moves when the phases do',
+    delaysOf(same).filter((d, i) => d !== delaysOf(other)[i]).length,
+    PHASE_COUNT,
+  )
 
   /** The renderer is pure, which is why the route holds the `Math.random()`. */
   expect('the same phases render the same document', same, again)
