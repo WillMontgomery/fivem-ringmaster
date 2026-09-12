@@ -786,10 +786,17 @@ console.log("\nC. the owner's five labels, verbatim")
  * other five. Its TILE label is the one string on this page nobody has approved;
  * see `VOLTS SPENT` in the catalog and the report's needsOwner.
  */
+/**
+ * AND TWO OF THEM HE HAS SINCE RE-WORDED, 2026-09-12: "top matches" becomes
+ * "most matches played", "top kills" becomes "most kills". His new words in the
+ * capitals the other four already wear. This list is still typed out rather than
+ * read off the catalog, so it still fails the moment somebody improves any of
+ * the six.
+ */
 const OWNER_LABELS = [
   'MOST WINS',
-  'TOP KILLS',
-  'TOP MATCHES',
+  'MOST KILLS',
+  'MOST MATCHES PLAYED',
   'MOST REVIVES GIVEN',
   'HIGHEST LEVEL',
   'BIGGEST SPENDERS',

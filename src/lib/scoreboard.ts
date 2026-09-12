@@ -420,6 +420,21 @@ export type Category = AvailableCategory | BlockedCategory
  *
  * FIVE CATEGORIES, NOT SEVEN. Damage and play time were on the first board and
  * he removed them by name.
+ *
+ * ═══ TWO OF THEM ARE RE-WORDED, AND THAT IS ALSO HIS ═══
+ *
+ * Owner, 2026-09-12: "top matches" becomes "most matches played", "top kills"
+ * becomes "most kills". So `TOP KILLS` is `MOST KILLS` and `TOP MATCHES` is
+ * `MOST MATCHES PLAYED`, in the capitals the other four are already in, which is
+ * the whole of the change. The quotation above is left as he first wrote it
+ * rather than edited to agree, because it is a record of what was asked for and
+ * not a description of what is below.
+ *
+ * THE TILE LABELS ARE NOT TOUCHED. `KILLS` and `MATCHES` are what the per-player
+ * tiles and the squad columns say, he asked about the CARDS, and a tile reading
+ * `MATCHES PLAYED` is a second change he did not ask for on two slides he did
+ * not mention. The rule the tile labels follow - his noun with the ranking word
+ * taken off - still holds for both.
  */
 export const CATEGORIES: readonly Category[] = [
   {
@@ -441,7 +456,7 @@ export const CATEGORIES: readonly Category[] = [
   },
   {
     key: 'kills',
-    label: 'TOP KILLS',
+    label: 'MOST KILLS',
     tileLabel: 'KILLS',
     accent: '#ff8a7a',
     available: true,
@@ -450,7 +465,7 @@ export const CATEGORIES: readonly Category[] = [
   },
   {
     key: 'matches',
-    label: 'TOP MATCHES',
+    label: 'MOST MATCHES PLAYED',
     tileLabel: 'MATCHES',
     accent: '#7cc4ff',
     available: true,
