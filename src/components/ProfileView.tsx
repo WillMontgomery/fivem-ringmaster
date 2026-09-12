@@ -55,6 +55,7 @@ import type { AccentSurface } from '@/lib/contrast'
 import { ago, humanDuration } from '@/lib/duration'
 import { filedByAPlayer, incidentChips, verdictTone } from '@/lib/incidentChip'
 import { labelFor } from '@/lib/labels'
+import { matchHref, matchTag } from '@/lib/matchTag'
 import type {
   DiscordNameChange,
   Profile,
@@ -384,12 +385,26 @@ const MODE_LABEL: Record<string, string> = {
  * columns each hold several numbers and are named for what they are about
  * rather than for any one field inside them.
  *
- * THE MATCH ID IS GONE (owner: "Match IDs are not necessary to display in the
- * table"). It was a bare `match 412` in a column of its own, with no link, no
- * copy affordance and nothing anywhere else on the page pointing at it —
- * checked before deleting. The FIELD is untouched: `m.matchId` is still the
- * second half of every row's React key, which is what keeps two matches that
- * ended in the same millisecond from colliding.
+ * ═══ THE MATCH ID IS BACK, AND ONLY BECAUSE IT IS A LINK NOW ═══
+ *
+ * It was removed on the owner's instruction — "Match IDs are not necessary to
+ * display in the table" — and the note here recorded exactly why that was the
+ * right call at the time: "a bare `match 412` in a column of its own, with no
+ * link, no copy affordance and nothing anywhere else on the page pointing at
+ * it — checked before deleting." Every clause of that has stopped being true.
+ * There is a match page now (#51), the id is how you reach it, and it is written
+ * in the same five hex characters the game server prints (#291).
+ *
+ * The owner, 2026-09-12: "I'm still not seeing anywhere that mentions matches by
+ * hex, or our new match page. No link to it in the profile page match history
+ * section - nothing."
+ *
+ * SO IT IS A LINK AND NOT A FIGURE, which is the distinction the removal turned
+ * on. A decimal id back in this column would be the thing he asked to be rid of.
+ *
+ * The FIELD was never touched: `m.matchId` is still the second half of every
+ * row's React key, which is what keeps two matches that ended in the same
+ * millisecond from colliding.
  */
 const MATCH_COLUMNS = [
   { key: 'placement', label: 'Placed', className: 'w-16 shrink-0' },
@@ -405,6 +420,10 @@ const MATCH_COLUMNS = [
   // lands on the values' right edge without either being given a fixed width
   // wide enough for the longest possible earnings string.
   { key: 'earned', label: 'Earned', className: 'ml-auto shrink-0 text-right' },
+  // LAST, AND FIXED WIDTH, because every tag is exactly five characters — the
+  // one column in this table whose content cannot vary in length. `ml-auto` on
+  // `earned` above still pushes this pair to the right edge together.
+  { key: 'match', label: 'Match', className: 'w-16 shrink-0 text-right' },
 ] as const
 
 type MatchColumnKey = (typeof MATCH_COLUMNS)[number]['key']
@@ -592,6 +611,31 @@ function MatchRow({ m }: { m: ProfileMatch }) {
         className={cn(MATCH_COL.earned, 'font-mono text-xs text-muted-foreground')}
       >
         +{formatCount(m.xpEarned)} XP · +{formatCount(m.voltsEarned)} volts
+      </span>
+
+      {/*
+        THE LINK TO THE MATCH PAGE — the thing the owner said was missing here by
+        name. See MATCH_COLUMNS above for why the id came back into this table
+        after being removed from it.
+
+        NO TAG MEANS NO LINK, AND THAT CASE IS REACHABLE HERE in a way it is not
+        on the live board: `gameProfile.ts` reads `matchId: num(row.matchId)`, and
+        br_ddb writes 0 for an absent one, so a history row that lost its id
+        arrives as 0. `matchTag` returns null for it rather than rendering
+        `00000`, which is a real match id the game reserves for the warmup pad —
+        a bug that would read as a fact. The house em dash instead.
+      */}
+      <span className={cn(MATCH_COL.match, 'font-mono text-xs')}>
+        {matchHref(m.matchId) === null ? (
+          <span className="text-muted-foreground/70">—</span>
+        ) : (
+          <Link
+            href={matchHref(m.matchId)!}
+            className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {matchTag(m.matchId)}
+          </Link>
+        )}
       </span>
     </li>
   )

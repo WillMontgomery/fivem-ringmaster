@@ -1,4 +1,5 @@
 import { Users } from 'lucide-react'
+import Link from 'next/link'
 
 import { PlayerRowView } from '@/components/PlayerRow'
 import { Badge } from '@/components/ui/badge'
@@ -11,6 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import type { MatchRow, PlayerRow as Player } from '@/lib/ingest'
+import { matchHref, matchTag } from '@/lib/matchTag'
 import { isInMatch } from '@/lib/playerState'
 import { cn } from '@/lib/utils'
 
@@ -149,9 +151,44 @@ export function MatchCard({
 
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-card/60 px-4 py-3">
         <div className="flex items-center gap-2.5">
-          <span className="font-mono text-sm text-muted-foreground">
-            match {match.id}
-          </span>
+          {/*
+            ═══ THE MATCH IS NAMED IN HEX, AND IT USED TO BE NAMED IN DECIMAL ═══
+
+            "The live players view also still just says `match 889770`." — the
+            owner, 2026-09-12. This line was `match {match.id}`, so the board
+            printed `match 889770` while the game server's own console printed
+            `match d93aa` for the same match. #291: "Ringmaster and the game logs
+            should convert together, or moderation reads two numbers for one
+            match." `lib/matchTag` is the port of `BR.MatchTag` and the only place
+            the conversion happens on this side.
+
+            AND IT LINKS TO THE MATCH PAGE (#51: "the Live Players page"). Note
+            what that link does DURING a match: history rows are written at match
+            END, so the match page has nothing yet and sends the reader back here,
+            which is the page that does have it. That is a real rough edge, it is
+            documented on the route, and it is raised as the owner's call rather
+            than smoothed over with a second rendering of a live match.
+
+            NO TAG MEANS NO LINK. `matchTag` returns null rather than inventing
+            `00000` — see its header. Unreachable from a live snapshot, since the
+            game cannot mint id 0, but the markup must not depend on that.
+          */}
+          {(() => {
+            const tag = matchTag(match.id)
+            const href = matchHref(match.id)
+            const text = (
+              <span className="font-mono text-sm text-muted-foreground">
+                match {tag ?? '—'}
+              </span>
+            )
+            return href === null ? (
+              text
+            ) : (
+              <Link href={href} className="underline-offset-4 hover:underline">
+                {text}
+              </Link>
+            )
+          })()}
           <Badge
             variant="outline"
             className={cn(

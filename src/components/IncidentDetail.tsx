@@ -468,7 +468,9 @@ export function IncidentDetail({
         other, so the order is the DOM order at every width; the panel's own
         `sm:` columns are internal to it and unaffected.
       */}
-      {incident.matchId != null && <IncidentMatchRecord record={matchRecord} />}
+      {incident.matchId != null && (
+        <IncidentMatchRecord record={matchRecord} matchId={incident.matchId} />
+      )}
 
       {/*
         THE TIMELINE MOVED OUT OF THIS FILE (#30) and grew a second writer. It

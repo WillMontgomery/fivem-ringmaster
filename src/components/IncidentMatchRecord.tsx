@@ -1,11 +1,13 @@
 'use client'
 
 import { Clock, Crosshair, Flame, Skull, Trophy } from 'lucide-react'
+import Link from 'next/link'
 
 import { Badge } from '@/components/ui/badge'
 import { Card } from '@/components/ui/card'
 import { humanDuration } from '@/lib/duration'
 import { labelFor } from '@/lib/labels'
+import { matchHref, matchTag } from '@/lib/matchTag'
 import type { ProfileMatch } from '@/lib/profile'
 import { formatCount } from '@/lib/time'
 import { cn } from '@/lib/utils'
@@ -57,11 +59,52 @@ import { cn } from '@/lib/utils'
  * across server restarts and matching on it alone puts one afternoon's kills on
  * another afternoon's case.
  */
-export function IncidentMatchRecord({ record }: { record: ProfileMatch | null }) {
+export function IncidentMatchRecord({
+  record,
+  /**
+   * The match this incident was filed during, from the INCIDENT row and not from
+   * `record`.
+   *
+   * ═══ WHY THE ID COMES FROM THE INCIDENT AND NOT FROM THE RECORD ═══
+   *
+   * `record` is null in three ordinary situations described at length above — the
+   * match is still running, the history read did not reach back far enough, the
+   * read failed — and in every one of them the incident still NAMES a match. If
+   * the link were driven by the record it would disappear in exactly the cases a
+   * moderator most wants to follow it: "I cannot show you what they did, and I
+   * also will not tell you which match it was." `IncidentDetail` draws this panel
+   * only when `incident.matchId != null`, so the link is always resolvable.
+   */
+  matchId,
+}: {
+  record: ProfileMatch | null
+  matchId: number | null
+}) {
+  const tag = matchTag(matchId)
+  const href = matchHref(matchId)
+
   return (
     <Card className="surface-edge gap-0 overflow-hidden py-0">
       <header className="flex flex-wrap items-center gap-2 border-b border-border bg-card/60 px-4 py-2.5 text-sm">
         Match record
+        {/*
+          THE MATCH, IN HEX, LINKING TO ITS PAGE (#51: "include a link to the new
+          match page not just in the profile page 'match history' tab for each
+          match, but also on the incidents page for each incident").
+
+          THE SAME FIVE CHARACTERS THE GAME LOG PRINTS. An incident is the surface
+          where somebody is holding a server log in the other window — #291's
+          whole argument — so a decimal id here would be the most expensive place
+          in the console to disagree with the game.
+        */}
+        {href !== null && (
+          <Link
+            href={href}
+            className="font-mono text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {tag}
+          </Link>
+        )}
         {/*
           MODE IS A CHIP RATHER THAN A FIGURE because it is not a number, and
           `labelFor` rather than a lookup so a mode this build has never heard of
