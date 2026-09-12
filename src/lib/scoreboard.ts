@@ -51,40 +51,84 @@ import { levelFor } from './xp'
  */
 
 /**
- * ═══ THE SURFACE IS 1280x720 AND THE GAME CLIENT PINS THE SAME TWO NUMBERS ═══
+ * ═══ THE SURFACE IS 1920x1080 AND THE GAME CLIENT PINS THE SAME TWO NUMBERS ═══
  *
- * `BR.Config.Board.width/height` in the gamemode's `br_lib/config/board.lua` is
- * 1280x720 and carries a warning that the two must agree. CHANGING EITHER NUMBER
- * HERE ALONE CROPS THE PAGE SILENTLY: `CreateDui(url, w, h)` takes pixels, a
- * texture of a different size does not rescale the document, and nothing on
- * either side raises an error. They are changed together or not at all.
+ * `BR.Config.Board.width/height` in the gamemode's `br_lib/config/board.lua`
+ * carries a warning that the two must agree. CHANGING EITHER NUMBER HERE ALONE
+ * CROPS THE PAGE SILENTLY: `CreateDui(url, w, h)` takes pixels, a texture of a
+ * different size does not rescale the document, and nothing on either side
+ * raises an error. They are changed together or not at all.
  *
- * WHAT IT COSTS IN VRAM, ON EVERY CLIENT, FOR AS LONG AS THE PROP EXISTS. A DUI
+ * ═══ IT WAS 1280x720 AND THE ARGUMENT FOR THAT WAS BUILT ON A WRONG NUMBER ═══
+ *
+ * Owner, 2026-09-11: "what resolution are we using for the DUI right now? If
+ * it's still 720p can we bump it to 1080p or 1440p?" ... "Yeah let's go 1080p"
+ *
+ * THE OLD NOTE HERE SAID 1080p WOULD BUY NOTHING, on the reasoning that "a board
+ * a player is standing a few meters away from occupies a few hundred pixels of
+ * their actual screen". THAT PREMISE WAS MEASURED AND IT WAS WRONG. It was
+ * written while `widthM` was an invented 2.40 - a postage stamp on a stage
+ * display - and the owner has since aimed the real prop and measured it: the
+ * board is 9.43m wide on a face that measures 9.46m. Standing near it, it fills
+ * a large part of the screen, and an upscaled 720p texture at that size is
+ * visibly soft. The logic was fine; the number it was applied to was not.
+ *
+ * WHAT IT COSTS IN VRAM, ON EVERY CLIENT, FOR AS LONG AS THE PROP EXISTS: a DUI
  * is a live RGBA texture, so the bill is width x height x 4 bytes and nothing
- * amortizes it: 1920x1080 is 8.3 MB, 1280x720 is 3.7 MB. That is 4.6 MB per
- * player of headroom given back on a client already holding a battle royale
- * map, and it is spent whether anybody is looking at the prop or not.
+ * amortizes it. 1920x1080 is 8.3 MB against 720p's 3.7 MB. That is real and it
+ * is also noise on a machine already holding a GTA map, which is why it is
+ * recorded here rather than argued from.
  *
  * IT IS ALSO THE UNIT OF THE BLIT FiveM DOES EVERY GAME FRAME, for every DUI
  * that exists, animated or not. See the motion note in `lib/scoreboardPage.ts`
  * for why that sentence used to be a per-repaint number and should not have been.
- *
- * WHAT 1080p WOULD BUY, HONESTLY: more legible small text at a distance. It
- * does not, because the limit is not the page's resolution. A prop's texture is
- * sampled at whatever screen size the prop occupies, and a board a player is
- * standing a few meters away from occupies a few hundred pixels of their actual
- * screen. Doubling the source resolution of text that is already being
- * downsampled buys sharpness nobody can resolve. The answer to "can I read it
- * from over there" is type size, not texture size, which is why the type on
- * this board is large enough to look oversized in a desktop browser.
  *
  * FIXED, AND THE PAGE MUST NEVER SCROLL. A DUI has no scrollbar, no wheel and
  * no way to reach anything below the fold, so content that overflows is content
  * that does not exist. `scoreboardPage.ts` pins both axes and hides overflow,
  * and the check asserts it.
  */
-export const BOARD_WIDTH = 1280
-export const BOARD_HEIGHT = 720
+export const BOARD_WIDTH = 1920
+export const BOARD_HEIGHT = 1080
+
+/**
+ * ═══ THE SIZE THE BOARD IS LAID OUT AND JUDGED AT, WHICH IS NOT THE SAME THING
+ *     ═══
+ *
+ * Every position, type size, gutter and border on this board was authored and
+ * looked at in 1280x720 pixels, and the owner has approved that design piece by
+ * piece over four passes. What he asked for when he asked for 1080p is a SHARPER
+ * board, not a smaller one.
+ *
+ * THOSE ARE OPPOSITE OUTCOMES IF THE LAYOUT SIMPLY MOVES TO THE NEW NUMBER. The
+ * page has no responsive layout and nothing on it is authored in relative units,
+ * so raising the surface to 1920x1080 while leaving every `font-size`, `gap` and
+ * `border-width` where it is makes each of them two thirds of its former share
+ * of the screen: the same board, rendered small, with more empty space around
+ * it. That is the failure this pair of constants exists to make impossible.
+ *
+ * SO THE DESIGN STAYS IN ITS OWN PIXELS AND THE DOCUMENT IS SCALED TO THE
+ * SURFACE. `lib/scoreboardPage.ts` lays every slide out in DESIGN pixels and
+ * emits one `zoom` on the root, `BOARD_WIDTH / DESIGN_WIDTH`. Zoom is a LAYOUT
+ * scale rather than a transform: Blink lays the document out and rasterizes
+ * every glyph at the scaled size, so the type is genuinely drawn at 1.5x rather
+ * than drawn at 1x and stretched. It is the oldest non-standard property in
+ * Chromium and has worked since long before CEF 103.
+ *
+ * WHAT THAT BUYS, CONCRETELY: the board he approved, at 2.25 times the pixels,
+ * with every derivation in this file and every assertion in the check still
+ * true and still measured against the layout a person actually looked at. And
+ * the 1440p he also floated is this one constant again.
+ *
+ * THE ASPECT RATIO MUST MATCH OR THE SCALE IS A LIE, because one zoom cannot
+ * satisfy two different ratios and the mismatch would show as content running
+ * off one axis. `scoreboard.check.ts` asserts the two ratios are equal.
+ */
+export const DESIGN_WIDTH = 1280
+export const DESIGN_HEIGHT = 720
+
+/** What one design pixel is worth on the real surface. 1920/1280 = 1.5. */
+export const UI_SCALE = BOARD_WIDTH / DESIGN_WIDTH
 
 /**
  * ═══ THE TWO DWELL TIMES, AND WHY THEY ARE TWO ═══
@@ -105,9 +149,27 @@ export const BOARD_HEIGHT = 720
  * A DWELL IS TIME SPENT STILL, NOT TIME INCLUDING THE TRANSITION. The swap is
  * scheduled dwell + TRANSITION_MS apart, so raising `TRANSITION_MS` does not
  * silently shorten the time either panel is readable.
+ *
+ * ═══ ALL THREE CAME DOWN A FIFTH, 2026-09-11 ═══
+ *
+ * Owner: "Can we also cut the time between pages by 20%?"
+ *
+ * THE TIME BETWEEN PAGES IS THE DWELL AND NOT THE TRANSITION, which is the one
+ * reading of that sentence that changes what he is looking at. The transition is
+ * how long the swap RUNS; the dwell is how long a page is up before the next one
+ * arrives, which is what "between pages" describes and which is the only thing
+ * on this surface he has ever had three separate numbers for. `TRANSITION_MS` is
+ * deliberately untouched - he praised it by name in the same conversation ("Nice
+ * transition between pages!") - and it is one constant away if that reading turns
+ * out to be wrong.
+ *
+ * EACH ONE IS ITS OWN VALUE TIMES 0.8, WRITTEN OUT RATHER THAN COMPUTED. A
+ * `Math.round(BOARD_DWELL_MS * 0.8)` would make the next tuning pass a question
+ * about which number is the real one; these are three numbers he tunes, and they
+ * stay three numbers. 15s -> 12s, 10s -> 8s, 12s -> 9.6s.
  */
-export const PLAYER_DWELL_MS = 10_000
-export const BOARD_DWELL_MS = 15_000
+export const PLAYER_DWELL_MS = 8_000
+export const BOARD_DWELL_MS = 12_000
 
 /**
  * How long the squad slide is held, when there is one.
@@ -121,8 +183,10 @@ export const BOARD_DWELL_MS = 15_000
  * between the two as well, and it is a third NAME rather than a reuse of either
  * for the same reason those two are separate: the owner tunes these on the pad
  * and a shared constant makes the next change a refactor.
+ *
+ * DOWN A FIFTH WITH THE OTHER TWO. 12s -> 9.6s. See the note above.
  */
-export const SQUAD_DWELL_MS = 12_000
+export const SQUAD_DWELL_MS = 9_600
 
 /**
  * How long one view takes to hand over to the other.
@@ -237,9 +301,10 @@ export interface BoardRow {
   /**
    * Lifetime Volts spent.
    *
-   * ⚠ READS ZERO ON EVERY ROW TODAY, AND THE `spend` CATEGORY BELOW SAYS WHY.
-   * The field is projected and carried so that the day a lifetime total exists
-   * the only edit left is flipping one `available`.
+   * IT IS A REAL LIFETIME TOTAL AS OF GAMEMODE `40f00de`, and it was zero on
+   * every row before that. See the `spend` category below for both halves of
+   * what landed. It starts at zero on every profile written before that commit
+   * and fills from each player's next completed match; nothing backfills.
    */
   voltsSpent: number
 }
@@ -316,16 +381,22 @@ export interface AvailableCategory extends CategoryShape {
  * on the day the data landed. It carries them now, which makes the whole change
  * ONE BOOLEAN: flip `available` to true, drop `blockedBy`, and the ranking, the
  * per-player half, the squad slide, the column arithmetic and the check all pick
- * it up with no other edit. `scoreboard.check.ts` proves that by ranking the
- * blocked category through the very same code paths, with `available` forced on
- * in the check alone.
+ * it up with no other edit.
+ *
+ * ⚠ THAT CLAIM HAS NOW BEEN CASHED AND IT HELD. `spend` was the only blocked
+ * category; the gamemode landed the lifetime total in `40f00de` and turning the
+ * card on was exactly the one boolean and the deleted note, with no ranking, no
+ * formatting and no layout written under time pressure. THE TYPE STAYS even
+ * though nothing uses it today, because that is the mechanism rather than one
+ * category's scaffolding, and because `scoreboard.check.ts` still drives a
+ * synthetic blocked category through the whole renderer to keep the path alive.
  *
  * `blockedBy` IS A NOTE TO THE NEXT READER OF THIS FILE AND NEVER REACHES THE
- * PAGE. AND THE CATEGORY IS DECLARED SO THAT IT CANNOT BE RENDERED AS ZERO IN
- * THE MEANTIME: `enabledCategories()` is the only way to get a list of
- * categories and it filters on `available`, so there is no path from here to a
- * spenders board of five people who have apparently spent nothing. A zero on a
- * leaderboard is not an absence, it is a claim about somebody.
+ * PAGE. AND A BLOCKED CATEGORY CANNOT BE RENDERED AS ZERO IN THE MEANTIME:
+ * `enabledCategories()` is the only way to get a list of categories and it
+ * filters on `available`, so there is no path from here to a board of five
+ * people who have apparently done nothing. A zero on a leaderboard is not an
+ * absence, it is a claim about somebody.
  */
 export interface BlockedCategory extends CategoryShape {
   available: false
@@ -436,51 +507,43 @@ export const CATEGORIES: readonly Category[] = [
   },
   {
     /**
-     * ═══ VOLTS SPENT IS RECORDED PER MATCH, AND NOWHERE AS A LIFETIME TOTAL ═══
+     * ═══ VOLTS SPENT, AND THE ONE BOOLEAN HAS BEEN FLIPPED ═══
      *
-     * This entry used to say the number did not exist at all. It does now, and
-     * the correction matters because the two facts lead to different work.
+     * Owner, 2026-09-11: "when are we adding the 'biggest spenders' section?"
      *
-     * WHAT LANDED (gamemode `03cce2d`, #293). `voltsSpent` is set on the roster
-     * entry in `br_core/server/roster.lua`, added to in the success arm of
-     * `BR.Market.charge` in `br_core/server/market.lua`, carried onto the results
-     * row in `br_core/server/match.lua`, written into the history row by
-     * `br_stats/server/persist.lua`, and allowlisted in br_ddb's
-     * `HISTORY_NUMBERS`.
+     * ═══ WHAT THE BLOCK WAS, AND WHY IT IS GONE ═══
      *
-     * WHAT DID NOT LAND, AND IS THE WHOLE GAP. `HISTORY_NUMBERS` governs the
-     * `{pk: license, sk: 'match#...'}` ROWS. The lifetime aggregate is a
-     * different allowlist, `STATS_ADDS` in `js-src/br_ddb/src/stats.js`, and
-     * `voltsSpent` is not on it. So `{sk: 'profile'}` - the only row this
-     * board's scan reads - HAS NO voltsSpent ATTRIBUTE AT ALL, and
-     * `BoardRow.voltsSpent` reads zero for everybody.
+     * This category shipped complete and switched off. `voltsSpent` reached the
+     * per-match `{pk: license, sk: 'match#...'}` rows through br_ddb's
+     * `HISTORY_NUMBERS` (gamemode `03cce2d`, #293) and stopped there. The
+     * LIFETIME aggregate is governed by a different allowlist - `STATS_ADDS` in
+     * `js-src/br_ddb/src/stats.js` - and `voltsSpent` was not on it, so
+     * `{sk: 'profile'}`, the only row this board's scan reads, carried no such
+     * attribute and `BoardRow.voltsSpent` read zero for everybody. A card would
+     * have named five people who had apparently spent nothing as the biggest
+     * spenders in the game.
      *
-     * RANKING IT FROM HISTORY IS NOT A SMALL CHANGE, WHICH IS WHY IT IS NOT DONE
-     * HERE. It would mean reading every `match#` row in `br-players` and summing
-     * per license - the rows this store's scan filters OUT precisely because
-     * they outnumber the profiles and keep growing. That is a different and much
-     * more expensive read model, and it is a decision somebody makes on purpose.
-     * The cheap fix is one line in the gamemode: add `voltsSpent` to
-     * `STATS_ADDS` and to `deltasFor` in `persist.lua`, and this category becomes
-     * `available: true` with a `sortValue` of `(r) => r.voltsSpent` and nothing
-     * else in this repository changes.
+     * THE GAMEMODE CLOSED IT IN `40f00de` (#293) AND BOTH HALVES WERE READ OUT
+     * OF THAT REPOSITORY RATHER THAN TAKEN ON REPORT:
      *
-     * AND NOTHING BACKFILLS EITHER WAY. Matches played before `03cce2d` recorded
-     * no spend, so the first months of any such board are a partial history
-     * presented as a lifetime one. That is the owner's call to make knowingly.
+     *   `voltsSpent` is on `STATS_ADDS` in `js-src/br_ddb/src/stats.js`, which
+     *   is what makes the atomic ADD land on the profile row at all.
      *
-     * ═══ HE HAS NOW ASKED FOR THE CARD, SO THE CARD IS BUILT AND SWITCHED OFF
-     *     ═══
+     *   `voltsSpent = p.voltsSpent or 0` is a member of the table `deltasFor`
+     *   RETURNS in `br_stats/server/persist.lua`, which is what the ADD is built
+     *   from. Its note there is explicit that it is deliberately NOT a member of
+     *   `r`, the table the payout reads, because spending is not an input to
+     *   what a match earns.
      *
-     * Owner, 2026-09-11: "Let's also add a 'Biggest spenders' category on the
-     * scoreboard as well, and highest level too". Highest level already existed.
-     * This one is written out in full - the label, the tile label, the accent,
-     * the ranking and the formatting - and held behind `available: false`,
-     * because rendering it today would put six cards of "0" on a wall and call
-     * them the biggest spenders in the game. The ONLY edit left is flipping the
-     * boolean below and deleting `blockedBy`; `scoreboard.check.ts` ranks this
-     * exact object with `available` forced on and asserts the card comes out
-     * right, so the flip is proven rather than hoped for.
+     * Either half alone accumulates nothing, which is why both were checked.
+     *
+     * ═══ NOTHING BACKFILLS, AND THE OWNER KNOWS ═══
+     *
+     * The attribute starts absent on every existing profile and fills from each
+     * player's next completed match, so for the first day or so this card ranks
+     * whoever has played recently rather than whoever has spent most. That is a
+     * known and accepted property of switching it on rather than a defect, and
+     * it settles on its own.
      */
     key: 'spend',
     label: 'BIGGEST SPENDERS',
@@ -490,9 +553,9 @@ export const CATEGORIES: readonly Category[] = [
      * and that rule does not survive here: "BIGGEST SPENDERS" minus the
      * superlative is "SPENDERS", which is a word for a person and reads as a
      * claim when it sits over one player's own number. VOLTS SPENT is the
-     * quantity itself, in the game's own name for its currency. It cannot reach
-     * a screen while `available` is false, and it is in the report as something
-     * for him to rule on before it can.
+     * quantity itself, in the game's own name for its currency. It IS on a
+     * screen now that the card is live, and it is the one string on this board
+     * he has not personally approved - carried in the report under needsOwner.
      */
     tileLabel: 'VOLTS SPENT',
     /**
@@ -504,14 +567,9 @@ export const CATEGORIES: readonly Category[] = [
      * the brighter of the two golds is the one on the winning.
      */
     accent: '#d9ae35',
-    available: false,
+    available: true,
     sortValue: (r) => r.voltsSpent,
     display: (r) => formatCount(r.voltsSpent),
-    blockedBy:
-      'voltsSpent is on br_ddb HISTORY_NUMBERS (the match# rows) but not on ' +
-      'STATS_ADDS, so the sk=profile row this board scans carries no lifetime ' +
-      'total. Add voltsSpent to STATS_ADDS in js-src/br_ddb/src/stats.js and to ' +
-      'deltasFor in br_stats/server/persist.lua, then flip available to true.',
   },
 ]
 

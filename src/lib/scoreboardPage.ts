@@ -1,11 +1,12 @@
 import {
   BOARD_DWELL_MS,
-  BOARD_HEIGHT,
-  BOARD_WIDTH,
+  DESIGN_HEIGHT,
+  DESIGN_WIDTH,
   PLAYER_DWELL_MS,
   SQUAD_DWELL_MS,
   TOP_N,
   TRANSITION_MS,
+  UI_SCALE,
   type Leaderboard,
   type PlayerPanel,
   type SquadPanel,
@@ -236,6 +237,39 @@ export const PALETTE = {
 const CUT_PX = 12
 
 /**
+ * ═══ EVERY BORDER ON THIS BOARD, IN ONE NUMBER, AND IT IS THREE TIMES WHAT IT
+ *     WAS ═══
+ *
+ * Owner, 2026-09-11: "And triple the border thickness on everything that has
+ * borders for the entire scoreboard."
+ *
+ * ONE CONSTANT AND NOT EIGHT EDITS. Six declarations carried a `1px` before
+ * this: the card, the tile, the squad card, the viewer's focused surface, the
+ * rule under a card's heading and the rule under a slide title. Tripling them by
+ * hand is six chances to miss one, and a board with one hairline left among six
+ * heavy edges looks like a rendering fault rather than a design.
+ *
+ * ═══ AND THE TWO REDRAWN DIAGONALS HAVE TO THICKEN WITH THEM ═══
+ *
+ * The focused surface is br_ui's `.plate.is-active`: its top-right and
+ * bottom-left corners are chamfered by a `clip-path`, which removes the BORDER
+ * along both diagonals, and two pseudo-elements draw it back with a 45deg
+ * gradient. br_ui's own numbers are a 1px border and a 1.2px diagonal - the
+ * diagonal is slightly fatter because a 45deg gradient edge is measured
+ * perpendicular to the line rather than across the box. That RATIO is what is
+ * preserved here, not the literal 1.2: a 3px border with a 1.2px diagonal would
+ * be a focused row whose two cut corners are visibly unfinished next to the four
+ * edges that are not, which is the exact defect the variable exists to prevent.
+ *
+ * THE GRADIENT TAKES THE HALF WIDTH, because it is stated as a band either side
+ * of the 50% line. `scoreboard.check.ts` recomputes both numbers from `EDGE_PX`
+ * rather than matching what is written.
+ */
+export const EDGE_PX = 3
+const CHAMFER_PX = EDGE_PX * 1.2
+const CHAMFER_HALF = CHAMFER_PX / 2
+
+/**
  * The edge of the ONE surface on this page that is allowed a bright one.
  *
  * br_ui's inventory sets `--edgec: active ? '#ffffff' : hex` - the rarity color
@@ -351,9 +385,25 @@ export function tone(accent: string): {
  * on. So this is the wash's own lightest stop, plus that light, plus the band.
  */
 const NAME_BAND = mix(mix('#0c1a25', PALETTE.cyan, 0.2), PALETTE.cyan, 0.26)
-/** A squad row's neutral top, before its mate's own color is laid over it. */
-const MATE_TOP = mix(PALETTE.card, '#ffffff', 0.04)
 
+/**
+ * The brightest the page can be behind a slide title, per slide.
+ *
+ * ═══ THERE ARE THREE OF THESE NOW AND THERE USED TO BE ONE ═══
+ *
+ * Owner: "Stop using the same boring colors on each page." Each panel lays its
+ * own translucent wash over the shared background (see `slideStyles`), so the
+ * surface under a title is no longer the same on all three slides and measuring
+ * one of them would be measuring a surface two thirds of the board does not have.
+ *
+ * THE PLAYER SLIDE'S IS UNCHANGED, WHICH IS THE POINT. "I like the colors on the
+ * player stats page. Keep those and change the rest" - it has no panel wash at
+ * all, so the value below is exactly what it has always been: the wash's own
+ * lightest stop plus the cyan light, at the top left where the title sits.
+ */
+const TITLE_GROUND = mix('#0c1a25', PALETTE.cyan, 0.2)
+/** `BR.RarityInfo.legendary`, which is the leaderboard's own light. */
+export const LEGENDARY = '#ffb020'
 /**
  * Every text-on-background pair on this board, against what is really behind it.
  *
@@ -390,15 +440,22 @@ export function contrastPairs(
      * cyan light both are. That is the same surface the player's name band is
      * composited over, minus the band itself.
      */
-    ['slide title', PALETTE.text, mix('#0c1a25', PALETTE.cyan, 0.2)],
+    ['player slide title', PALETTE.text, TITLE_GROUND],
+    /**
+     * AND THE LEADERBOARD'S TITLE SITS ON ITS OWN LIGHT. `#board`'s wash is a
+     * legendary-amber pool centered above the top edge, so the brightest thing
+     * under the title is that stop composited over the same ground - which is a
+     * LIGHTER surface than the player slide's and therefore the harder of the two
+     * to hold white type on. The squad slide's lights are measured per blip
+     * color below, for the same reason and with the same arithmetic.
+     */
+    ['board slide title', PALETTE.text, mix(TITLE_GROUND, LEGENDARY, 0.22)],
     ['card title', PALETTE.label, PALETTE.card],
     ['entry name', PALETTE.text, PALETTE.card],
     ['entry value', PALETTE.text, PALETTE.card],
     ['rank numeral', PALETTE.muted, PALETTE.card],
     ['player name', PALETTE.text, NAME_BAND],
     ['tile rank', PALETTE.muted, PALETTE.card],
-    ['mate name', PALETTE.text, MATE_TOP],
-    ['mate value', PALETTE.text, MATE_TOP],
     /**
      * THE HIGHLIGHTED ROW IS A SECOND BACKGROUND AND EVERY TEXT ON IT IS A NEW
      * PAIR. `muted` on `you` measures below the floor, which is the whole
@@ -422,14 +479,34 @@ export function contrastPairs(
   }
 
   /**
-   * A squad mate's name is painted in their own blip color, over the strongest
-   * point of their row's wash - which is the left end, which is where the name
-   * is. That first stop is 0.12 because measuring it at 0.26 put three of the
-   * game's eight colors under the floor, and these eight are not ours to
-   * adjust: they are what is on the minimap.
+   * ═══ EVERY SURFACE A SQUAD MATE'S BLIP COLOR PAINTS, AND NOT ONE OF THEM IS
+   *     TYPE ═══
+   *
+   * This used to measure the blip color as INK, because the mate's name was
+   * painted in it. The owner threw that out - "the column font colors are
+   * just.... too much lol" - so the color is now the card's fill and its name
+   * band, exactly the way a category's accent paints a leaderboard card, and
+   * what has to be measured is the WHITE AND GREY TYPE ON TOP OF IT.
+   *
+   * THESE EIGHT ARE THE HARD CASE AND THEY ARE NOT OURS TO ADJUST. `BR.SquadColours`
+   * is eight LIGHT saturated colors chosen to be legible as minimap blips, so a
+   * band built from one of them is the lightest surface anywhere on this board
+   * that carries text. If a stop has to come down to hold the floor, it comes
+   * down for all eight rather than being tuned per color.
+   *
+   * THE TITLE PAIR IS HERE TOO, because `#squad`'s wash is one light per mate
+   * and the title sits over whichever of them is leftmost.
    */
   for (const color of squadColors) {
-    pairs.push([`mate ${color}`, color, mix(MATE_TOP, color, 0.12)])
+    const t = tone(color)
+    pairs.push(
+      [`mate ${color} name`, PALETTE.text, t.band],
+      [`mate ${color} label`, PALETTE.label, t.top],
+      [`mate ${color} value`, PALETTE.text, t.top],
+      [`mate ${color} your name`, PALETTE.text, t.youTop],
+      [`mate ${color} your label`, PALETTE.text, t.youTop],
+      [`squad slide title on ${color}`, PALETTE.text, mix(TITLE_GROUND, color, 0.2)],
+    )
   }
 
   return pairs
@@ -758,9 +835,9 @@ function moteStyles(phases: readonly number[]): string {
     const x = Math.round(
       edge === 0
         ? scatter(i * 11 + 3) * 300
-        : BOARD_WIDTH - 300 + scatter(i * 11 + 3) * 300,
+        : DESIGN_WIDTH - 300 + scatter(i * 11 + 3) * 300,
     )
-    const y = Math.round(scatter(i * 13 + 5) * (BOARD_HEIGHT + 60) - 30)
+    const y = Math.round(scatter(i * 13 + 5) * (DESIGN_HEIGHT + 60) - 30)
     const alpha = (0.28 + scatter(i * 17 + 7) * 0.4).toFixed(2)
     /** A drifting mote is mostly vertical, with enough lateral wander to read. */
     const amp = 70 + Math.round(scatter(i * 19 + 9) * 130)
@@ -1094,24 +1171,64 @@ ${moteStyles(phases)}`
  * THE STAGGER FITS INSIDE THE BUDGET RATHER THAN EXTENDING IT, and it is
  * computed rather than written out. See the note inside.
  */
-function transitionStyles(columns: number): string {
-  /**
-   * THE STAGGER IS DIVIDED INTO THE BUDGET, NOT ADDED TO IT. Five columns step
-   * by 50ms and the last one starts at 200ms, which plus its own 420ms lands
-   * exactly on TRANSITION_MS. A sixth column would have pushed the last start to
-   * 250ms and the whole swap to 670ms, so `TRANSITION_MS` would have quietly
-   * stopped being the honest description of how long the surface is busy. The
-   * step is therefore computed from the count: the LAST column always starts at
-   * TRANSITION_MS - CARD_MS, whatever the count is.
-   */
-  const step = columns > 1 ? (TRANSITION_MS - CARD_MS) / (columns - 1) : 0
-  const delays = Array.from(
-    { length: columns },
-    (_, i) =>
-      `.col:nth-child(${i + 1}) .card, .col:nth-child(${i + 1}) .tile { transition-delay: ${Math.round(
-        i * step,
-      )}ms; }`,
-  ).join('\n')
+/**
+ * ═══ THE SQUAD SLIDE'S TRANSITION WAS PRESENT, RUNNING AND INVISIBLE ═══
+ *
+ * Owner, 2026-09-11: "The squads page doesn't have any transitions it seems."
+ *
+ * IT WAS NOT ABSENT AND IT WAS MEASURED BEFORE ANYTHING WAS CHANGED. Driving the
+ * served document in a browser and sampling computed style 90ms into a swap onto
+ * the squad slide returned opacity 0.29 / 0.07 / 0 / 0 down the four rows, with
+ * transforms of 7.6px / 14.4px / 20px / 20px and transition-delays of 0, 50, 100
+ * and 150ms. The rows were fading and travelling exactly as specified.
+ *
+ * WHAT HE WAS ACTUALLY SEEING, AND WHY IT READ AS NOTHING. Two things, and both
+ * of them are gone with the table:
+ *
+ *   THE ONE HIGH-CONTRAST THING ON THE SLIDE DID NOT MOVE. The five category
+ *   headings lived in `.shead`, which was not in the animated set at all - not
+ *   `.card`, not `.tile`, not `.mate`, not `.stitle`. So five saturated colored
+ *   words appeared instantly at full opacity in their final position while
+ *   everything else drifted up behind them. The eye reads the brightest element
+ *   as the slide's arrival, and that element was arriving with a cut.
+ *
+ *   AND WHAT DID ANIMATE WAS FOUR DARK FULL-WIDTH SLABS. A 20px rise on a
+ *   1100x106 row whose fill is near-black on a near-black background is a
+ *   travel of a fifth of the row's own height across the width of the screen.
+ *   The leaderboard's signature is five discrete cards stepping in left to
+ *   right; four wide bars fading up in near-lockstep is not the same gesture and
+ *   does not read as one.
+ *
+ * SO THE FIX IS THE LAYOUT, NOT THE TIMING. The squad slide is columns of cards
+ * now, so it takes the `.col:nth-child()` stagger every other slide takes, from
+ * the same computation, with nothing left outside the animated set. It arrives
+ * the way the other two arrive because it is built the way they are built.
+ *
+ * ═══ THE STAGGER IS DIVIDED INTO THE BUDGET, NOT ADDED TO IT ═══
+ *
+ * Five columns step by 50ms and the last one starts at 200ms, which plus its own
+ * 420ms lands exactly on `TRANSITION_MS`. A sixth would have pushed the last
+ * start to 250ms and the whole swap to 670ms, so `TRANSITION_MS` would have
+ * quietly stopped being the honest description of how long the surface is busy.
+ * The step is computed from the SLOT count: the last visible column always
+ * starts at `TRANSITION_MS - CARD_MS`, whatever the count is.
+ *
+ * AND IT CYCLES WITH THE SLOTS RATHER THAN RUNNING OFF THE END. When the
+ * leaderboard is drifting there are twice as many columns in the document as
+ * there are slots on screen (see `marqueeStyles`), and a stagger that kept
+ * stepping would have the twelfth card starting 500ms after the first - half a
+ * second after the swap was supposed to be over. Position 6 therefore steps with
+ * position 1. Nobody can see more than `slots` of them at once by construction.
+ */
+function transitionStyles(columns: number, slots: number): string {
+  const span = Math.max(slots, 1)
+  const step = span > 1 ? (TRANSITION_MS - CARD_MS) / (span - 1) : 0
+  const delays = Array.from({ length: columns }, (_, i) => {
+    const at = `${i + 1}`
+    return `.col:nth-child(${at}) .card, .col:nth-child(${at}) .tile { transition-delay: ${Math.round(
+      (i % span) * step,
+    )}ms; }`
+  }).join('\n')
 
   return `
 .panel {
@@ -1124,24 +1241,163 @@ function transitionStyles(columns: number): string {
     opacity ${TRANSITION_MS}ms ease,
     visibility 0s linear 0s;
 }
-.card, .tile, .mate, .stitle {
+.card, .tile, .stitle {
   opacity: 0;
   transform: translate3d(0, ${ENTRANCE_PX}px, 0);
   transition:
     opacity ${CARD_MS}ms ease,
     transform ${CARD_MS}ms cubic-bezier(0.22, 0.8, 0.28, 1);
 }
-.panel.on .card, .panel.on .tile, .panel.on .mate, .panel.on .stitle {
+.panel.on .card, .panel.on .tile, .panel.on .stitle {
   opacity: 1;
   transform: translate3d(0, 0, 0);
 }
-${delays}
-.mate:nth-child(1) { transition-delay: 0ms; }
-.mate:nth-child(2) { transition-delay: 50ms; }
-.mate:nth-child(3) { transition-delay: 100ms; }
-.mate:nth-child(4) { transition-delay: 150ms; }
-.mate:nth-child(5) { transition-delay: 200ms; }
-.mate:nth-child(6) { transition-delay: 200ms; }`
+${delays}`
+}
+
+/**
+ * ═══ THE DRIFT, AND THE ARITHMETIC THAT MAKES ITS LOOP SEAMLESS ═══
+ *
+ * Owner: "having 6 columns we should have them scroll right to left".
+ *
+ * THE SHAPE. `.cards` (and `.tiles`) is a fixed-width window onto a `.track`
+ * holding TWO copies of the columns end to end. The track translates left by
+ * exactly ONE COPY'S WIDTH over the whole cycle and then restarts. At the moment
+ * it restarts, copy two is sitting precisely where copy one was, so the frame
+ * before the wrap and the frame after it are the same image: there is no jump,
+ * no seam and no gap, and it is true by arithmetic rather than by looking right.
+ *
+ *   shift = count x (cardWidth + GUTTER)
+ *
+ * and the gutter between the last card of copy one and the first of copy two is
+ * the same `gap` as every other, which is the half that is easy to get wrong -
+ * a track laid out with margins instead of a gap wraps one gutter short.
+ *
+ * THE WINDOW IS NEVER EMPTY, AND THAT IS ALSO ARITHMETIC. At the far end of the
+ * cycle the visible window runs from `shift` to `shift + INNER_WIDTH`, so the
+ * track must be at least that long: `2 x count x (w + G) - G >= count x (w + G)
+ * + INNER_WIDTH`, i.e. `count x (w + G) >= INNER_WIDTH + G`. That holds for any
+ * count past `SLOTS` by construction, because `SLOTS` cards plus their gutters
+ * are already the whole safe area. `scoreboard.check.ts` recomputes it rather
+ * than trusting this paragraph.
+ *
+ * `linear` AND NOT `ease`. An eased marquee speeds up and slows down inside
+ * every cycle, which on a continuous drift reads as the board breathing. It also
+ * breaks the seam: the velocity at 100% would not match the velocity at 0%.
+ *
+ * ONLY `transform` MOVES, so the track is one composited layer translating over
+ * already-rastered content, which is the same rule every background layer on
+ * this page follows. It is the one large promotion the content layer pays for
+ * and it is declared once. See the header for what that costs and does not.
+ *
+ * ═══ IT STARTS AT ZERO, WHICH IS THE ONE PLACE THIS PAGE DOES NOT RANDOMIZE ═══
+ *
+ * Every moving layer in the background takes a random negative `animation-delay`
+ * so that no two clients agree. This one deliberately does not: the first frame
+ * of a warmup should be the top of the leaderboard, with MOST WINS in the first
+ * slot, rather than a board caught mid-scroll with a card sliced by the window.
+ * The variety the owner asked for is in the background; the content's starting
+ * position is information.
+ *
+ * ═══ AND THE EDGES FADE RATHER THAN CUTTING ═══
+ *
+ * A hard clip at the safe-area boundary would slice a card mid-character 90px
+ * inside the lit screen with background still visible beyond it, which is
+ * exactly the defect the owner reported when the prop's bezel was doing it. A
+ * mask fades the leaving and entering cards out over `FADE_FRACTION` of a card
+ * instead, so
+ * nothing is ever cut and nothing readable sits at the boundary. The mask is
+ * static: it is rastered once with the window and the moving layer is composited
+ * into it, so it is a render surface rather than a repaint.
+ *
+ * ⚠ THE MASK IS THE CLIP, AND `overflow: hidden` IS DELIBERATELY NOT USED. That
+ * was the first shape of this and rendering it showed what it cost: a tile is
+ * exactly as tall as the row holding it, so clipping to the row cut the tile's
+ * drop shadow off at its own edge and flattened the per-player slide - the one
+ * slide the owner asked to be left exactly as it is ("I like the colors on the
+ * player stats page. Keep those and change the rest"). Padding the row out to
+ * make room would have moved the gap between his name and his numbers, which is
+ * the same slide by a slower route.
+ *
+ * SO THE MASK IS THREE TIMES THE ROW'S HEIGHT AND CENTERED ON IT. A mask paints
+ * over the element's overflow as well as its content, and `no-repeat` makes
+ * everything outside the mask box transparent - so a mask sized `100% 300%`
+ * fades the two horizontal edges exactly as intended and leaves a whole row's
+ * height of slack above and below for shadows to fall into. One declaration
+ * doing the clipping in one axis, which is the thing CSS has no property for.
+ *
+ * `-webkit-` LONGHANDS THROUGHOUT, WITH THE UNPREFIXED SHORTHAND BESIDE THEM.
+ * CEF 103 is Chromium 103, where the prefixed forms are the ones that have
+ * worked for a decade; the unprefixed `mask` is there for anything newer.
+ */
+const FADE_FRACTION = 0.3
+
+/**
+ * ⚠ ONE TRACK'S ARITHMETIC, AND THERE ARE TWO TRACKS WITH DIFFERENT COUNTS.
+ *
+ * THIS WAS WRITTEN AS ONE SHARED `@keyframes` AND IT WAS WRONG, which rendering
+ * it caught and no amount of reading would have. The leaderboard drops a
+ * category nothing has been done in; the per-player slide always carries one
+ * tile per ENABLED category. So on a young server the board can be five cards
+ * while the tile row is six - and a single shift computed from the larger count
+ * would translate the board's track by SIX strides when its copy is only FIVE
+ * wide. The wrap would jump by a card width, forever, on the one slide the
+ * arithmetic exists to keep seamless.
+ *
+ * SO EACH TRACK GETS ITS OWN KEYFRAMES, ITS OWN DURATION AND ITS OWN DECISION
+ * ABOUT WHETHER IT MOVES AT ALL. They share the card WIDTH, because both slides
+ * lay out in `.col` and a board whose cards were a different size from its tiles
+ * would stop reading as one board.
+ */
+function marqueeStyles(input: {
+  /** The panel the track lives in: `#board` or `#player`. */
+  panel: string
+  /** The element that is the window onto it. */
+  window: string
+  /** Its own keyframes name, because the shift is its own. */
+  name: string
+  /** How many DISTINCT columns it holds. The track carries two copies of them. */
+  count: number
+  /** The shared column width. */
+  w: number
+  /** Anything the window itself needs beyond the mask. */
+  extra?: string
+}): string {
+  const { panel, window: win, name, count, w, extra = '' } = input
+  /**
+   * THE FADE IS A FRACTION OF A CARD RATHER THAN A FIXED NUMBER OF PIXELS, so it
+   * stays the same gesture at any slot count. 36px was tried first and looked at:
+   * on a 210px card it is a hard cut with a soft pixel on it, which is the defect
+   * it exists to avoid. 30% is wide enough to read as a card leaving and narrow
+   * enough that the card behind it is fully lit well before the middle.
+   */
+  const fade = Math.round(w * FADE_FRACTION)
+  const FADE = `linear-gradient(90deg, rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 1) ${fade}px, rgba(0, 0, 0, 1) calc(100% - ${fade}px), rgba(0, 0, 0, 0) 100%)`
+  const stride = w + GUTTER
+  const shift = count * stride
+  const duration = count * SCROLL_MS_PER_CARD
+
+  return `
+${panel} ${win} {
+  justify-content: flex-start;
+  -webkit-mask-image: ${FADE};
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 100% 300%;
+  -webkit-mask-position: center;
+  mask-image: ${FADE};
+  mask-repeat: no-repeat;
+  mask-size: 100% 300%;
+  mask-position: center;${extra}
+}
+${panel} .track {
+  flex: 0 0 auto;
+  animation: ${name} ${duration}ms linear infinite;
+  will-change: transform;
+}
+@keyframes ${name} {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-${shift}px, 0, 0); }
+}`
 }
 
 /**
@@ -1170,8 +1426,71 @@ ${delays}
  * Barlow. At six columns the card is 198px wide with 170px of usable width, so
  * the longest label is still inside it. The type choice and the column count are
  * the same decision.
+ *
+ * ⚠ AND THE OWNER HAS SINCE RULED THAT SIX DO NOT GO IN FIVE SLOTS. See `SLOTS`.
+ * The arithmetic above is still what decides a card's width; what changed is the
+ * number handed to it when there are more categories than slots.
  */
 const GUTTER = 12
+
+/**
+ * ═══ THE BOARD IS FIVE WIDE, AND A SIXTH CATEGORY DRIFTS THROUGH IT ═══
+ *
+ * Owner, 2026-09-11: "when are we adding the 'biggest spenders' section? I think
+ * the screen being 5 wide makes sense and having 6 columns we should have them
+ * scroll right to left"
+ *
+ * SO THIS IS HOW MANY CARDS ARE ON SCREEN, AND IT IS NOT HOW MANY EXIST. Up to
+ * five categories, each gets a slot and nothing moves. Past five, the cards
+ * become a track that drifts leftward through the same five slots, and every
+ * category comes round.
+ *
+ * THE ALTERNATIVE HE TURNED DOWN WAS SQUEEZING, and it is worth recording why he
+ * is right. `columnWidth(6)` is 173px against five slots' 210px, which takes
+ * 37px out of a card whose header already has to hold "MOST REVIVES GIVEN" - the
+ * owner's own wording, which cannot be shortened and has to be made to fit. Six
+ * narrow cards is a board that is worse everywhere to accommodate one card; five
+ * full-size ones plus motion is a board that is unchanged everywhere and takes
+ * longer to read completely.
+ *
+ * IT GOVERNS THE TILE ROW TOO, and that follows from "the screen being 5 wide
+ * makes sense" rather than from tidiness: the per-player slide has one tile per
+ * ENABLED category, so it is the same six in the same width with the same label
+ * problem. Two slides sharing one rule is also what keeps them reading as one
+ * board. The squad slide is NOT governed by it - its columns are PEOPLE, the
+ * game's own maximum squad is four, and all four must be on screen together for
+ * the slide to make the comparison it exists to make.
+ */
+export const SLOTS = 5
+
+/**
+ * ═══ HOW FAST THE BOARD DRIFTS, AND IT IS A NUMBER HE CAN TUNE ═══
+ *
+ * The time the track takes to advance by exactly one card and one gutter. So the
+ * whole cycle is this times the number of categories, and any one card is on
+ * screen for this times `SLOTS`.
+ *
+ * 9 SECONDS BECAUSE A LEADERBOARD HAS TO BE READABLE WHILE IT MOVES. At five
+ * slots a card is 210 design pixels wide, so this is about 25 pixels a second: a name
+ * moves its own width in roughly six seconds and a card takes 45 seconds to
+ * cross the board. That is slow enough that the eye tracks a row without
+ * chasing it, and the whole six-card cycle is 54 seconds.
+ *
+ * IT IS DELIBERATELY NOT TIED TO `BOARD_DWELL_MS`. The leaderboard is up for 12
+ * seconds at a time and the page never reloads during a warmup, so the track
+ * keeps drifting while the other slides are showing and the board comes back at
+ * a different offset each time. A player standing through one warmup sees all
+ * six; a player glancing once sees five full-size cards rather than six cramped
+ * ones. Tying the two together would have made every visit start on MOST WINS
+ * and the sixth card the one nobody ever sees.
+ *
+ * MOTION IS NOT THE CONSTRAINT HERE and that is measured rather than assumed:
+ * FiveM blits the whole surface from a shared D3D11 handle every game frame
+ * whether the page moved or not, so what a moving board costs is frame
+ * production inside CEF, and this is one composited layer translating. See the
+ * header. The constraint is reading speed, which is what this number is.
+ */
+export const SCROLL_MS_PER_CARD = 9_000
 
 /**
  * ═══ THE SAFE AREA, WHICH IS A BUG FIX AND NOT A MARGIN PREFERENCE ═══
@@ -1208,7 +1527,7 @@ const GUTTER = 12
  * only number that has to change to re-fit the board to whatever his bezel
  * actually eats. Everything else - the panel padding, the column width, the
  * squad row height, the content height the three slides lay out inside - is
- * derived from it. Nothing below reads `BOARD_WIDTH` for layout any more, which
+ * derived from it. Nothing below reads `DESIGN_WIDTH` for layout any more, which
  * is the property that was missing: the columns used to be computed to fit
  * `1280 - 32` to the pixel, which is precisely why content ran to the very edge.
  *
@@ -1226,11 +1545,11 @@ const GUTTER = 12
  * a black frame around it would read as a mistake from the first glance.
  */
 export const SAFE_INSET = 0.07
-export const SAFE_X = Math.round(BOARD_WIDTH * SAFE_INSET)
-export const SAFE_Y = Math.round(BOARD_HEIGHT * SAFE_INSET)
+export const SAFE_X = Math.round(DESIGN_WIDTH * SAFE_INSET)
+export const SAFE_Y = Math.round(DESIGN_HEIGHT * SAFE_INSET)
 
-export const INNER_WIDTH = BOARD_WIDTH - 2 * SAFE_X
-export const INNER_HEIGHT = BOARD_HEIGHT - 2 * SAFE_Y
+export const INNER_WIDTH = DESIGN_WIDTH - 2 * SAFE_X
+export const INNER_HEIGHT = DESIGN_HEIGHT - 2 * SAFE_Y
 
 /**
  * The title band, and what is left under it for the slide itself.
@@ -1276,13 +1595,17 @@ export function columnWidth(columns: number): number {
 const ROW_H = 88
 const HEAD_H = 58
 /**
- * 497 IS 55 + 5x88 + 2 AND IT IS EXACT: the header with its dividing border,
- * five rows, and the card's own top and bottom border. It was 501 while the card
- * wore a 4px accent bar; that bar is gone (see THE COLOR, below) and the four
- * pixels went with it rather than being left as a strip of empty card under the
- * fifth row that reads as a missing sixth.
+ * THE HEADER, FIVE ROWS, AND THE CARD'S OWN TOP AND BOTTOM BORDER, EXACTLY.
+ *
+ * `+ 2 * EDGE_PX` AND IT USED TO BE `+ 2`, which is this pass's one real
+ * re-layout. The card is `border-box`, so its own border comes out of its
+ * height: at a 1px edge the card was 500 and at a 3px edge it is 504, and
+ * leaving the literal would have taken four pixels off the fifth row inside a
+ * card whose overflow is hidden - the fifth row clipped, on a wall, with nothing
+ * here failing. `.card h2`'s `line-height` is the same correction one element
+ * down.
  */
-const CARD_H = HEAD_H + TOP_N * ROW_H + 2
+const CARD_H = HEAD_H + TOP_N * ROW_H + 2 * EDGE_PX
 
 /** How long one card or tile takes to arrive. See `transitionStyles`. */
 const CARD_MS = 420
@@ -1393,33 +1716,52 @@ function categoryStyles(
     linear-gradient(178deg, ${t.tileTop} 0%, ${t.mid} 52%, ${PALETTE.deep} 100%);
 }
 .c-${key} .tlabel { color: ${accent}; }
-.c-${key} .tval { color: ${t.bright}; }
-.c-${key} .mlabel { color: ${accent}; }`
+.c-${key} .tval { color: ${t.bright}; }`
     })
     .join('\n')
 }
 
 /**
- * One rule per squad row, in that mate's own blip color.
+ * One squad mate's CARD, in that mate's own blip color.
  *
- * INDEXED BY POSITION ON THE SLIDE AND COLORED BY THE GAME'S INDEX. The class
- * is `sqc-<row>` because a stylesheet needs a selector and the row is what the
- * markup can name; the COLOR in it came from `squadColors`, which derived it
- * the way the game does. The two indexes are deliberately not the same number
- * and must not be confused: the rows are sorted by name and the colors by
- * server id.
+ * ═══ HE THREW OUT THE COLUMNS AND KEPT THE COLOR, WHICH ARE TWO DIFFERENT
+ *     NOTES ═══
  *
- * TWO CLASSES DEEP (`.mate.sqc-0`) SO IT CAN WIN. `.mate.you` sets the
- * `background` shorthand, which zeroes `background-image`; a single-class rule
- * would lose to it on specificity no matter where it sat, and the viewer's own
- * row would be the one row on the slide with no color on it.
+ * Owner, 2026-09-11: "The squads page ... the column font colors are just....
+ * too much lol. I prefer cards for each of the players please."
  *
- * AND WINNING IS WHY THE HIGHLIGHT IS REPEATED IN HERE. The rule below paints an
- * OPAQUE vertical ramp under the wash, which covers whatever fill it landed on -
- * so the viewer's row was coming out identical to everybody else's, which is the
- * one row that must not. The ramp is therefore built from the highlight's own
- * slate when the mate is the viewer. It is the same cue as the leaderboard's,
- * expressed where it cannot be overwritten.
+ * WHAT HE IS REJECTING IS NOT THE BLIP COLOR. `7112db1` painted each squad ROW
+ * and each NAME in that mate's blip color, and put the five category headings
+ * across the top in five category accents. So a slide with four people on it
+ * carried nine colored strings of TEXT in a table, which is the same "just
+ * coloring the text" he has now objected to three separate times.
+ *
+ * AND THE BLIP COLOR IS THE ONE COLOR ON THIS BOARD WE DID NOT CHOOSE. It is
+ * `BR.SquadColours` - what is on that person's minimap blip, their destination
+ * marker and its world beam - so a card painted in it makes a claim the player
+ * can check by glancing at their own minimap. Throwing it out with the layout
+ * would have answered a different note than the one he wrote.
+ *
+ * ═══ SO IT IS CARRIED THE WAY A CARD CARRIES COLOR, WHICH IS `categoryStyles`
+ *     ═══
+ *
+ * This function is deliberately the same shape as the one above it, with the
+ * blip color where a category's accent goes: the card's whole fill ramps from a
+ * tinted top to near black, a wide glow bleeds down from above its top edge, the
+ * name band takes the same hue, and the viewer's card takes the inventory's
+ * focus edge in their own color. Every derived value comes from the same
+ * `tone()` the leaderboard uses, so the two slides are one board.
+ *
+ * ⚠ AND NOT ONE PIECE OF TYPE ON THE CARD IS PAINTED IN IT. The name is
+ * `PALETTE.text` on the tinted band and every label and value under it is the
+ * neutral the leaderboard uses. That is the whole correction: the color is the
+ * object, not the writing on it.
+ *
+ * `sq-<row>` ON THE COLUMN AND NOT ON THE CARD, matching `c-<key>`, so both
+ * families are a class on the wrapper and a descendant selector on what it
+ * paints. The row index is the slide's ordering (by name) and the COLOR came
+ * from `squadColors`, which is the game's ordering (by server id); the two are
+ * deliberately different numbers and must not be confused.
  */
 function squadStyles(
   mates: ReadonlyArray<{ color: string | null; you: boolean }>,
@@ -1428,33 +1770,167 @@ function squadStyles(
     .map((mate, i) => {
       if (!mate.color) return ''
       const c = mate.color
-      const base = mate.you ? PALETTE.you : PALETTE.card
+      const t = tone(c)
       /**
-       * THE VIEWER'S OWN ROW TAKES THE INVENTORY'S FOCUS EDGE IN THEIR OWN BLIP
+       * THE VIEWER'S OWN CARD TAKES THE INVENTORY'S FOCUS EDGE IN THEIR OWN BLIP
        * COLOR. Everywhere else on the board that edge is the CATEGORY's light,
-       * because the row belongs to a category; on this slide a row belongs to a
-       * PERSON, and the one color that is already theirs is the one on the
+       * because the surface belongs to a category; on this slide a card belongs
+       * to a PERSON, and the one color that is already theirs is the one on the
        * minimap. Mixed 42% toward white by the same rule `tone().bright` uses,
        * so a dark blip color still reads as a lit edge rather than as a border
        * that failed to paint.
        */
-      const focus = mate.you ? `\n  --edgec: ${mix(c, '#ffffff', 0.42)};` : ''
+      const focus = mate.you
+        ? `
+.sq-${i} .card.you {
+  --edgec: ${t.bright};
+  background-image: linear-gradient(90deg,
+    ${rgba(c, 0.3)} 0%,
+    ${rgba(c, 0.12)} 44%,
+    ${rgba(c, 0.04)} 76%,
+    ${rgba(c, 0)} 100%),
+    radial-gradient(340px 220px at 50% -8%,
+      ${rgba(c, 0.26)} 0%,
+      ${rgba(c, 0.06)} 55%,
+      ${rgba(c, 0)} 100%),
+    linear-gradient(176deg, ${t.youTop} 0%, ${mix(PALETTE.you, c, 0.12)} 46%, ${PALETTE.deep} 100%);
+}`
+        : ''
       return `
-.mate.sqc-${i} {${focus}
+.sq-${i} .card {
   background-image:
-    linear-gradient(90deg,
-      ${rgba(c, 0.12)} 0%,
-      ${rgba(c, 0.07)} 30%,
-      ${rgba(c, 0.03)} 58%,
-      ${rgba(c, 0)} 80%),
-    linear-gradient(176deg,
-      ${mix(base, '#ffffff', 0.055)} 0%,
-      ${base} 50%,
-      ${mix(base, PALETTE.deep, mate.you ? 0.45 : 1)} 100%);
+    linear-gradient(180deg,
+      rgba(255, 255, 255, 0.10) 0%,
+      rgba(255, 255, 255, 0.015) 46%),
+    radial-gradient(340px 220px at 50% -8%,
+      ${rgba(c, 0.26)} 0%,
+      ${rgba(c, 0.06)} 55%,
+      ${rgba(c, 0)} 100%),
+    linear-gradient(176deg, ${t.top} 0%, ${t.mid} 46%, ${PALETTE.deep} 100%);
 }
-.mate.sqc-${i} .mname { color: ${c}; }`
+/* THE NAME BAND, AT THE LEADERBOARD'S OWN 0.14 AND NOT AT A NUMBER PICKED HERE.
+   That stop came out of the contrast gate rather than out of taste - at 0.22 the
+   band was handsome and three of six labels measured under the floor on it - and
+   a squad mate's blip color is drawn from a palette of eight LIGHT saturated
+   colors, which is the harder case of the two. The name on it is PALETTE.text,
+   measured against this exact composite in contrastPairs. */
+.sq-${i} .card h2 {
+  background-image: linear-gradient(180deg,
+    ${rgba(c, 0.14)} 0%,
+    ${rgba(c, 0.06)} 58%,
+    ${rgba(c, 0.01)} 100%);
+}${focus}`
     })
     .join('\n')
+}
+
+/**
+ * ═══ EACH SLIDE'S OWN LIGHT, AND THE ONE THAT IS PINNED ═══
+ *
+ * Owner, 2026-09-11: "Stop using the same boring colors on each page. Change the
+ * colors between the pages please". And then, narrowing it: "I like the colors
+ * on the player stats page. Keep those and change the rest".
+ *
+ * ═══ HOW PLAYER STATS IS HELD STILL, WHICH IS A STRUCTURAL ANSWER AND NOT A
+ *     PROMISE ═══
+ *
+ * The three slides shared one background: `.wash`, `.vig` and the moving layers
+ * sit UNDER all three panels, and every panel was transparent. So recoloring
+ * "the background" would have recolored the one slide he asked to keep.
+ *
+ * THE IDENTITY IS THEREFORE A PANEL-LEVEL WASH AND `#player` HAS NO RULE AT ALL.
+ * Not a neutral rule, not a rule that happens to evaluate to what it was: the
+ * function below emits nothing for it. The per-player slide's pixels are the
+ * shared wash exactly as before, and there is no shared token that a change to
+ * the other two can move, because the other two do not change any token - they
+ * each add a layer of their own on top of the common floor. `scoreboard.check.ts`
+ * asserts that no `#player` selector exists anywhere in the document, which is
+ * the assertion that would fail the day somebody "tidies" this into three cases.
+ *
+ * AND IT IS TRANSLUCENT ON PURPOSE. An opaque panel fill would hide the orbs,
+ * sweeps and motes behind it, which is the animated background the owner asked
+ * for two passes ago. These are lights laid over it, not a replacement for it.
+ *
+ * ═══ LEADERBOARD: LEGENDARY AMBER, AND IT SITS UNDER THE CATEGORIES ═══
+ *
+ * `BR.RarityInfo`'s legendary `#FFB020`. A leaderboard is the one surface in the
+ * warmup area that is about being the best at something, and legendary is the
+ * game's own word for that; it is also the furthest from the cool cyan-teal the
+ * per-player slide keeps, so the two do not read as the same page.
+ *
+ * IT CANNOT COMPETE WITH THE CATEGORY COLORS AND IT DOES NOT HAVE TO. The five
+ * or six cards are opaque - a `background-color` under their gradients - so this
+ * light only reaches the margins, the gutters and the band around the title. The
+ * information on this slide is which card is which color, and none of it is
+ * painted on anything this touches.
+ *
+ * ═══ SQUAD: THE MATES' OWN BLIP COLORS, WHICH ARE ALREADY ITS PALETTE ═══
+ *
+ * One soft light per person, in their blip color, positioned across the panel in
+ * the order their cards are. So the slide's identity is literally the people on
+ * it: a different squad is a different colored page, a solo lobby never sees it,
+ * and it agrees with the minimap the player is already looking at. Nothing about
+ * it was chosen here.
+ *
+ * WHEN THE COLORS CANNOT BE DERIVED THERE IS NO WASH. `squadColors` is all or
+ * nothing - one mate missing a server id and every index after them would be one
+ * seat out - and a squad slide with invented lights would be the same lie in a
+ * different property. It falls back to the shared background, like the
+ * per-player slide.
+ *
+ * NO PURPLE IN ANY OF IT. `br_lib/shared/enums.lua`: "NEVER PURPLE, in any slot:
+ * purple belongs to the storm alone." Amber is not near it, and the eight squad
+ * colors do not contain one.
+ */
+function slideStyles(
+  mates: ReadonlyArray<{ color: string | null; you: boolean }>,
+): string {
+  const board = `
+#board {
+  background-image:
+    radial-gradient(1180px 540px at 50% -16%,
+      ${rgba(LEGENDARY, 0.22)} 0%,
+      ${rgba(LEGENDARY, 0.07)} 46%,
+      ${rgba(LEGENDARY, 0)} 100%),
+    radial-gradient(720px 420px at 3% 106%,
+      ${rgba(LEGENDARY, 0.12)} 0%,
+      ${rgba(LEGENDARY, 0)} 100%),
+    radial-gradient(720px 420px at 97% 106%,
+      ${rgba(LEGENDARY, 0.12)} 0%,
+      ${rgba(LEGENDARY, 0)} 100%),
+    linear-gradient(180deg,
+      rgba(26, 15, 2, 0.62) 0%,
+      rgba(12, 7, 1, 0.34) 58%,
+      rgba(0, 0, 0, 0) 100%);
+}`
+
+  const colors = mates.map((m) => m.color).filter((c): c is string => Boolean(c))
+  if (colors.length === 0) return board
+
+  /**
+   * ONE LIGHT PER PERSON, CENTERED ON WHERE THEIR CARD IS. `(i + 0.5) / n` is
+   * the middle of their column, so the wash behind a card is that card's own
+   * color rather than a gradient that happens to pass nearby.
+   */
+  const lights = colors
+    .map((c, i) => {
+      const at = Math.round(((i + 0.5) / colors.length) * 1000) / 10
+      return `    radial-gradient(560px 520px at ${at}% 46%,
+      ${rgba(c, 0.2)} 0%,
+      ${rgba(c, 0.06)} 52%,
+      ${rgba(c, 0)} 100%)`
+    })
+    .join(',\n')
+
+  return `${board}
+#squad {
+  background-image:
+${lights},
+    linear-gradient(180deg,
+      rgba(3, 7, 13, 0.58) 0%,
+      rgba(2, 4, 8, 0.30) 58%,
+      rgba(0, 0, 0, 0) 100%);
+}`
 }
 
 /**
@@ -1491,23 +1967,81 @@ function squadStyles(
 function styles(input: {
   motion: MotionLevel
   phases: readonly number[]
+  /** The most columns any one track RENDERS, which is not how many slots there are. */
   columns: number
-  squadRows: number
+  /** How many of them are on screen at once. See `SLOTS`. */
+  slots: number
+  /** How many DISTINCT cards the leaderboard has, and 0 when it does not drift. */
+  boardScroll: number
+  /** How many DISTINCT tiles the per-player slide has, and 0 when it does not drift. */
+  tileScroll: number
+  /** How many stat rows one squad card lists: one per category on the slide. */
+  squadStats: number
   /** Every category on screen, deduplicated, in catalog order. */
   categories: ReadonlyArray<{ key: string; accent: string }>
-  /** The squad rows, in the order they are rendered. See `squadStyles`. */
+  /** The squad cards, in the order they are rendered. See `squadStyles`. */
   mates: ReadonlyArray<{ color: string | null; you: boolean }>
 }): string {
-  const { motion, phases, columns, squadRows, categories, mates } = input
-  const w = columnWidth(columns)
+  const { motion, phases, columns, slots, boardScroll, tileScroll, squadStats, categories, mates } = input
+  const w = columnWidth(slots)
+
+  /** The squad's own column arithmetic: one card per mate, across the safe area. */
+  const mw = columnWidth(Math.max(mates.length, 1))
+  const mateRowH = mateStatRowHeight(squadStats)
+  const mateCardH = mateCardHeight(squadStats)
 
   return `
 ${faces()}
-html, body {
+/* ── THE ONE DECLARATION THAT TURNS A 1280x720 DESIGN INTO A 1920x1080 TEXTURE
+   ─────────────────────────────────────────────────────────────────────────────
+   Owner, 2026-09-11: "what resolution are we using for the DUI right now? If
+   it's still 720p can we bump it to 1080p or 1440p?" ... "Yeah let's go 1080p"
+
+   WHAT HE ASKED FOR IS A SHARPER BOARD, NOT A SMALLER ONE, and those are what
+   the two obvious implementations produce. This page has no responsive layout
+   and every number on it is an absolute pixel, so simply raising the surface to
+   1920x1080 would leave every type size, gutter and border at two thirds of the
+   share of the screen it has now: the board he approved, rendered small, with a
+   band of empty background around it.
+
+   SO THE LAYOUT STAYS IN THE PIXELS IT WAS JUDGED IN and the document is scaled
+   to the surface. Everything below is authored in DESIGN_WIDTH x DESIGN_HEIGHT
+   and this multiplies all of it by BOARD_WIDTH / DESIGN_WIDTH.
+
+   'zoom' AND NOT 'transform: scale()', AND THE DIFFERENCE IS THE WHOLE POINT. A
+   transform is a compositor operation: Blink may raster the subtree at 1x and
+   stretch the result, which is exactly the upscaled-720p softness the owner is
+   asking to be rid of. 'zoom' is a LAYOUT scale - the document is laid out and
+   every glyph is rasterized at the scaled size - so the type is genuinely drawn
+   at ${UI_SCALE}x. It is the oldest non-standard property in the engine and has
+   worked since long before CEF 103, which is the other half of why it is safe
+   here: nothing about it is a 2022-era feature.
+
+   AND THE ASPECT RATIO MUST MATCH OR THIS IS A LIE. One zoom cannot satisfy two
+   different ratios, and a mismatch would run content off one axis with nothing
+   raising an error. scoreboard.check.ts asserts the two are equal, and 1440p is
+   this same constant again. */
+html {
   margin: 0;
   padding: 0;
-  width: ${BOARD_WIDTH}px;
-  height: ${BOARD_HEIGHT}px;
+  width: ${DESIGN_WIDTH * UI_SCALE}px;
+  height: ${DESIGN_HEIGHT * UI_SCALE}px;
+  overflow: hidden;
+  background: ${PALETTE.page};
+}
+/* THE ZOOM IS ON THE BODY AND NOT ON THE ROOT, WHICH IS NOT A STYLE CHOICE. A
+   'zoom' on the root element scales the root's CONTENTS but leaves the initial
+   containing block alone, so an 'html' sized in design pixels paints a design
+   sized document in the corner of the surface with the rest left black - which
+   is exactly what it did the first time this was rendered and looked at. The
+   root therefore carries the REAL surface size, and the body carries the design
+   size and the scale that turns one into the other. */
+body {
+  margin: 0;
+  padding: 0;
+  zoom: ${UI_SCALE};
+  width: ${DESIGN_WIDTH}px;
+  height: ${DESIGN_HEIGHT}px;
   overflow: hidden;
   background: ${PALETTE.page};
   color: ${PALETTE.text};
@@ -1542,8 +2076,8 @@ html, body {
   position: absolute;
   top: 0;
   left: 0;
-  width: ${BOARD_WIDTH}px;
-  height: ${BOARD_HEIGHT}px;
+  width: ${DESIGN_WIDTH}px;
+  height: ${DESIGN_HEIGHT}px;
   background-image:
     radial-gradient(900px 620px at 10% -14%,
       ${rgba(PALETTE.cyan, 0.2)} 0%,
@@ -1569,8 +2103,8 @@ html, body {
   position: absolute;
   top: 0;
   left: 0;
-  width: ${BOARD_WIDTH}px;
-  height: ${BOARD_HEIGHT}px;
+  width: ${DESIGN_WIDTH}px;
+  height: ${DESIGN_HEIGHT}px;
   background-image:
     radial-gradient(120% 108% at 50% 42%,
       rgba(0, 0, 0, 0) 36%,
@@ -1596,8 +2130,8 @@ ${motion === 'full' ? driftStyles(phases) : ''}
   position: absolute;
   top: 0;
   left: 0;
-  width: ${BOARD_WIDTH}px;
-  height: ${BOARD_HEIGHT}px;
+  width: ${DESIGN_WIDTH}px;
+  height: ${DESIGN_HEIGHT}px;
   box-sizing: border-box;
   /* THE SAFE AREA. Not a margin taste: the prop's bezel crops the page and this
      is how much of it. One constant, and every other number on the slide is
@@ -1645,7 +2179,7 @@ ${motion === 'full' ? driftStyles(phases) : ''}
   height: ${TITLE_H}px;
   margin: 0 0 ${TITLE_GAP}px 0;
   padding: 0 0 10px 0;
-  border-bottom: 1px solid ${PALETTE.edge};
+  border-bottom: ${EDGE_PX}px solid ${PALETTE.edge};
   font-family: ${DISPLAY};
   font-size: 40px;
   font-weight: 400;
@@ -1657,16 +2191,26 @@ ${motion === 'full' ? driftStyles(phases) : ''}
   overflow: hidden;
 }
 
-${motion === 'off' ? '' : transitionStyles(columns)}
+${motion === 'off' ? '' : transitionStyles(columns, slots)}
 
 /* ── THE LEADERBOARD ─────────────────────────────────────────────────────── */
 .cards {
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: ${GUTTER}px;
   width: 100%;
   height: ${CONTENT_HEIGHT}px;
+}
+/* THE TRACK IS ALWAYS IN THE DOCUMENT AND USUALLY DOES NOTHING. It is a plain
+   centered flex row of columns at five categories or fewer, which is byte for
+   byte the layout the board has always had; marqueeStyles adds the animation and
+   the window when there are more slots' worth of cards than there are slots. One
+   structure rather than two means the still case and the moving case cannot
+   drift apart. */
+.track {
+  display: flex;
+  align-items: center;
+  gap: ${GUTTER}px;
 }
 .col { width: ${w}px; }
 /* ── A CARD IS AN OBJECT, NOT A RECTANGLE WITH TEXT IN IT ─────────────────────
@@ -1715,7 +2259,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
    that recolours its edge can never end up with a mismatched diagonal. Recolour
    the variable, never the border." The viewer's row below is exactly such a
    component, and this is the seam it recolors. */
-.card, .tile, .mate {
+.card, .tile {
   --edgec: ${PALETTE.edge};
   /* br_ui's --cut-max at a 16px root. The bevel a focused surface OPENS to; a
      surface at rest is perfectly square and does not carry a clip-path at all. */
@@ -1734,7 +2278,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
       ${mix(PALETTE.card, '#ffffff', 0.06)} 0%,
       ${PALETTE.card} 42%,
       ${PALETTE.deep} 100%);
-  border: 1px solid var(--edgec);
+  border: ${EDGE_PX}px solid var(--edgec);
   border-radius: 0;
   overflow: hidden;
   box-shadow:
@@ -1752,7 +2296,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   box-sizing: border-box;
   height: ${HEAD_H}px;
   padding: 0 12px;
-  line-height: ${HEAD_H - 1}px;
+  line-height: ${HEAD_H - EDGE_PX}px;
   font-family: ${DISPLAY};
   /* SCALED WITH THE COLUMN, WITH A FLOOR, WHICH IS THE SAME TRICK '.tval' USES
      AND FOR THE SAME REASON. "MOST REVIVES GIVEN" is eighteen characters and it
@@ -1765,7 +2309,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   font-weight: 400;
   letter-spacing: 0.05em;
   color: ${PALETTE.label};
-  border-bottom: 1px solid ${PALETTE.edge};
+  border-bottom: ${EDGE_PX}px solid ${PALETTE.edge};
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1795,12 +2339,18 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   box-sizing: border-box;
 }
 /* THE ROW RULES ARE INSET SHADOWS AND NOT BORDERS, which is arithmetic rather
-   than taste: CARD_H is the header plus five rows to the pixel, and four 1px
-   top borders would push the fifth row four pixels past the bottom of a card
-   that cannot scroll. An inset shadow paints in the same place and takes no
-   layout. */
+   than taste: CARD_H is the header plus five rows to the pixel, and four real
+   top borders would push the fifth row past the bottom of a card that cannot
+   scroll. An inset shadow paints in the same place and takes no layout.
+
+   IT IS STILL EDGE_PX THICK, BECAUSE IT IS A BORDER IN EVERY SENSE THAT MATTERS
+   TO A VIEWER. "Triple the border thickness on everything that has borders" is
+   about what the board looks like, and a card whose outline tripled while the
+   four rules inside it stayed hairlines is a card that lost its rows. The
+   property it is written in is an implementation detail of the arithmetic
+   above. */
 .card li + li {
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 ${EDGE_PX}px 0 rgba(255, 255, 255, 0.05);
 }
 .pos {
   width: 21px;
@@ -1873,7 +2423,10 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
      both diagonals as well, so each cut corner would read as an unfinished edge.
      br_ui draws them back with two pseudo-elements carrying a 45deg gradient
      that is transparent, then 1.2px of '--edgec', then transparent. The same
-     gradient, the same 0.6px half-width, is below.
+     gradient is below, at the same RATIO to the border rather than at the same
+     literal: the owner asked for triple thickness "on everything that has
+     borders", and two hairline diagonals left on a surface with three-pixel
+     edges is a focused row whose cut corners look unfinished. See EDGE_PX.
 
      THE EDGE BRIGHTENS. '--edgec: active ? '#ffffff' : hex' - the rarity color
      at rest, white when focused. This board has no rest state to contrast
@@ -1899,12 +2452,12 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
    here is interactive. The game animates 'clip-path' between the two states and
    needs both to exist; this page has no transition to run, so an unfocused row
    pays for no clip at all. */
-.card li.you, .mate.you {
+.card li.you, .card.you {
   --edgec: ${FOCUS_EDGE};
   --cut: var(--cut-max);
   position: relative;
   background: ${PALETTE.you};
-  border: 1px solid var(--edgec);
+  border: ${EDGE_PX}px solid var(--edgec);
   clip-path: polygon(
     0 0,
     calc(100% - var(--cut)) 0,
@@ -1914,19 +2467,19 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
     0 calc(100% - var(--cut)));
 }
 .card li.you::after, .card li.you::before,
-.mate.you::after, .mate.you::before {
+.card.you::after, .card.you::before {
   content: '';
   position: absolute;
   width: var(--cut);
   height: var(--cut);
   background-image: linear-gradient(45deg,
-    rgba(0, 0, 0, 0) calc(50% - 0.6px),
-    var(--edgec) calc(50% - 0.6px),
-    var(--edgec) calc(50% + 0.6px),
-    rgba(0, 0, 0, 0) calc(50% + 0.6px));
+    rgba(0, 0, 0, 0) calc(50% - ${CHAMFER_HALF}px),
+    var(--edgec) calc(50% - ${CHAMFER_HALF}px),
+    var(--edgec) calc(50% + ${CHAMFER_HALF}px),
+    rgba(0, 0, 0, 0) calc(50% + ${CHAMFER_HALF}px));
 }
-.card li.you::after, .mate.you::after { top: 0; right: 0; }
-.card li.you::before, .mate.you::before { bottom: 0; left: 0; }
+.card li.you::after, .card.you::after { top: 0; right: 0; }
+.card li.you::before, .card.you::before { bottom: 0; left: 0; }
 .card li.you .pos { color: ${PALETTE.youMuted}; }
 .card li.you {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
@@ -1975,7 +2528,6 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   display: flex;
   justify-content: center;
   align-items: center;
-  gap: ${GUTTER}px;
   width: 100%;
   height: 300px;
   margin-top: 28px;
@@ -1999,7 +2551,7 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
       ${mix(PALETTE.card, '#ffffff', 0.06)} 0%,
       ${PALETTE.card} 44%,
       ${PALETTE.deep} 100%);
-  border: 1px solid var(--edgec);
+  border: ${EDGE_PX}px solid var(--edgec);
   border-radius: 0;
   overflow: hidden;
   box-shadow:
@@ -2059,189 +2611,232 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
    Owner: "Let's also add a slide when in squads where the player will get to see
    the stats of their squad mates!"
 
-   ONE ROW PER MATE AND ONE HEADING ROW ABOVE THEM, rather than one card per
-   mate. A card each would be four copies of the same five labels; a table is
-   four names and their numbers under one set of headings, which is what somebody
-   standing on a pad comparing themselves to three team mates is actually
-   reading.
+   ═══ IT WAS A TABLE AND IT IS FOUR CARDS, ON HIS OWN NOTE ═══
 
-   THE ROW HEIGHT IS COMPUTED AND CAPPED. A squad of two in a 688px panel would
-   otherwise give two 300px slabs; the cap keeps a pair looking like a pair. The
-   floor is the arithmetic: at the game's maximum squad of four there is
-   ${squadRows} of them here and they fit with the gutters. */
+   Owner, 2026-09-11: "the column font colors are just.... too much lol. I prefer
+   cards for each of the players please."
+
+   THE OLD SHAPE AND WHY IT LOST. One full-width row per mate under one heading
+   row, on the reasoning that a card each "would be four copies of the same five
+   labels". The cost of avoiding that repetition was five category-colored
+   headings across the top and four blip-colored names down the left, which is
+   nine colored strings of text on one slide - and "just coloring the text" is
+   the note he has now written three times.
+
+   A CARD PER PERSON IS ALSO THE TRUER SHAPE. This slide's subject is PEOPLE and
+   the leaderboard's is categories, and the leaderboard already says what an
+   object about one subject looks like on this board: a header band naming it and
+   its numbers listed under it. So a squad card is literally the leaderboard's
+   own '.card' with the mate's name in the h2 and one row per category - the same
+   element, the same border, the same sheen, the same square corners, the same
+   entrance. Repeating five labels four times is what a card layout IS, and it is
+   what makes four people comparable at a glance.
+
+   THE COLOR MOVED FROM THE TYPE TO THE OBJECT. See squadStyles: the card's fill
+   and its name band are the mate's blip color and not one word on it is. */
 .squad {
   display: flex;
-  flex-direction: column;
   justify-content: center;
+  align-items: center;
+  gap: ${GUTTER}px;
   height: ${CONTENT_HEIGHT}px;
 }
-.shead {
-  display: flex;
-  align-items: center;
-  height: ${SQUAD_HEAD_H}px;
-  margin-bottom: ${GUTTER}px;
-}
-.smates {
-  display: flex;
-  flex-direction: column;
-  gap: ${GUTTER}px;
-}
-/* A MATE'S ROW IS PAINTED IN THE COLOUR THEIR BLIP IS, which is the one place
-   on this board where the color is not a decision this console made. See
-   squadColors in lib/scoreboard.ts: it reproduces BR.Party.memberIndex
-   from the server ids in the live snapshot, so the row for the player whose
-   marker is orange is orange. The tint is a left-to-right wash that fades out
-   before the numbers, so it identifies the row without sitting under the
-   figures.
+/* ONE COLUMN PER MATE, SIZED BY THE SAME ARITHMETIC THE LEADERBOARD USES. The
+   game's own maximum squad is four (BR.Config.Match.maxSquadSize) and
+   SQUAD_MAX_ROWS guards six, so this divides the safe area the way columnWidth
+   divides it for cards - which is the function that exists precisely so a count
+   nobody anticipated cannot push a column off a surface that cannot scroll. */
+.sqcol { width: ${mw}px; }
+/* A MATE'S CARD IS A LEADERBOARD CARD WITH A PERSON ON IT. Everything structural
+   comes from '.card' above; these are the three things that are its own.
 
-   THE NEUTRAL BELOW IS THE FALLBACK AND IT IS A REAL ONE. When the ordering
-   cannot be reproduced - one mate's server id missing from the snapshot - every
-   row renders in this grey rather than in colors that might be one seat out.
-   Four wrong colors is worse than none: the whole claim of the slide is that
-   these are the people beside you. */
+   ITS HEIGHT IS DERIVED FROM THE CATEGORY COUNT rather than from TOP_N, because
+   a squad card lists one row per CATEGORY and a leaderboard card lists TOP_N
+   players. Five categories and five ranks happen to be the same number today and
+   stopped being so the moment BIGGEST SPENDERS was switched on. See mateCardH.
+
+   IT IS TALLER IN THE HEAD, because the header is somebody's NAME rather than a
+   category label, and a name is the card's whole identity on this slide. */
 .mate {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  height: ${squadRowHeight(squadRows)}px;
-  background-color: ${PALETTE.card};
-  background-image:
-    linear-gradient(180deg,
-      rgba(255, 255, 255, 0.10) 0%,
-      rgba(255, 255, 255, 0.015) 46%),
-    linear-gradient(176deg,
-      ${mix(PALETTE.card, '#ffffff', 0.055)} 0%,
-      ${PALETTE.card} 50%,
-      ${PALETTE.deep} 100%);
-  border: 1px solid var(--edgec);
-  border-radius: 0;
-  overflow: hidden;
-  box-shadow:
-    0 10px 22px rgba(0, 0, 0, 0.42),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  width: ${mw}px;
+  height: ${mateCardH}px;
 }
 /* A NEARLY COLLAPSED LINE BOX, BECAUSE ANTON'S LINE BOX IS NOT ITS INK. The face
-   carries a deep descent, so a name in a row centered by align-items sits
-   visibly high in it: the box is centered and the letters are not. Collapsing
-   the line box toward the type size puts the glyphs where the row's middle is.
+   carries a deep descent, so a name centered by its LINE BOX sits visibly high
+   in its band: the box is centered and the letters are not. Flex centering with
+   a collapsed line box puts the glyphs where the middle is.
 
    1.2 AND NOT 1, AND THE DIFFERENCE IS A WHOLE CHARACTER. At exactly 1 the line
    box is the type size, 'overflow: hidden' clips at its bottom edge, and every
    glyph that descends below the baseline loses its tail - which on a display
    face is not an aesthetic nicety: an UNDERSCORE is entirely below the baseline,
    and 'Hollowpoint_77' rendered as 'Hollowpoint 77' on the squad slide. Player
-   names are full of underscores. 1.2 restores the descender and moves the glyphs
-   by a pixel. */
-.mname {
-  flex: 0 0 320px;
-  min-width: 0;
-  padding: 0 22px;
-  box-sizing: border-box;
-  font-family: ${DISPLAY};
-  font-size: ${squadNameSize(squadRowHeight(squadRows))}px;
-  line-height: 1.2;
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mcells {
-  flex: 1 1 auto;
+   names are full of underscores.
+
+   AND THE NAME IS PALETTE.text, WHICH IS THE WHOLE POINT OF THIS PASS. The blip
+   color is on the band behind it and on the card's fill. See squadStyles. */
+.mate h2 {
   display: flex;
-  min-width: 0;
+  align-items: center;
+  height: ${MATE_HEAD_H}px;
+  line-height: 1.2;
+  font-size: ${mateNameSize(mw)}px;
+  letter-spacing: 0.01em;
+  color: ${PALETTE.text};
 }
-.mcell {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 0 6px;
+/* THE STAT ROW. Label left, number right, the same shape as a leaderboard row
+   with the rank numeral taken off - there is no ranking on this slide, only five
+   or six things one person has done. */
+.mate li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: ${mateRowH}px;
+  padding: 0 14px;
   box-sizing: border-box;
-  text-align: center;
-  overflow: hidden;
 }
+.mate li + li {
+  box-shadow: inset 0 ${EDGE_PX}px 0 rgba(255, 255, 255, 0.05);
+}
+/* NEUTRAL, AND DELIBERATELY NOT THE CATEGORY'S ACCENT. Five accents on each of
+   four cards is twenty colored words, which is the thing he threw out with more
+   steps. The categories are in a fixed order and read down every card
+   identically; what distinguishes one card from another is whose it is. */
 .mlabel {
+  flex: 1 1 auto;
+  min-width: 0;
   font-family: ${DISPLAY};
-  font-size: 17px;
+  font-size: ${mateLabelSize(mw)}px;
   font-weight: 400;
   letter-spacing: 0.05em;
+  color: ${PALETTE.label};
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .mval {
+  flex: 0 0 auto;
+  padding-left: 8px;
   font-family: ${DISPLAY};
-  font-size: ${squadValueSize(squadRowHeight(squadRows))}px;
+  font-size: ${mateValueSize(mateRowH)}px;
   font-weight: 400;
-  line-height: 1;
   letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  overflow: hidden;
 }
-.mate.you {
-  box-shadow:
-    0 10px 22px rgba(0, 0, 0, 0.42),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+/* THE VIEWER'S OWN CARD LIFTS ITS LABELS TO FULL WHITE, AND THE GATE CHOSE THAT
+   RATHER THAN TASTE. 'PALETTE.youMuted' is the brighter grey that exists for
+   exactly this surface on the leaderboard, and on a squad card it measured
+   between 3.88 and 4.40 against four of the eight blip colors - under the floor,
+   on the one card the owner asked to be MORE visible. The fill it sits on is the
+   highlight slate with a light saturated color mixed 30% into it, which is the
+   lightest surface anywhere on this board; there is no grey that survives it.
+   White does, on all eight, and the label/value hierarchy is carried by size and
+   position here the way it is on a leaderboard row the viewer owns. */
+.mate.you .mlabel { color: ${PALETTE.text}; }
+
+${
+  boardScroll > 0
+    ? marqueeStyles({
+        panel: '#board',
+        window: '.cards',
+        name: 'marqueeBoard',
+        count: boardScroll,
+        w,
+      })
+    : ''
+}
+${
+  tileScroll > 0
+    ? marqueeStyles({
+        panel: '#player',
+        window: '.tiles',
+        name: 'marqueeTiles',
+        count: tileScroll,
+        w,
+      })
+    : ''
 }
 
 /* ── THE COLOR ───────────────────────────────────────────────────────────────
    LAST IN THE SHEET ON PURPOSE. Everything above is the neutral board: the
    shapes, the type, the depth and the layout, all of which are true whatever a
-   category is called. These two blocks paint it, and they come last so a
+   category is called. These blocks paint it, and they come last so a
    single-class rule like .c-wins .card lands on top of .card without either
    of them having to reach for a specificity trick. */
 ${categoryStyles(categories)}
 ${squadStyles(mates)}
+${slideStyles(mates)}
 `.trim()
 }
 
 /**
- * How tall one squad row is, for a squad of this size.
+ * ═══ HOW A SQUAD CARD IS SIZED, AND WHY IT DIVIDES CATEGORIES RATHER THAN
+ *     PEOPLE ═══
  *
- * CAPPED AT 168 AND OTHERWISE DIVIDED INTO WHAT IS LEFT. `CONTENT_HEIGHT` is
- * what the slide has after the safe area and the title are taken out, the
- * heading row and its gutter take 52, the entrance travel reserves `ENTRANCE_PX`
- * at each end, and the rest is shared by the rows and their gutters. A squad of
- * two would otherwise divide to over 200 each, which would be two slabs rather
- * than two rows, so the cap holds them to the height a four is.
+ * The old helpers here sized a squad ROW, so they divided `CONTENT_HEIGHT` by
+ * the number of MATES. A card does the opposite: its width is decided by the
+ * mates (one column each, see `columnWidth`) and its HEIGHT by how many stat
+ * rows it lists, which is one per category on the slide.
  *
- * IT DIVIDES `CONTENT_HEIGHT` AND IT USED TO DIVIDE `INNER_HEIGHT`, which is the
- * squad slide's share of the safe-area fix: this is the one slide whose rows are
- * sized to FILL what they are given, so it is the one that would have run a row
- * off the bottom of the surface the moment a title appeared above it.
+ * THAT DISTINCTION STOPPED BEING ACADEMIC THE DAY BIGGEST SPENDERS WAS SWITCHED
+ * ON. Five categories and five leaderboard ranks were the same number for as
+ * long as this board has existed, and a squad card sized off `TOP_N` would have
+ * been correct right up until the sixth category landed - then rendered a card
+ * with room for five rows and six rows in it, inside `overflow: hidden`, with
+ * nothing here failing.
+ *
+ * `ENTRANCE_PX` AT EACH END IS RESERVED, not decorative: every card on this
+ * board enters 20px below where it settles, and the squad card is the one that
+ * is sized to FILL what it is given. Without this the last 420ms of every squad
+ * slide would show the bottom edge and the chamfered corner clipped off - which
+ * is visible on a wall and invisible in every still preview of the settled
+ * state. The leaderboard gets that for free; this slide has to buy it.
+ *
+ * THE ROW HEIGHT IS CAPPED AT THE LEADERBOARD'S OWN `ROW_H` so that a squad card
+ * and a leaderboard card read as the same object. Below the cap it shrinks, which
+ * is what keeps six categories inside the surface.
  */
-export const SQUAD_HEAD_H = 40
+export const MATE_HEAD_H = 72
 
-export function squadRowHeight(rows: number): number {
-  if (rows < 1) return 0
-  const available = CONTENT_HEIGHT - SQUAD_HEAD_H - GUTTER - 2 * ENTRANCE_PX
-  return Math.min(168, Math.floor((available - (rows - 1) * GUTTER) / rows))
+export function mateStatRowHeight(stats: number): number {
+  if (stats < 1) return 0
+  const available = CONTENT_HEIGHT - 2 * ENTRANCE_PX - MATE_HEAD_H - 2 * EDGE_PX
+  return Math.min(ROW_H, Math.floor(available / stats))
+}
+
+export function mateCardHeight(stats: number): number {
+  if (stats < 1) return 0
+  return MATE_HEAD_H + stats * mateStatRowHeight(stats) + 2 * EDGE_PX
 }
 
 /**
- * The two type sizes on a squad row, derived from how tall the row came out.
+ * The three type sizes on a squad card, derived from what it came out as.
  *
- * ═══ THEY WERE FIXED AT 38 AND 40 AND THAT STOPPED BEING SAFE ═══
+ * THE TWO THAT SCALE WITH WIDTH ARE THE TWO THAT CAN OVERFLOW SIDEWAYS. A name
+ * is player-authored and "MOST REVIVES GIVEN" is the owner's own wording, so
+ * neither can be shortened - they have to be made to fit, which is the trick
+ * `.card h2` and `.tval` already use. The floor is what stops the answer to a
+ * six-person squad being type nobody can read from a few meters through a
+ * texture; past that they ellipsize, which is the honest failure.
  *
- * A row is `CONTENT_HEIGHT` divided by the squad size, and `CONTENT_HEIGHT` is
- * smaller than it was twice over: once for the safe area and once for the title.
- * At the game's own maximum squad of four the row is comfortably over a hundred
- * pixels and nothing needed to change - but `SQUAD_MAX_ROWS` protects the layout
- * against a config change on a box this console does not own, and at six rows a
- * fixed 40px numeral in a 68px row with a 38px name beside it is a row whose
- * content is taller than the row.
+ * THE VALUE SCALES WITH THE ROW because that is the axis it can overflow on: six
+ * categories divide the card into rows a fifth shorter than five do, and a
+ * numeral sized for the taller row would be taller than the row holding it.
  *
- * SO BOTH SIZES ARE A FRACTION OF THE ROW, CAPPED AT WHAT THEY HAVE ALWAYS BEEN.
- * A four-person squad renders exactly the type it rendered before; a six-person
- * one shrinks instead of overflowing. This is the same trick `.tval` already uses
- * to keep a seven-digit number inside a narrow tile.
+ * 266 IS `columnWidth(4)`, THE GAME'S OWN MAXIMUM SQUAD, which is the size these
+ * were judged at rather than an arbitrary divisor.
  */
-export function squadNameSize(rowHeight: number): number {
-  return Math.min(38, Math.round(rowHeight * 0.35))
+export function mateNameSize(width: number): number {
+  return Math.max(20, Math.min(34, Math.round((34 * width) / 266)))
 }
 
-export function squadValueSize(rowHeight: number): number {
-  return Math.min(40, Math.round(rowHeight * 0.37))
+export function mateLabelSize(width: number): number {
+  return Math.max(12, Math.min(18, Math.round((18 * width) / 266)))
+}
+
+export function mateValueSize(rowHeight: number): number {
+  return Math.min(30, Math.round(rowHeight * 0.34))
 }
 
 /**
@@ -2328,6 +2923,26 @@ ${names}
 }
 
 /**
+ * The columns, wrapped in the element that may or may not be drifting.
+ *
+ * TWO COPIES WHEN IT DRIFTS, AND THE SECOND ONE IS NOT DECORATION. The track
+ * translates left by exactly one copy's width and restarts; at the instant it
+ * restarts, copy two is occupying the pixels copy one occupied at the start, so
+ * the loop has no seam. One copy would leave the window empty behind the last
+ * card and jump.
+ *
+ * THE DUPLICATE IS INERT. It is the same markup with the same classes, it
+ * carries the same escaped player names, and nothing on this page is interactive
+ * or keyed on an id, so there is nothing for a second copy to collide with.
+ *
+ * ONE COPY OTHERWISE, which is a plain centered flex row and is byte for byte
+ * what the board has always emitted apart from this wrapper.
+ */
+function track(columns: string, repeat: number): string {
+  return `<div class="track">${columns.repeat(repeat)}</div>`
+}
+
+/**
  * THE COLOR IS A CLASS ON THE COLUMN NOW AND IT USED TO BE AN INLINE `style`.
  *
  * A `style="color:#ffc65c"` on the leading numeral was the whole of the card's
@@ -2336,7 +2951,7 @@ ${names}
  * document twenty times and make the stylesheet unreadable. `c-<key>` on the
  * column carries all of it; `categoryStyles` above is the other half.
  */
-function boardMarkup(board: Leaderboard): string {
+function boardMarkup(board: Leaderboard, repeat: number): string {
   const columns = board.categories
     .map((category) => {
       const rows = category.entries
@@ -2360,7 +2975,7 @@ function boardMarkup(board: Leaderboard): string {
   return (
     `<div id="board" class="panel on">` +
     `<h1 class="stitle">${TITLE_BOARD}</h1>` +
-    `<div class="cards">${columns}</div></div>`
+    `<div class="cards">${track(columns, repeat)}</div></div>`
   )
 }
 
@@ -2375,7 +2990,7 @@ function boardMarkup(board: Leaderboard): string {
  * THE TILES CARRY THE SAME ACCENT AS THE CARDS, on the label, which is the only
  * place an accent appears on a tile now that the bar across the top is gone.
  */
-function playerMarkup(player: PlayerPanel): string {
+function playerMarkup(player: PlayerPanel, repeat: number): string {
   const tiles = player.stats
     .map(
       (stat) =>
@@ -2393,53 +3008,60 @@ function playerMarkup(player: PlayerPanel): string {
     `<h1 class="stitle">${TITLE_PLAYER}</h1>` +
     `<div class="pstack">` +
     `<div class="name">${esc(player.name)}</div>` +
-    `<div class="tiles">${tiles}</div></div></div>`
+    `<div class="tiles">${track(tiles, repeat)}</div></div></div>`
   )
 }
 
 /**
- * The squad slide.
+ * The squad slide, which is one card per person.
  *
- * ONE HEADING ROW AND ONE ROW PER MATE. The headings are the tile labels, in the
- * catalog's order, in each category's own accent - the same words and the same
- * colors the per-player slide uses, so the two read as one board rather than as
- * two features.
+ * Owner, 2026-09-11: "I prefer cards for each of the players please."
  *
- * THE VIEWER'S ROW GETS THE SAME HIGHLIGHT IT GETS ON THE LEADERBOARD, which is
- * the fill and nothing else. There is deliberately no second cue: a player
- * looking for themselves among four rows is looking for the lit one.
+ * IT IS THE LEADERBOARD'S OWN ELEMENT, DELIBERATELY. `<section class="card">`
+ * with an `<h2>` and an `<ol>` is exactly what `boardMarkup` emits, so a squad
+ * card inherits the border, the sheen, the square corners, the drop shadow and
+ * the entrance without a single rule being repeated - and the two slides read as
+ * one board rather than as two features. What differs is what the header names
+ * (a person rather than a category) and what the rows carry (a label and a
+ * number rather than a rank, a name and a number).
  *
- * NO WORDS EXCEPT THE HEADINGS, THE NAMES AND THE OWNER'S OWN TITLE. `SQUAD
- * STATS` is his, quoted from his message, and it is the only thing that changed
- * here: there is still no "YOUR SQUAD", no squad number and no count. The rest
- * of the slide's claim is made by who is on it.
+ * THE LABELS REPEAT ON EVERY CARD AND THAT IS THE LAYOUT WORKING. The version
+ * this replaces put them once across the top precisely to avoid repeating them,
+ * and paid for it with five colored headings and four colored names, which is
+ * what the owner threw out.
+ *
+ * THE VIEWER'S CARD GETS THE SAME FOCUS TREATMENT THE LEADERBOARD ROW GETS:
+ * br_ui's chamfered corners and a lit edge, here in their own blip color. A
+ * player looking for themselves among four cards is looking for the lit one.
+ *
+ * NO WORDS EXCEPT THE CATEGORY LABELS, THE NAMES AND THE OWNER'S OWN TITLE.
+ * There is still no "YOUR SQUAD", no squad number and no count.
  */
 function squadMarkup(squad: SquadPanel): string {
-  const headings = squad.labels
-    .map(
-      (l) =>
-        `<div class="mcell c-${l.key}"><div class="mlabel">${esc(l.label)}</div></div>`,
-    )
-    .join('')
-
-  const rows = squad.mates
-    .map(
-      (mate, i) =>
-        `<div class="mate${mate.you ? ' you' : ''}${mate.color ? ` sqc-${i}` : ''}">` +
-        `<div class="mname">${esc(mate.name)}</div>` +
-        `<div class="mcells">` +
-        mate.values.map((v) => `<div class="mcell"><div class="mval">${esc(v)}</div></div>`).join('') +
-        `</div></div>`,
-    )
+  const cards = squad.mates
+    .map((mate, i) => {
+      const rows = squad.labels
+        .map(
+          (l, j) =>
+            `<li>` +
+            `<span class="mlabel">${esc(l.label)}</span>` +
+            `<span class="mval">${esc(mate.values[j] ?? '')}</span>` +
+            `</li>`,
+        )
+        .join('')
+      return (
+        `<div class="col sqcol${mate.color ? ` sq-${i}` : ''}">` +
+        `<section class="card mate${mate.you ? ' you' : ''}">` +
+        `<h2>${esc(mate.name)}</h2>` +
+        `<ol>${rows}</ol></section></div>`
+      )
+    })
     .join('')
 
   return (
     `<div id="squad" class="panel">` +
     `<h1 class="stitle">${TITLE_SQUAD}</h1>` +
-    `<div class="squad">` +
-    `<div class="shead"><div class="mname"></div><div class="mcells">${headings}</div></div>` +
-    `<div class="smates">${rows}</div>` +
-    `</div></div>`
+    `<div class="squad">${cards}</div></div>`
   )
 }
 
@@ -2491,7 +3113,55 @@ export function renderScoreboard(input: {
    * the layout takes the larger of the two, because the arithmetic exists to
    * stop a column falling off the edge and the widest panel is the one at risk.
    */
-  const columns = Math.max(board.categories.length, player?.stats.length ?? 0, 1)
+  const boardCards = Math.max(board.categories.length, 1)
+  const playerTiles = player?.stats.length ?? 0
+  const count = Math.max(boardCards, playerTiles, 1)
+
+  /**
+   * ═══ WHETHER THE BOARD DRIFTS, AND WHAT HAPPENS WHEN IT DOES NOT ═══
+   *
+   * Owner: "I think the screen being 5 wide makes sense and having 6 columns we
+   * should have them scroll right to left".
+   *
+   * THREE CONDITIONS AND ALL OF THEM MATTER:
+   *
+   *   MORE CARDS THAN SLOTS. At five categories or fewer every card has a slot
+   *   of its own, there is nothing to cycle, and a board that drifted anyway
+   *   would be motion with no information in it. This is also the answer to "what
+   *   if a category goes unavailable again": five in five sit still, exactly as
+   *   they do today, with no second layout to have gone stale.
+   *
+   *   AND `full`. The motion knob is what somebody sets when the pad is
+   *   struggling, and a continuously drifting leaderboard is continuous motion by
+   *   any reading of that setting. Under `transitions` and `off` the cards fall
+   *   back to `columnWidth(count)` - six narrower cards, all visible, nothing
+   *   moving - because the alternative at those levels is a sixth card that no
+   *   longer exists on the wall. A slower board is a trade; a missing category is
+   *   a defect.
+   *
+   * THE SLOT COUNT IS WHAT DECIDES A CARD'S WIDTH, and the RENDERED count is
+   * twice the category count while drifting, because the track carries two copies
+   * for the wrap. Those are three different numbers and conflating any two of
+   * them puts a card off the edge of a surface that cannot scroll.
+   */
+  const boardScrolls = motion === 'full' && boardCards > SLOTS
+  const tilesScroll = motion === 'full' && playerTiles > SLOTS
+  /**
+   * THE SLOT COUNT IS SHARED EVEN WHEN ONLY ONE TRACK IS MOVING, because both
+   * slides lay their columns out in `.col` and a board whose cards were a
+   * different width from its own tiles would stop reading as one board. As soon
+   * as either row has more than `SLOTS` in it, every column on the page is a
+   * slot wide and the row that fits simply sits still in the middle.
+   */
+  const slots = boardScrolls || tilesScroll ? SLOTS : count
+  const boardRepeat = boardScrolls ? 2 : 1
+  const tileRepeat = tilesScroll ? 2 : 1
+  const columns = Math.max(
+    boardCards * boardRepeat,
+    playerTiles * tileRepeat,
+    squad?.mates.length ?? 0,
+    1,
+  )
 
   /**
    * EVERY CATEGORY THAT IS ON SCREEN ANYWHERE, ONCE.
@@ -2542,7 +3212,10 @@ export function renderScoreboard(input: {
       motion,
       phases,
       columns,
-      squadRows: squad?.mates.length ?? 0,
+      slots,
+      boardScroll: boardScrolls ? boardCards : 0,
+      tileScroll: tilesScroll ? playerTiles : 0,
+      squadStats: squad?.labels.length ?? 0,
       categories: [...seen.values()],
       mates: squad?.mates ?? [],
     })}</style></head>` +
@@ -2550,8 +3223,8 @@ export function renderScoreboard(input: {
     `<div class="wash"></div>` +
     drift +
     `<div class="vig"></div>` +
-    boardMarkup(board) +
-    (player ? playerMarkup(player) : '') +
+    boardMarkup(board, boardRepeat) +
+    (player ? playerMarkup(player, tileRepeat) : '') +
     (squad ? squadMarkup(squad) : '') +
     (panels.length > 1 ? `<script>${swapScript(panels, motion)}</script>` : '') +
     `</body></html>`

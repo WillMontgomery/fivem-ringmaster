@@ -122,6 +122,9 @@ import {
   BOARD_HEIGHT,
   BOARD_WIDTH,
   CATEGORIES,
+  DESIGN_HEIGHT,
+  DESIGN_WIDTH,
+  UI_SCALE,
   PLAYER_DWELL_MS,
   TOP_N,
   TRANSITION_MS,
@@ -146,21 +149,26 @@ import {
 import { EMBEDDED_FACES } from './scoreboardFonts'
 import {
   CONTENT_HEIGHT,
+  EDGE_PX,
   INNER_HEIGHT,
   INNER_WIDTH,
+  MATE_HEAD_H,
   PALETTE,
   PHASE_COUNT,
   SAFE_INSET,
-  SQUAD_HEAD_H,
+  SCROLL_MS_PER_CARD,
+  SLOTS,
   TITLES,
   TITLE_H,
   columnWidth,
   contrastPairs,
   esc,
+  mateCardHeight,
+  mateLabelSize,
+  mateNameSize,
+  mateStatRowHeight,
+  mateValueSize,
   renderScoreboard,
-  squadNameSize,
-  squadRowHeight,
-  squadValueSize,
   type MotionLevel,
 } from './scoreboardPage'
 import {
@@ -276,13 +284,20 @@ function row(over: Partial<BoardRow> & { name: string }): BoardRow {
   }
 }
 
+/**
+ * ⚠ `voltsSpent` IS ON EVERY ROW NOW, AND IT IS NOT DECORATION. BIGGEST SPENDERS
+ * is a live category, so a fixture that left the field at zero would drop one of
+ * the six cards from every document this file renders and quietly stop testing
+ * the six-column, five-slot, drifting case entirely - which is the case the
+ * board actually ships in.
+ */
 const ROWS: BoardRow[] = [
-  row({ name: 'alpha', wins: 30, kills: 900, matches: 400, revives: 12, xp: 90_000 }),
-  row({ name: 'bravo', wins: 20, kills: 800, matches: 300, revives: 40, xp: 70_000 }),
-  row({ name: 'charlie', wins: 20, kills: 700, matches: 200, revives: 3, xp: 50_000 }),
-  row({ name: 'delta', wins: 10, kills: 600, matches: 100, revives: 0, xp: 30_000 }),
-  row({ name: 'echo', wins: 5, kills: 500, matches: 50, revives: 1, xp: 10_000 }),
-  row({ name: 'foxtrot', wins: 1, kills: 400, matches: 25, revives: 0, xp: 5_000 }),
+  row({ name: 'alpha', wins: 30, kills: 900, matches: 400, revives: 12, xp: 90_000, voltsSpent: 60_000 }),
+  row({ name: 'bravo', wins: 20, kills: 800, matches: 300, revives: 40, xp: 70_000, voltsSpent: 50_000 }),
+  row({ name: 'charlie', wins: 20, kills: 700, matches: 200, revives: 3, xp: 50_000, voltsSpent: 40_000 }),
+  row({ name: 'delta', wins: 10, kills: 600, matches: 100, revives: 0, xp: 30_000, voltsSpent: 30_000 }),
+  row({ name: 'echo', wins: 5, kills: 500, matches: 50, revives: 1, xp: 10_000, voltsSpent: 20_000 }),
+  row({ name: 'foxtrot', wins: 1, kills: 400, matches: 25, revives: 0, xp: 5_000, voltsSpent: 10_000 }),
 ]
 
 const wins = () => enabledCategories().find((c) => c.key === 'wins')!
@@ -765,16 +780,23 @@ console.log("\nC. the owner's five labels, verbatim")
  * it can fail. A check that compares the catalog to itself passes whatever the
  * catalog says; this one fails the moment somebody improves his wording.
  */
+/**
+ * AND THE SIXTH IS HIS TOO. "Let's also add a 'Biggest spenders' category on the
+ * scoreboard as well" - the card label is his phrase in his capitals like the
+ * other five. Its TILE label is the one string on this page nobody has approved;
+ * see `VOLTS SPENT` in the catalog and the report's needsOwner.
+ */
 const OWNER_LABELS = [
   'MOST WINS',
   'TOP KILLS',
   'TOP MATCHES',
   'MOST REVIVES GIVEN',
   'HIGHEST LEVEL',
+  'BIGGEST SPENDERS',
 ]
 
 expect(
-  'five cards, and they say what he asked them to say',
+  'six cards, and they say what he asked them to say',
   enabledCategories().map((c) => c.label).join(' | '),
   OWNER_LABELS.join(' | '),
 )
@@ -811,118 +833,162 @@ expectTrue(
   )
 }
 
-console.log('\nC. biggest spenders: the data layer is ready and the card is not')
+console.log('\nC. biggest spenders is live, and the blocked-category path still works')
 
 {
   const spend = CATEGORIES.find((c) => c.key === 'spend')
-  expectTrue('the category is declared, so the shape is already decided', !!spend)
-  expect('it is not available', spend?.available, false)
-  expectTrue(
-    'and it says why, for the next reader rather than for the page',
-    typeof (spend as { blockedBy?: string } | undefined)?.blockedBy === 'string' &&
-      (spend as { blockedBy: string }).blockedBy.length > 0,
-  )
+  expectTrue('the category is declared', !!spend)
   /**
-   * THE REASON CHANGED AND THE CHECK PINS THE NEW ONE. `voltsSpent` used to exist
-   * nowhere; since the gamemode's `03cce2d` it exists on the match HISTORY rows
-   * and still not on the profile aggregate. A note that still said "recorded
-   * nowhere" would send the next person hunting for the wrong thing.
+   * ═══ THE ONE BOOLEAN WAS FLIPPED, AND THIS IS THE ASSERTION THAT WAS WAITING
+   *     FOR IT ═══
+   *
+   * Owner, 2026-09-11: "when are we adding the 'biggest spenders' section?"
+   *
+   * This block used to assert the OPPOSITE - that the category could not rank,
+   * that `enabledCategories` could not return it and that a row carrying
+   * `voltsSpent` still produced no card - because the gamemode's profile
+   * aggregate had no such attribute and a card would have named five people who
+   * had spent nothing as the biggest spenders in the game.
+   *
+   * IT LANDED IN GAMEMODE `40f00de` AND BOTH HALVES WERE READ OUT OF THAT
+   * REPOSITORY: `voltsSpent` is on `STATS_ADDS` in `js-src/br_ddb/src/stats.js`,
+   * and it is a member of the table `deltasFor` RETURNS in
+   * `br_stats/server/persist.lua`. Either half alone accumulates nothing, which
+   * is why both were checked rather than one.
    */
+  expect('it is available now', spend?.available, true)
   expectTrue(
-    'the reason names the allowlist that is actually missing it',
-    (spend as { blockedBy: string }).blockedBy.includes('STATS_ADDS'),
+    'and it carries no blockedBy, which is what available means',
+    !Object.prototype.hasOwnProperty.call(spend ?? {}, 'blockedBy'),
   )
   expectTrue(
-    'enabledCategories cannot return it',
-    !enabledCategories().some((c) => c.key === 'spend'),
+    'enabledCategories returns it',
+    enabledCategories().some((c) => c.key === 'spend'),
   )
-  expectTrue(
-    'the ranking cannot produce it',
-    !rankBoard(ROWS).categories.some((c) => c.key === 'spend'),
-  )
-  expectTrue(
-    'and the per-player half cannot either',
-    !playerPanelFrom(ROWS[0]!, ROWS, {}).stats.some((s) => s.key === 'spend'),
-  )
+  expect('so the board is six categories wide', enabledCategories().length, 6)
 
-  /**
-   * EVEN WITH A REAL NUMBER ON THE ROW IT RENDERS NOTHING, which is what makes
-   * this a blocked category rather than an empty one. The day the aggregate
-   * lands, flipping `available` is the whole change.
-   */
-  const spenders = [row({ name: 'alpha', voltsSpent: 5_000, wins: 1 })]
-  expectTrue(
-    'a row carrying voltsSpent still produces no spenders card',
-    !rankBoard(spenders).categories.some((c) => c.key === 'spend'),
-  )
-
-  /** The projection carries it, so the flip needs no store change. */
+  /** The projection carried it before the flip, so the store needed no change. */
   const storeText = read('src/lib/scoreboardStore.ts')
-  expectTrue(
-    'the store projects voltsSpent, so the data layer is ready today',
-    storeText.includes("'#spent': 'voltsSpent'"),
-  )
+  expectTrue('the store projects voltsSpent', storeText.includes("'#spent': 'voltsSpent'"))
 
-  /**
-   * ═══ AND THE CARD IS PROVEN, NOT PROMISED ═══
-   *
-   * The claim this file makes about the blocked category is that flipping ONE
-   * BOOLEAN produces a working card. A comment saying so is worth nothing: the
-   * whole failure mode of a blocked feature is that it has never once been run,
-   * so the day the number lands somebody discovers the ranking was never
-   * written, or the column arithmetic does not fit six, under time pressure.
-   *
-   * So the real object is taken off the real catalog, `available` is forced on
-   * HERE AND NOWHERE ELSE, and it is driven through the real `rankBoard`, the
-   * real `playerPanelFrom` and the real renderer. Nothing in `src` changes.
-   */
-  const flipped = { ...(spend as BlockedCategory), available: true } as AvailableCategory
-  const withSpend = [...enabledCategories(), flipped]
-
-  /** Every category non-zero, so all six really do rank and lay out. */
   const ROWS_WITH_SPEND: BoardRow[] = [
     row({ name: 'alpha', wins: 3, kills: 3, matches: 3, revives: 3, xp: 30, voltsSpent: 900 }),
     row({ name: 'bravo', wins: 2, kills: 2, matches: 2, revives: 2, xp: 20, voltsSpent: 12_500 }),
     row({ name: 'charlie', wins: 1, kills: 1, matches: 1, revives: 1, xp: 10, voltsSpent: 0 }),
   ]
 
-  const ranked = rankBoard(ROWS_WITH_SPEND, { categories: withSpend })
+  const ranked = rankBoard(ROWS_WITH_SPEND)
   const card = ranked.categories.find((c) => c.key === 'spend')
 
-  expectTrue('with the flag flipped, the card ranks', card !== undefined)
+  expectTrue('the card ranks through the real rankBoard', card !== undefined)
   expect('and it is the owner label', card?.label, 'BIGGEST SPENDERS')
   expect('the biggest spender is first', card?.entries[0]?.name, 'bravo')
   expect('and the number is grouped like every other number', card?.entries[0]?.value, '12,500')
+  /**
+   * NOTHING BACKFILLS, so every profile written before `40f00de` reads zero until
+   * that player finishes another match. A zero is not a rank anywhere on this
+   * board and it is not one here: a young column is a SHORT card rather than a
+   * card full of noughts naming people who have bought nothing.
+   */
   expectTrue(
     'a player who has spent nothing is not on it, same as every other card',
     !card?.entries.some((e) => e.name === 'charlie'),
   )
 
-  const panel = playerPanelFrom(ROWS_WITH_SPEND[1]!, ROWS_WITH_SPEND, { categories: withSpend })
+  const panel = playerPanelFrom(ROWS_WITH_SPEND[1]!, ROWS_WITH_SPEND, {})
   const tile = panel.stats.find((s) => s.key === 'spend')
-  expect('the per-player half gains a tile', tile?.value, '12,500')
+  expect('the per-player half has a tile', tile?.value, '12,500')
   expect('with its rank', tile?.rank, 1)
   expect('and the tile label is the one that is not his', tile?.label, 'VOLTS SPENT')
 
   /**
-   * SIX CARDS FIT THE SURFACE, which is the half of this that used to be a
-   * literal 240 and would have silently dropped a column off a page that cannot
-   * scroll. See `columnWidth`.
+   * SIX CATEGORIES ARE FIVE SLOTS AND A DRIFT, WHICH IS THE OWNER'S OWN RULING.
+   * "I think the screen being 5 wide makes sense and having 6 columns we should
+   * have them scroll right to left". So the card width is the FIVE-column one
+   * even though six cards exist, and each track carries two copies of them.
    */
-  const six = renderScoreboard({
-    board: ranked,
-    player: panel,
-    motion: 'off',
-  })
-  /** Six on the leaderboard and six tiles, each carrying its category class. */
-  expect('six columns are laid out', six.split('class="col c-').length - 1, 12)
+  const six = renderScoreboard({ board: ranked, player: panel, motion: 'full' })
+  expect(
+    'six categories render twelve columns on each of the two drifting rows',
+    six.split('class="col c-').length - 1,
+    24,
+  )
   expectTrue(
-    'and the sixth one is painted like the other five',
+    'the sixth one is painted like the other five',
     six.includes('.c-spend .card {') && six.includes('.c-spend .tile {'),
   )
   expectTrue(
-    'and the card width is the six-column one, not the five-column one',
-    six.includes(`width: ${columnWidth(6)}px`) && !six.includes('width: 240px'),
+    'and the card width is the SLOT width, not the six-column squeeze',
+    six.includes(`width: ${columnWidth(SLOTS)}px`) && !six.includes(`width: ${columnWidth(6)}px`),
+  )
+}
+
+console.log('\nC. the blocked-category path is still alive with nothing blocked')
+
+/**
+ * ═══ THE MECHANISM OUTLIVES THE ONE CATEGORY THAT USED IT ═══
+ *
+ * `spend` was the only blocked category and it is switched on, so nothing in
+ * `CATEGORIES` exercises `BlockedCategory` any more. That is exactly when a path
+ * rots: the next category the owner asks for would land on code nobody has run
+ * in months, under time pressure, on the day the data arrives.
+ *
+ * ⚠ AND THE FILTER IS `enabledCategories()`, WHICH IS THE ONLY GATE THERE IS.
+ * The first version of this block handed a synthetic blocked category straight
+ * to `rankBoard` and asserted it could not rank. It ranked, and the failure was
+ * the check's rather than the board's: `rankBoard(rows, { categories })` ranks
+ * exactly what it is given, because the `categories` option exists so this file
+ * can drive the ranker over catalogs the catalog does not contain. The
+ * availability gate is one level up.
+ *
+ * SO WHAT IS ASSERTED IS THAT GATE, and that there is no second way past it: a
+ * blocked category is invisible because `enabledCategories()` is the only way to
+ * enumerate categories and it filters on the flag.
+ */
+{
+  const blocked: BlockedCategory = {
+    key: 'spend',
+    label: 'BIGGEST SPENDERS',
+    tileLabel: 'VOLTS SPENT',
+    accent: '#d9ae35',
+    available: false,
+    sortValue: (r) => r.voltsSpent,
+    display: (r) => formatCount(r.voltsSpent),
+    blockedBy: 'a synthetic block, declared in the check and nowhere else',
+  }
+  const catalog = [...CATEGORIES.filter((c) => c.key !== 'spend'), blocked]
+
+  expectTrue(
+    'the availability flag is what hides a category, and it still hides one',
+    !catalog.filter((c) => c.available).some((c) => c.key === 'spend'),
+  )
+  expectTrue(
+    'enabledCategories returns only available ones',
+    enabledCategories().every((c) => c.available === true),
+  )
+  expect(
+    'and it returns every available one, so nothing is hidden by accident',
+    enabledCategories().length,
+    CATEGORIES.filter((c) => c.available).length,
+  )
+  expectTrue(
+    'blockedBy is a note to a person and never reaches a page',
+    blocked.blockedBy.length > 0 && !renderScoreboard({
+      board: rankBoard(ROWS),
+      player: null,
+      motion: 'off',
+    }).includes(blocked.blockedBy),
+  )
+  /**
+   * AND THE RANKER STILL WORKS ON A CATALOG IT WAS HANDED, which is the property
+   * that made the day `spend` was switched on a one-boolean change: the shape had
+   * been driven end to end before it was ever shown to anybody.
+   */
+  const rows = [row({ name: 'alpha', wins: 1, voltsSpent: 9_000 })]
+  const forced = { ...blocked, available: true } as unknown as AvailableCategory
+  expectTrue(
+    'a blocked category ranks correctly the moment its flag flips',
+    rankBoard(rows, { categories: [forced] }).categories.some((c) => c.key === 'spend'),
   )
 }
 
@@ -973,7 +1039,7 @@ expect(
 )
 expectTrue(
   'and the safe area is a real inset on both axes',
-  INNER_WIDTH < BOARD_WIDTH && INNER_HEIGHT < BOARD_HEIGHT,
+  INNER_WIDTH < DESIGN_WIDTH && INNER_HEIGHT < DESIGN_HEIGHT,
 )
 /**
  * SIX TO EIGHT PERCENT PER SIDE IS THE BAND THE OWNER NAMED, and it is asserted
@@ -981,8 +1047,8 @@ expectTrue(
  * change and abandoning the safe area entirely is not.
  */
 {
-  const insetX = (BOARD_WIDTH - INNER_WIDTH) / 2 / BOARD_WIDTH
-  const insetY = (BOARD_HEIGHT - INNER_HEIGHT) / 2 / BOARD_HEIGHT
+  const insetX = (DESIGN_WIDTH - INNER_WIDTH) / 2 / DESIGN_WIDTH
+  const insetY = (DESIGN_HEIGHT - INNER_HEIGHT) / 2 / DESIGN_HEIGHT
   expectTrue(
     `the horizontal inset is title-safe (${(insetX * 100).toFixed(1)}% per side)`,
     insetX >= 0.05 && insetX <= 0.1,
@@ -999,72 +1065,87 @@ expectTrue(
  */
 
 /**
- * THE SQUAD ROWS FIT AT EVERY SIZE THE GUARD ALLOWS. The game's own
- * `maxSquadSize` is four, so four is the count that matters and it gets the
- * taller floor; five and six exist only because `SQUAD_MAX_ROWS` protects the
- * layout against a config change on a box this console does not own, and for
- * those the bar is that they fit and stay legible rather than that they look
- * generous.
- */
-/**
- * ═══ AND THEY FIT WHILE THEY ARE STILL ARRIVING, WHICH IS THE HALF THAT WAS
- *     WRONG ═══
+ * ═══ A SQUAD CARD FITS, AT EVERY SQUAD SIZE AND AT EVERY CATEGORY COUNT ═══
  *
- * Every card, tile and squad row enters from 20px below where it settles. On the
- * leaderboard that is free - the cards end 75px clear of the bottom. On the
- * squad slide the rows are sized to FILL the panel, so the last one entered at
- * 724px on a 720px surface and had its bottom edge and its rounded corner
- * clipped for the length of the transition. Measured in a real browser, not
- * reasoned about: a still screenshot of the finished state shows nothing wrong.
+ * Owner, 2026-09-11: "I prefer cards for each of the players please."
  *
- * So the bound below is the ENTERING position, not the settled one.
+ * THE TWO AXES ARE INDEPENDENT NOW AND THEY USED NOT TO BE. A squad ROW was one
+ * of N across the panel's height, so the squad size decided everything. A squad
+ * CARD's WIDTH is decided by the squad size and its HEIGHT by the CATEGORY
+ * count, and those two numbers were the same until BIGGEST SPENDERS was switched
+ * on. Both are swept.
+ *
+ * ═══ AND IT FITS WHILE IT IS STILL ARRIVING, WHICH IS THE HALF THAT WAS WRONG
+ *     ═══
+ *
+ * Every card on this board enters from 20px below where it settles. On the
+ * leaderboard that is free - the cards end clear of the bottom. A squad card is
+ * sized to FILL what it is given, so an unreserved 20px put the last frames of
+ * every entrance below the surface with the bottom edge and the chamfered corner
+ * clipped. Measured in a real browser rather than reasoned about: a still
+ * screenshot of the settled state shows nothing wrong. The bound below is
+ * therefore the ENTERING position, not the settled one.
  */
 const ENTRANCE_PX = 20
-for (let n = 2; n <= SQUAD_MAX_ROWS; n++) {
-  const h = squadRowHeight(n)
-  const content = n * h + (n - 1) * 12 + SQUAD_HEAD_H + 12
-  /** Centered in the panel, so the slack is split evenly above and below. */
-  const slackBelow = Math.floor((CONTENT_HEIGHT - content) / 2)
+for (let stats = 3; stats <= 8; stats++) {
+  const rowH = mateStatRowHeight(stats)
+  const cardH = mateCardHeight(stats)
+  /** Centered in the slide, so the slack is split evenly above and below. */
+  const slackBelow = Math.floor((CONTENT_HEIGHT - cardH) / 2)
+
   expectTrue(
-    `${n} squad rows fit in ${CONTENT_HEIGHT}px (${content}px used)`,
-    content <= CONTENT_HEIGHT,
+    `a ${stats}-row squad card fits in ${CONTENT_HEIGHT}px (${cardH}px used)`,
+    cardH <= CONTENT_HEIGHT,
   )
   expectTrue(
-    `${n} squad rows are still inside the surface while they arrive (${slackBelow}px of travel room)`,
+    `a ${stats}-row squad card is still inside the surface while it arrives (${slackBelow}px of travel room)`,
     slackBelow >= ENTRANCE_PX,
   )
   /**
-   * ═══ THE ROW CLEARS ITS OWN TYPE, WHICH USED TO BE TWO MAGIC NUMBERS ═══
-   *
-   * This read `h >= (n <= 4 ? 130 : 85)` - two constants standing in for "the
-   * 34px numeral fits", written when the row height was fixed and the type was
-   * fixed too. Both of those stopped being true in the same change: the safe
-   * area and the title between them take 152px out of what the slide divides,
-   * so a six-row squad now gets 68px per row rather than 89.
-   *
-   * A FIXED FLOOR WOULD HAVE FAILED HERE FOR THE WRONG REASON. 68px is not too
-   * short for a row - it is too short for a 40px numeral, which is a different
-   * statement and is fixable by scaling the numeral, which is what
-   * `squadValueSize` now does. So the assertion is the real relationship: the
-   * name and the value both fit inside the row with room for the line box, at
-   * whatever size they came out.
+   * THE CARD IS ITS PARTS TO THE PIXEL, header plus rows plus its own two
+   * borders, which is what makes `overflow: hidden` safe. Four pixels of
+   * disagreement here is a row clipped inside a card, on a wall, silently.
    */
-  const name = squadNameSize(h)
-  const value = squadValueSize(h)
-  expectTrue(
-    `${n} squad rows clear the type they carry (${h}px row, ${name}px name, ${value}px value)`,
-    Math.max(name, value) * 1.35 <= h,
+  expect(
+    `and it is exactly its header, its ${stats} rows and its two ${EDGE_PX}px edges`,
+    cardH,
+    MATE_HEAD_H + stats * rowH + 2 * EDGE_PX,
   )
   /**
-   * AND THE TYPE IS STILL LEGIBLE AT A DISTANCE, THROUGH A TEXTURE. Scaling to
-   * fit is only an answer while the answer is still readable; below this the
-   * honest report is that the squad does not fit, not a row of four-point type.
-   * The game's own maximum squad is four and that case is held to the size the
-   * slide has always rendered.
+   * THE ROW CLEARS ITS OWN NUMERAL. `mateValueSize` scales with the row for
+   * exactly this reason: a fixed numeral sized for five categories is taller
+   * than the row six of them leaves.
+   */
+  const value = mateValueSize(rowH)
+  expectTrue(
+    `a ${stats}-row card clears the type it carries (${rowH}px row, ${value}px numeral)`,
+    value * 1.35 <= rowH,
+  )
+  /**
+   * AND IT IS STILL LEGIBLE AT A DISTANCE, THROUGH A TEXTURE. Scaling to fit is
+   * only an answer while the answer is readable. Six is the live case now that
+   * BIGGEST SPENDERS is on; past that the bar is that it does not become
+   * four-point type.
    */
   expectTrue(
-    `${n} squad rows are still readable (${value}px numeral)`,
-    value >= (n <= 4 ? 34 : 22),
+    `a ${stats}-row card is still readable (${value}px numeral)`,
+    value >= (stats <= 6 ? 24 : 18),
+  )
+}
+
+/**
+ * AND THE WIDTH AXIS: one column per mate, through the same `columnWidth` the
+ * leaderboard uses, at every size `SQUAD_MAX_ROWS` allows.
+ */
+for (let mates = 2; mates <= SQUAD_MAX_ROWS; mates++) {
+  const mw = columnWidth(mates)
+  const used = mates * mw + (mates - 1) * 12
+  expectTrue(`${mates} squad cards fit in ${INNER_WIDTH}px (${used}px used)`, used <= INNER_WIDTH)
+  const name = mateNameSize(mw)
+  const label = mateLabelSize(mw)
+  expectTrue(
+    `${mates} squad cards carry readable type (${mw}px wide, ${name}px name, ${label}px label)`,
+    name >= 20 && label >= 12,
   )
 }
 
@@ -1177,7 +1258,7 @@ expect('esc: an ordinary name is untouched', esc('Slippery Jim'), 'Slippery Jim'
 console.log('\nD. the surface is fixed and cannot scroll')
 
 for (const [name, doc] of LEVELS) {
-  expectTrue(`${name}: width is pinned to ${BOARD_WIDTH}px`, doc.includes(`width: ${BOARD_WIDTH}px`))
+  expectTrue(`${name}: width is pinned to ${DESIGN_WIDTH} design px`, doc.includes(`width: ${DESIGN_WIDTH}px`))
   expectTrue(`${name}: height is pinned to ${BOARD_HEIGHT}px`, doc.includes(`height: ${BOARD_HEIGHT}px`))
   expectTrue(`${name}: overflow is hidden, a DUI has no scrollbar`, doc.includes('overflow: hidden'))
   expectTrue(`${name}: no media query to make it responsive`, !/@media/.test(doc))
@@ -1206,7 +1287,7 @@ for (const [name, doc] of LEVELS) {
   expectTrue(
     `${name}: the panel is padded to the safe area, not to a margin`,
     doc.includes(
-      `padding: ${Math.round(BOARD_HEIGHT * SAFE_INSET)}px ${Math.round(BOARD_WIDTH * SAFE_INSET)}px;`,
+      `padding: ${Math.round(DESIGN_HEIGHT * SAFE_INSET)}px ${Math.round(DESIGN_WIDTH * SAFE_INSET)}px;`,
     ),
   )
   /**
@@ -1219,8 +1300,8 @@ for (const [name, doc] of LEVELS) {
     const block = doc.slice(doc.indexOf(layer))
     const body = block.slice(0, block.indexOf('}'))
     expectTrue(
-      `${name}: ${layer} still paints the full ${BOARD_WIDTH}x${BOARD_HEIGHT}`,
-      body.includes(`width: ${BOARD_WIDTH}px`) && body.includes(`height: ${BOARD_HEIGHT}px`),
+      `${name}: ${layer} still paints the full ${DESIGN_WIDTH}x${DESIGN_HEIGHT}`,
+      body.includes(`width: ${DESIGN_WIDTH}px`) && body.includes(`height: ${DESIGN_HEIGHT}px`),
     )
   }
   /**
@@ -1294,12 +1375,19 @@ console.log("\nD. the owner's three titles, verbatim and alone")
 console.log("\nD. the viewer's row is marked in the markup")
 
 expectTrue('the highlighted row reaches the document', FULL.includes('<li class="you"'))
+/**
+ * ONCE PER CARD THE VIEWER APPEARS ON, TIMES THE TWO COPIES THE TRACK CARRIES.
+ * Six categories are five slots and a drift (see `SLOTS`), so every column is in
+ * the document twice - the second copy is what makes the wrap seamless. Nobody
+ * ever sees both at once: the window is `SLOTS` cards wide and the track is
+ * twice the category count.
+ */
 expect(
-  'and it is marked once per card the viewer appears on',
+  'and it is marked once per card the viewer appears on, per copy of the track',
   FULL.split('<li class="you"').length - 1,
   rankBoard(HOSTILE_ROWS, { viewer: VIEWER }).categories.filter((c) =>
     c.entries.some((e) => e.you),
-  ).length,
+  ).length * 2,
 )
 expectTrue(
   'a board with no viewer marks nothing',
@@ -1369,15 +1457,40 @@ for (const [name, doc] of LEVELS) {
   expectTrue(`${name}: and no rule to style one`, !/\.rule\s*\{/.test(doc))
   expectTrue(`${name}: no border-left-color anywhere`, !doc.includes('border-left-color'))
   /**
-   * AND NO BORDER IS THICKER THAN A HAIRLINE, whatever color it is. Every edge
-   * on this page is one pixel of `PALETTE.edge`; the 4px bar he named was the
-   * shape, and a 3px or 6px one in a neutral grey would read as the same
-   * decoration with the color taken off.
+   * ═══ EVERY BORDER IS EXACTLY `EDGE_PX`, AND THAT NUMBER IS NOW THREE ═══
+   *
+   * Owner, 2026-09-11: "And triple the border thickness on everything that has
+   * borders for the entire scoreboard."
+   *
+   * THIS ASSERTION USED TO READ "every border is one pixel" and it was written
+   * against a different note - "Don't add the low-effort color borders... it
+   * makes the product look AI-generated" - on the reading that a thick edge is
+   * the decoration he named with the color taken off. He has since asked for the
+   * thickness by name, so what the rule protects is no longer THINNESS, it is
+   * UNIFORMITY: one surface left behind at a different width is what actually
+   * reads as a fault, and it is the exact failure mode of tripling six
+   * declarations by hand.
+   *
+   * SO IT IS PINNED TO THE CONSTANT RATHER THAN TO A LITERAL. Any border width
+   * in the document that is not `EDGE_PX` fails, in either direction.
    */
+  const widths = [...doc.matchAll(/border(?:-(?:top|right|bottom|left))?(?:-width)?:\s*([\d.]+)px/g)]
+  expectTrue(`${name}: the document has borders at all (${widths.length} found)`, widths.length > 0)
+  for (const w of widths) {
+    expect(`${name}: a border is EDGE_PX`, Number(w[1]), EDGE_PX)
+  }
+  /**
+   * AND THE TWO REDRAWN DIAGONALS THICKENED WITH THEM. Clipping the focused
+   * surface removes its border along both chamfers and two pseudo-elements draw
+   * it back; br_ui's ratio is a 1.2px diagonal to a 1px border, and a chamfer
+   * left at the old half-width would be a focused card whose cut corners look
+   * unfinished beside four heavy edges. Recomputed here rather than matched.
+   */
+  const half = (EDGE_PX * 1.2) / 2
   expectTrue(
-    `${name}: every border is one pixel`,
-    /** `border-radius` is a corner and not an edge, so it is not in this. */
-    !/border(-(top|right|bottom|left))?(-width)?:\s*(?!1px)\d+px/.test(doc),
+    `${name}: the chamfer diagonals are ${half}px either side of the seam`,
+    !doc.includes('.you::after') ||
+      (doc.includes(`calc(50% - ${half}px)`) && doc.includes(`calc(50% + ${half}px)`)),
   )
 }
 
@@ -1410,7 +1523,7 @@ for (const category of enabledCategories()) {
 expectTrue(
   'the highlighted row still has its fill',
   new RegExp(
-    `\\.card li\\.you, \\.mate\\.you \\{[^}]*background: ${PALETTE.you};`,
+    `\\.card li\\.you, \\.card\\.you \\{[^}]*background: ${PALETTE.you};`,
   ).test(FULL),
 )
 
@@ -1444,7 +1557,7 @@ console.log("\nD. the viewer's row wears the inventory's focus treatment")
  */
 {
   const doc = stripComments(FULL)
-  const rule = /\.card li\.you, \.mate\.you \{([^}]*)\}/.exec(doc)?.[1] ?? ''
+  const rule = /\.card li\.you, \.card\.you \{([^}]*)\}/.exec(doc)?.[1] ?? ''
 
   expectTrue('the focused row is clipped at all', rule.includes('clip-path: polygon('))
   /**
@@ -1476,13 +1589,13 @@ console.log("\nD. the viewer's row wears the inventory's focus treatment")
 
   /** The two diagonals that redraw the border along the cuts. */
   const diagonals =
-    /\.card li\.you::after, \.card li\.you::before,\n\.mate\.you::after, \.mate\.you::before \{([^}]*)\}/.exec(
+    /\.card li\.you::after, \.card li\.you::before,\n\.card\.you::after, \.card\.you::before \{([^}]*)\}/.exec(
       doc,
     )?.[1] ?? ''
   expectTrue('the cut edges are redrawn', diagonals.includes('linear-gradient(45deg'))
   expectTrue(
     'in the same variable the border uses, which is the point of the variable',
-    diagonals.includes('var(--edgec)') && rule.includes('border: 1px solid var(--edgec)'),
+    diagonals.includes('var(--edgec)') && rule.includes(`border: ${EDGE_PX}px solid var(--edgec)`),
   )
   expectTrue(
     'and they are the size of the cut',
@@ -1490,8 +1603,8 @@ console.log("\nD. the viewer's row wears the inventory's focus treatment")
   )
   expectTrue(
     'one at the top right and one at the bottom left',
-    doc.includes('.card li.you::after, .mate.you::after { top: 0; right: 0; }') &&
-      doc.includes('.card li.you::before, .mate.you::before { bottom: 0; left: 0; }'),
+    doc.includes('.card li.you::after, .card.you::after { top: 0; right: 0; }') &&
+      doc.includes('.card li.you::before, .card.you::before { bottom: 0; left: 0; }'),
   )
 
   /**
@@ -1801,12 +1914,20 @@ for (const [rule, selector, property] of [
   expectTrue(`full: ${rule} are promoted`, body.includes(`will-change: ${property}`))
 }
 /**
- * ═══ PROMOTION IS SPENT FIVE TIMES FOR EIGHTEEN LAYERS, WHICH IS THE POINT ═══
+ * ═══ PROMOTION IS SPENT SEVEN TIMES FOR TWENTY LAYERS, WHICH IS THE POINT ═══
  *
  * `will-change` is a real GPU texture per element, so the count of DECLARATIONS
- * is the page's honest promotion budget: five families rather than eighteen
- * sprinkled declarations. A sixth would be promotion on something that does not
- * move, or a layer that got its own rule instead of joining a family.
+ * is the page's honest promotion budget: five background families rather than
+ * eighteen sprinkled declarations, plus the two content tracks. An eighth would
+ * be promotion on something that does not move, or a layer that got its own rule
+ * instead of joining a family.
+ *
+ * ⚠ THE TWO NEW ONES ARE THE DRIFTING LEADERBOARD AND THE DRIFTING TILE ROW, and
+ * they are the largest layers on the page by a wide margin: a track is twelve
+ * cards end to end. That is the real cost of the owner's "having 6 columns we
+ * should have them scroll right to left" and it is counted here rather than
+ * absorbed. Each is ONE declaration on the track, not one per card - the cards
+ * ride it.
  *
  * COUNTED ON THE COMMENT-STRIPPED DOCUMENT. The stylesheet explains itself in
  * prose and that prose says "will-change" out loud, so counting the raw document
@@ -1814,16 +1935,39 @@ for (const [rule, selector, property] of [
  * answer was six.
  */
 expect(
-  'full: and promotion is spent five times for eighteen layers, not sprinkled',
+  'full: and promotion is spent seven times for twenty layers, not sprinkled',
   (stripComments(FULL).match(/will-change:/g) ?? []).length,
-  5,
+  /** orb, beam, sheet, mote, pulse, and the two drifting tracks. */
+  7,
 )
 expect(
   'full: every one of them loops forever',
   (stripComments(FULL).match(/infinite/g) ?? []).length,
-  /** One shared declaration per family: orb, beam, sheet, mote, pulse. */
-  5,
+  7,
 )
+/**
+ * AND A BOARD THAT IS NOT DRIFTING PAYS FOR NEITHER TRACK. Five categories in
+ * five slots sit still, which is both the cheaper case and the answer to "what
+ * if a category goes unavailable again".
+ */
+{
+  const five = renderScoreboard({
+    board: rankBoard(ROWS, { categories: enabledCategories().slice(0, 5) }),
+    player: playerPanelFrom(ROWS[0]!, ROWS, { categories: enabledCategories().slice(0, 5) }),
+    motion: 'full',
+  })
+  expect(
+    'full: five in five slots promotes only the five background families',
+    (stripComments(five).match(/will-change:/g) ?? []).length,
+    5,
+  )
+  expectTrue('full: and emits no marquee at all', !five.includes('@keyframes marquee'))
+  expect(
+    'full: and lays out five columns, once each',
+    five.split('class="col c-').length - 1,
+    10,
+  )
+}
 
 /**
  * ═══ EACH ORB'S PATH CLOSES, WHICH IS WHAT STOPS THE JUMP ═══
@@ -1957,7 +2101,7 @@ for (const sheet of ['drift', 'weave']) {
  * so its footprint on the page is the bounding box of the rotation:
  * `w*cos + h*sin` wide, centered on the element's own center because that is
  * where `transform-origin` defaults to. At 0% the right edge of that box has to
- * be left of zero and at 100% its left edge has to be past `BOARD_WIDTH`.
+ * be left of zero and at 100% its left edge has to be past `DESIGN_WIDTH`.
  *
  * IT IS RECOMPUTED HERE RATHER THAN ASSERTED AS TWO MAGIC NUMBERS, because
  * every one of the five inputs is a number somebody will nudge by eye - the
@@ -2000,7 +2144,7 @@ for (const sweep of ['bm1', 'bm2']) {
     const last = at(Number(ends[1]![1]))
 
     const clear = (x: number): boolean =>
-      x + footprint / 2 < 0 || x - footprint / 2 > BOARD_WIDTH
+      x + footprint / 2 < 0 || x - footprint / 2 > DESIGN_WIDTH
 
     expectTrue(
       `full: the ${sweep} sweep starts entirely off the surface (${(first - footprint / 2).toFixed(0)}..${(first + footprint / 2).toFixed(0)}px)`,
@@ -2013,7 +2157,7 @@ for (const sweep of ['bm1', 'bm2']) {
     /** And it has to actually cross, rather than leave and come back. */
     expectTrue(
       `full: and it crosses the whole board on the way`,
-      Math.abs(last - first) > BOARD_WIDTH,
+      Math.abs(last - first) > DESIGN_WIDTH,
     )
     expect(
       `full: and the ${sweep} sweep does not change angle on the way across`,
@@ -2185,28 +2329,103 @@ expectTrue(
   SQUAD_RENDER.includes('<div id="board" class="panel on"'),
 )
 
-console.log('\nD. the squad slide, rendered')
+console.log('\nD. the squad slide is cards now, and the color is not on the type')
 
+/**
+ * ═══ THE OWNER THREW OUT THE TABLE AND KEPT THE COLOR ═══
+ *
+ * 2026-09-11: "The squads page doesn't have any transitions it seems, and the
+ * column font colors are just.... too much lol. I prefer cards for each of the
+ * players please."
+ *
+ * WHAT THIS SECTION USED TO ASSERT WAS THE THING HE REJECTED: one heading row of
+ * five category-colored labels, one full-width row per mate, and each mate's
+ * NAME painted in their blip color. Nine colored strings of type on one slide.
+ */
 {
+  const mates = 3
+  const stats = enabledCategories().length
+
   expect(
-    'one heading per category',
-    SQUAD_RENDER.split('class="mlabel"').length - 1,
-    enabledCategories().length,
+    'one card per mate',
+    SQUAD_RENDER.split('<section class="card mate').length - 1,
+    mates,
   )
-  expect('one row per mate', SQUAD_RENDER.split('class="mate').length - 1, 3)
-  expect('the viewer is marked once', SQUAD_RENDER.split('class="mate you').length - 1, 1)
+  expect('the viewer is marked once', SQUAD_RENDER.split('class="card mate you').length - 1, 1)
+  expect(
+    'and every card lists every category',
+    SQUAD_RENDER.split('class="mlabel"').length - 1,
+    mates * stats,
+  )
+  /**
+   * IT IS THE LEADERBOARD'S OWN ELEMENT, which is what makes the two slides read
+   * as one board and what gives the squad slide the entrance it was missing: the
+   * stagger, the border, the sheen and the square corners all key off `.card`.
+   */
+  expectTrue(
+    "a squad card is a '.card' inside a '.col', exactly like a leaderboard card",
+    SQUAD_RENDER.includes('<div class="col sqcol sq-0"><section class="card mate'),
+  )
+  expectTrue(
+    'and there is no heading row left to sit outside the animated set',
+    !SQUAD_RENDER.includes('class="shead"') && !SQUAD_RENDER.includes('class="smates"'),
+  )
 
   /**
-   * AND EVERY ROW CARRIES ITS MATE'S OWN COLOUR, the viewer's included. The
-   * viewer's row is the one that can lose it: `.mate.you` sets the `background`
-   * shorthand, which zeroes `background-image`, so the color rule has to be two
-   * classes deep to win. A single-class rule would leave exactly one row grey
-   * and it would be the row the player is looking for.
+   * ═══ THE BLIP COLOR IS FILL, AND IT IS NOT ON ONE CHARACTER ═══
+   *
+   * Every mate's card is painted in the color their minimap blip is - the one
+   * color on this board that this console did not choose - the same way a
+   * category paints a leaderboard card: the whole fill, the header band, and the
+   * focus edge on the viewer's own. What must NOT happen is the thing he called
+   * too much: that color landing in a `color:` declaration.
    */
-  expect('one color rule per mate', SQUAD_RENDER.split('.mate.sqc-').length - 1, 6)
+  expect(
+    'one fill rule per mate',
+    (SQUAD_RENDER.match(/\.sq-\d \.card \{/g) ?? []).length,
+    mates,
+  )
+  expect(
+    'and one name band per mate',
+    (SQUAD_RENDER.match(/\.sq-\d \.card h2 \{/g) ?? []).length,
+    mates,
+  )
+  for (const color of SQUAD_COLORS.slice(0, mates)) {
+    /**
+     * THE COLOR REACHES THE PAGE AS `rgba()` STOPS AND AS DERIVED HEXES, never as
+     * the bare token, because every use of it is a gradient stop or a mix. So the
+     * search is for its CHANNELS, which is what a reader would actually see.
+     */
+    const channels = parseHex(color)
+    expectTrue(`${color} parses`, channels !== null)
+    /** `parseHex` returns 0..1 for the luminance maths; CSS wants 0..255. */
+    const [r, g, b] = (channels ?? [0, 0, 0]).map((v) => Math.round(v * 255))
+    const token = `rgba(${r}, ${g}, ${b}, `
+    let at = SQUAD_RENDER.indexOf(token)
+    let seen = 0
+    while (at !== -1) {
+      seen++
+      const property = propertyAt(SQUAD_RENDER, at)
+      expectTrue(
+        `a mate's ${color} lands in ${property}, which is fill and not ink`,
+        property === 'background-image' || property === 'background-color',
+      )
+      at = SQUAD_RENDER.indexOf(token, at + 1)
+    }
+    expectTrue(`and ${color} is actually painted (${seen} stops)`, seen > 0)
+    /**
+     * AND IT IS NEVER INK, WHICH IS THE WHOLE OF HIS NOTE. `7112db1` set
+     * `.mate.sqc-N .mname { color: <blip> }` and that one declaration is what
+     * "the column font colors are just.... too much" was about.
+     */
+    expectTrue(
+      `${color} is in no color: declaration anywhere`,
+      !new RegExp(`color:\s*${color}\s*;`, 'i').test(SQUAD_RENDER),
+    )
+  }
   expectTrue(
-    "and the viewer's row is one of them",
-    SQUAD_RENDER.includes('class="mate you sqc-'),
+    "the viewer's card takes the focus edge in their own color",
+    /\.sq-\d \.card\.you \{\n  --edgec: #/.test(SQUAD_RENDER),
   )
 
   /**
@@ -2219,6 +2438,297 @@ console.log('\nD. the squad slide, rendered')
   expectTrue('a hostile squad mate name does not survive as markup', !SQUAD_RENDER.includes('<script>alert(1)'))
   expectTrue('it is escaped instead', SQUAD_RENDER.includes('&lt;script&gt;alert(1)&lt;/script&gt;'))
   expect('and there is still exactly one script element', SQUAD_RENDER.split('<script').length - 1, 1)
+
+  /**
+   * ═══ AND THE SLIDE ARRIVES THE WAY THE OTHER TWO DO ═══
+   *
+   * Owner: "The squads page doesn't have any transitions it seems."
+   *
+   * IT HAD ONE AND IT WAS RUNNING. Driving the served document in a browser and
+   * sampling computed style 90ms into a swap onto the squad slide returned
+   * opacity 0.29 / 0.07 / 0 / 0 down the four rows with delays of 0, 50, 100 and
+   * 150ms. What was missing is that the five CATEGORY HEADINGS - the only
+   * saturated, high-contrast thing on the slide - were in `.shead`, which was in
+   * none of the animated selectors, so they snapped into place at full opacity
+   * while four near-black bars drifted up behind them.
+   *
+   * THE HEADINGS ARE GONE WITH THE TABLE, and what remains is `.col` cards, which
+   * take the same computed stagger the leaderboard and the tile row take. So the
+   * assertion is that NOTHING on this slide is outside the animated set.
+   */
+  const css = stripComments(SQUAD_RENDER)
+  const animated = /\n\.card, \.tile, \.stitle \{\n  opacity: 0;/.test(css)
+  expectTrue('every arriving surface is named in one rule', animated)
+  expectTrue(
+    'and the squad card is one of them, because it is a .card',
+    SQUAD_RENDER.includes('class="card mate'),
+  )
+  for (let i = 1; i <= 3; i++) {
+    expectTrue(
+      `squad card ${i} takes the shared column stagger`,
+      css.includes(`.col:nth-child(${i}) .card, .col:nth-child(${i}) .tile { transition-delay:`),
+    )
+  }
+}
+
+console.log('\nD. 1080p is one zoom over a design that was judged at 720p')
+
+/**
+ * ═══ THE SURFACE MOVED AND THE LAYOUT DID NOT, WHICH IS THE WHOLE TRICK ═══
+ *
+ * Owner, 2026-09-11: "what resolution are we using for the DUI right now? If
+ * it's still 720p can we bump it to 1080p or 1440p?" ... "Yeah let's go 1080p"
+ *
+ * He asked for a SHARPER board, not a smaller one. Nothing on this page is
+ * authored in relative units, so moving the surface to 1920x1080 and leaving the
+ * type where it is makes every glyph, gutter and border two thirds of its former
+ * share of the screen. The design therefore stays in its own pixels and the
+ * document is scaled to the surface.
+ */
+expect('the surface is what the game client is told to create', BOARD_WIDTH, 1920)
+expect('on both axes', BOARD_HEIGHT, 1080)
+expect('and the design it carries is the one that was looked at', DESIGN_WIDTH, 1280)
+expect('on both axes too', DESIGN_HEIGHT, 720)
+/**
+ * ONE ZOOM CANNOT SATISFY TWO DIFFERENT RATIOS. A mismatch would run content off
+ * one axis with nothing raising an error anywhere, which is the same class of
+ * silent failure as the width/height contract with `BR.Config.Board`.
+ */
+expect(
+  'the two sizes are the same shape, so one scale serves both axes',
+  BOARD_WIDTH / DESIGN_WIDTH,
+  BOARD_HEIGHT / DESIGN_HEIGHT,
+)
+expect('and UI_SCALE is that ratio', UI_SCALE, BOARD_WIDTH / DESIGN_WIDTH)
+
+for (const [name, doc] of LEVELS) {
+  /**
+   * `zoom` AND NOT `transform: scale()`. A transform is a compositor operation
+   * and Blink may raster the subtree at 1x and stretch it, which is precisely
+   * the upscaled softness he is asking to be rid of. `zoom` is a LAYOUT scale:
+   * the document is laid out and every glyph rasterized at the scaled size.
+   */
+  expectTrue(`${name}: the body carries the zoom`, doc.includes(`zoom: ${UI_SCALE};`))
+  expectTrue(
+    `${name}: and nothing reaches for a transform to do it`,
+    !stripComments(doc).includes('scale('),
+  )
+  /**
+   * THE ZOOM IS ON THE BODY AND THE ROOT CARRIES THE REAL SIZE, and that is not
+   * a style preference. A `zoom` on the root scales the root's CONTENTS but
+   * leaves the initial containing block alone, so an `html` sized in design
+   * pixels paints a design-sized document in the corner of a 1920x1080 surface
+   * with the rest left black. That is what it did the first time it was rendered
+   * and looked at, which is the only way it would ever have been caught.
+   */
+  expectTrue(
+    `${name}: the root is the real surface`,
+    new RegExp(`html \\{[^}]*width: ${BOARD_WIDTH}px;[^}]*height: ${BOARD_HEIGHT}px;`).test(doc),
+  )
+  expectTrue(
+    `${name}: and the body is the design`,
+    new RegExp(`body \\{[^}]*width: ${DESIGN_WIDTH}px;[^}]*height: ${DESIGN_HEIGHT}px;`).test(doc),
+  )
+}
+
+console.log('\nD. six categories drift through five slots, seamlessly')
+
+/**
+ * ═══ THE OWNER SETTLED THE LAYOUT AND THE SEAM IS THE WAY IT FAILS ═══
+ *
+ * "I think the screen being 5 wide makes sense and having 6 columns we should
+ * have them scroll right to left".
+ *
+ * A MARQUEE FAILS BY JUMPING. The track carries two copies of the columns and
+ * translates left by exactly ONE copy's width; at the instant it restarts, copy
+ * two occupies the pixels copy one occupied at the start, so the frame before
+ * the wrap and the frame after it are the same image. Everything below
+ * recomputes that rather than reading it out of the stylesheet, because a
+ * comment claiming seamlessness is worth nothing and a visible cut every
+ * fifty-four seconds is the most obvious defect possible on a wall somebody
+ * stands in front of for a whole warmup.
+ */
+{
+  const w = columnWidth(SLOTS)
+  const stride = w + 12
+
+  for (let count = SLOTS + 1; count <= 8; count++) {
+    const shift = count * stride
+    /** Two copies, one gap between every pair, so the last gap is not doubled. */
+    const trackWidth = 2 * count * stride - 12
+
+    /**
+     * THE WINDOW IS NEVER EMPTY. At the far end of the cycle it runs from
+     * `shift` to `shift + INNER_WIDTH`, so the track has to be at least that
+     * long. This holds for any count past SLOTS by construction, because SLOTS
+     * cards and their gutters already fill the safe area - but "by construction"
+     * is exactly the kind of claim that stops being true when somebody changes
+     * one of the three numbers.
+     */
+    expectTrue(
+      `${count} cards: the window is covered at the wrap (${trackWidth}px of track, ${shift + INNER_WIDTH}px needed)`,
+      trackWidth >= shift + INNER_WIDTH,
+    )
+    /**
+     * AND THE SHIFT IS A WHOLE NUMBER OF STRIDES. A fractional shift is a seam
+     * that is invisible for the first few cycles and then drifts.
+     */
+    expect(`${count} cards: the shift is exactly ${count} strides`, shift % stride, 0)
+    expect(
+      `${count} cards: and the shift is half the track plus one gutter`,
+      shift * 2 - 12,
+      trackWidth,
+    )
+  }
+
+  /** The rate is a named constant he can tune, like the three dwells. */
+  expectTrue('the drift rate is a real duration', SCROLL_MS_PER_CARD > 0)
+  expectTrue(
+    `a card is readable for a useful time (${(SCROLL_MS_PER_CARD * SLOTS) / 1000}s on screen)`,
+    SCROLL_MS_PER_CARD * SLOTS >= 20_000,
+  )
+  /**
+   * AND IT IS NOT TIED TO THE DWELL ON PURPOSE. The page never reloads during a
+   * warmup, so the track keeps drifting while the other slides are up and the
+   * leaderboard comes back at a different offset each time. Tying them would
+   * make every visit start on MOST WINS and the sixth card the one nobody ever
+   * sees.
+   */
+  expectTrue(
+    'the cycle is longer than one dwell, so successive visits show different cards',
+    SCROLL_MS_PER_CARD * 6 > BOARD_DWELL_MS,
+  )
+}
+
+/** The emitted stylesheet agrees with the arithmetic above. */
+{
+  const w = columnWidth(SLOTS)
+  const shift = enabledCategories().length * (w + 12)
+  expectTrue(
+    `the leaderboard track shifts exactly one copy (${shift}px)`,
+    FULL.includes(`translate3d(-${shift}px, 0, 0)`),
+  )
+  expectTrue(
+    'linear, because an eased marquee breathes and breaks its own seam',
+    /animation: marqueeBoard \d+ms linear infinite/.test(FULL),
+  )
+  expectTrue(
+    'the two tracks have their own keyframes, because their counts can differ',
+    FULL.includes('@keyframes marqueeBoard') && FULL.includes('@keyframes marqueeTiles'),
+  )
+  /**
+   * THE LEADERBOARD DROPS A CATEGORY NOTHING HAS BEEN DONE IN AND THE TILE ROW
+   * NEVER DOES, so on a young server the board is five cards while the tile row
+   * is six. One shared shift would translate the board's track by six strides
+   * when its copy is five wide: a jump of a whole card, forever. Driven here.
+   */
+  const young = renderScoreboard({
+    board: rankBoard(ROWS, { categories: enabledCategories().slice(0, 5) }),
+    player: playerPanelFrom(ROWS[0]!, ROWS, {}),
+    motion: 'full',
+  })
+  expectTrue(
+    'a five-card board beside a six-tile row drifts only the tiles',
+    !young.includes('@keyframes marqueeBoard') && young.includes('@keyframes marqueeTiles'),
+  )
+  expectTrue(
+    'and the cards are still slot-width, so the two slides agree',
+    young.includes(`width: ${columnWidth(SLOTS)}px`),
+  )
+}
+
+/**
+ * AND THE DRIFT IS `full` ONLY. The motion knob is what somebody sets when the
+ * pad is struggling and a continuously drifting leaderboard is continuous
+ * motion. At the lower levels the cards fall back to fitting all six in the safe
+ * area: a slower board is a trade, a sixth category that is never on the wall is
+ * a defect.
+ */
+for (const [name, doc] of [
+  ['transitions', TRANSITIONS],
+  ['off', OFF],
+] as Array<[string, string]>) {
+  expectTrue(`${name}: nothing drifts`, !doc.includes('@keyframes marquee'))
+  expectTrue(
+    `${name}: and all six fit, at the six-column width`,
+    doc.includes(`width: ${columnWidth(enabledCategories().length)}px`),
+  )
+  expect(
+    `${name}: with one copy of each column, not two`,
+    doc.split('class="col c-').length - 1,
+    enabledCategories().length * 2,
+  )
+}
+
+console.log('\nD. each slide has its own light, and PLAYER STATS is pinned')
+
+/**
+ * ═══ TWO NOTES, AND THE SECOND ONE NARROWS THE FIRST ═══
+ *
+ * "Stop using the same boring colors on each page. Change the colors between the
+ * pages please" and then "I like the colors on the player stats page. Keep those
+ * and change the rest".
+ *
+ * THE THREE SLIDES SHARED ONE BACKGROUND. `.wash`, `.vig` and every moving layer
+ * sit UNDER all three panels and every panel was transparent, so recoloring "the
+ * background" would have recolored the slide he asked to keep. The identity is a
+ * PANEL-level wash instead, and the per-player panel has no rule at all.
+ */
+{
+  const doc = stripComments(SQUAD_RENDER)
+  expectTrue('the leaderboard has a light of its own', /#board \{\n  background-image:/.test(doc))
+  expectTrue('and so does the squad slide', /#squad \{\n  background-image:/.test(doc))
+  /**
+   * THIS IS THE ASSERTION THAT WOULD FAIL THE DAY SOMEBODY TIDIES THE THREE
+   * CASES INTO ONE FUNCTION WITH A NEUTRAL DEFAULT. A rule that evaluates to
+   * what the player slide already had is not the same as no rule: it is one
+   * refactor away from moving, and he asked for it not to move.
+   */
+  expectTrue(
+    'and the per-player slide has NO panel rule at all, which is how it is held still',
+    !/#player \{/.test(doc),
+  )
+  /**
+   * THE LEADERBOARD'S IS `BR.RarityInfo`'s LEGENDARY. A leaderboard is the one
+   * surface in the warmup area that is about being best at something, and
+   * legendary is the game's own word for that. It is also the furthest from the
+   * cool cyan-teal the per-player slide keeps.
+   */
+  const boardAt = doc.indexOf('#board {')
+  const boardRule = doc.slice(boardAt, doc.indexOf('\n}', boardAt))
+  expectTrue('the leaderboard light is legendary amber', boardRule.includes('255, 176, 32'))
+  /**
+   * THE SQUAD SLIDE'S IS THE MATES' OWN BLIP COLORS, one light per person, in
+   * the order their cards are. So a different squad is a different colored page
+   * and the slide agrees with the minimap the player is already looking at.
+   * Nothing about it was chosen by this console.
+   */
+  const squadAt = doc.indexOf('#squad {')
+  const squadRule = doc.slice(squadAt, doc.indexOf('\n}', squadAt))
+  for (const color of SQUAD_COLORS.slice(0, 3)) {
+    const [r, g, b] = (parseHex(color) ?? [0, 0, 0]).map((v) => Math.round(v * 255))
+    expectTrue(
+      `the squad wash carries ${color}, because somebody on the slide wears it`,
+      squadRule.includes(`rgba(${r}, ${g}, ${b}, 0.2)`),
+    )
+  }
+  /**
+   * AND WHEN THE COLORS CANNOT BE DERIVED THERE IS NO WASH. `squadColors` is all
+   * or nothing - one mate missing a server id and every index after them is one
+   * seat out - and a squad slide lit by invented colors would be the same lie in
+   * a different property.
+   */
+  const colorless = renderScoreboard({
+    board: rankBoard(ROWS),
+    player: playerPanelFrom(ROWS[0]!, ROWS, {}),
+    squad: squadPanelFrom({ members: SQUAD_PAD, careerOf: () => null, viewer: VIEWER }),
+    motion: 'full',
+  })
+  expectTrue(
+    'a squad whose colors did not resolve gets the shared background, not an invented one',
+    !/#squad \{/.test(stripComments(colorless)),
+  )
+  expectTrue('and still renders its slide', colorless.includes('id="squad"'))
 }
 
 console.log('\nD. the page cannot throw on the DUI message it is sent')
