@@ -147,36 +147,213 @@ export type MotionLevel = 'full' | 'transitions' | 'off'
  * check pulls them off the catalog and holds them to the same floor.
  */
 export const PALETTE = {
-  page: '#0d1017',
-  card: '#171c26',
-  edge: '#2a3240',
+  /** The floor of the page, under every gradient. */
+  page: '#070a11',
+  /** The neutral a card's fill is built from, before its category tints it. */
+  card: '#141a26',
+  /** Where every card gradient lands at the bottom. */
+  deep: '#0a0e17',
+  /**
+   * THE ONE-PIXEL EDGE, AND IT IS NEUTRAL ON PURPOSE AND FOREVER. Owner: "Don't
+   * add the low-effort color borders." The cards are colored now - deeply, in
+   * their own gradients - and not one of those colors is allowed to touch a
+   * border. `scoreboard.check.ts` reads the CSS property every accent lands in
+   * and refuses anything but ink and fill.
+   */
+  edge: '#2b3446',
   text: '#f2f5fa',
   label: '#9fb0cc',
-  muted: '#7d8ca6',
-  /** The highlighted row's fill. See `.you` in the stylesheet. */
-  you: '#233049',
+  muted: '#8698b5',
+  /** The highlighted row's neutral fill, under its category's own gradient. */
+  you: '#202a3c',
   /** The numeral on a highlighted row, which needs more than `muted` gives. */
   youMuted: '#b9c8e2',
+  /**
+   * The project's own two, used where the board is speaking for itself rather
+   * than for a category: the player's name band and the page's own light.
+   * `--color-royale-accent` and `--color-volts` in the gamemode's `index.css`.
+   */
+  cyan: '#22d3ee',
+  gold: '#d9ae35',
 } as const
 
-/** Text-on-background pairs the check holds to a contrast floor. */
-export const CONTRAST_PAIRS: ReadonlyArray<[string, string, string]> = [
-  ['card title', PALETTE.label, PALETTE.card],
-  ['entry name', PALETTE.text, PALETTE.card],
-  ['entry value', PALETTE.text, PALETTE.card],
-  ['rank numeral', PALETTE.muted, PALETTE.card],
-  ['player name', PALETTE.text, PALETTE.page],
-  ['tile rank', PALETTE.muted, PALETTE.card],
+/**
+ * ═══ THE COLOR MATH, WHICH IS WHY A CATEGORY CARRIES ONE HEX AND WEARS EIGHT
+ *     ═══
+ *
+ * A card is a gradient from a tinted top to a near-black bottom, with a header
+ * band, a podium of three numerals at decreasing heat, a leader's number in a
+ * bright tint and a floor glow under the tile's numeral. Writing those out per
+ * category would be forty hexes maintained by hand, five of which somebody
+ * would eventually get subtly wrong - and the day a sixth category is switched
+ * on, forty-eight.
+ *
+ * SO THEY ARE DERIVED, IN sRGB, AT RENDER TIME. Plain componentwise mixing
+ * rather than anything perceptual: the output has to be a six-digit hex CEF 103
+ * parses without a downlevel step, `color-mix()` is Chrome 111, and the inputs
+ * are all light saturated colors being pulled toward two near-blacks, which is
+ * the case where sRGB mixing and a perceptual space disagree least.
+ *
+ * AND EVERY DERIVED PAIR THAT CARRIES TEXT IS MEASURED. `contrastPairs()` below
+ * returns the real composited backgrounds rather than the untinted `card`, so
+ * the floor is held against what a player actually looks at.
+ */
+function channels(hex: string): [number, number, number] {
+  const v = hex.replace('#', '')
+  return [
+    parseInt(v.slice(0, 2), 16),
+    parseInt(v.slice(2, 4), 16),
+    parseInt(v.slice(4, 6), 16),
+  ]
+}
+
+function hex(c: readonly [number, number, number]): string {
+  return `#${c.map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('')}`
+}
+
+/** `t` of `b` over `a`. `mix(card, accent, 0.13)` is a card with a hint of it. */
+export function mix(a: string, b: string, t: number): string {
+  const x = channels(a)
+  const y = channels(b)
+  return hex([0, 1, 2].map((i) => x[i]! + (y[i]! - x[i]!) * t) as unknown as [number, number, number])
+}
+
+/** The same color at an alpha, for a gradient stop that has to fade to nothing. */
+export function rgba(color: string, alpha: number): string {
+  const [r, g, b] = channels(color)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
+/**
+ * Everything one category's surfaces are painted with, from its one accent.
+ *
+ * THE NAMES ARE THE SURFACES AND NOT THE COLORS, so a reader of the stylesheet
+ * below can see what each value is FOR without decoding a percentage.
+ */
+export function tone(accent: string): {
+  accent: string
+  /** The lightest point of the card: its tinted top. Text is measured on this. */
+  top: string
+  /** Where the tint has almost gone, a little under half way down. */
+  mid: string
+  /** The top of the header band, composited, which is lighter again. */
+  band: string
+  /** The numeral on the leading row, and the numeral on a tile. */
+  bright: string
+  /** Second and third on the podium, fading toward the neutral rest. */
+  second: string
+  third: string
+  /** The tile is tinted harder than a card, because it is one number. */
+  tileTop: string
+  /** Your own row, composited: the category's light laid over the slate. */
+  youTop: string
+} {
+  const top = mix(PALETTE.card, accent, 0.13)
+  return {
+    accent,
+    top,
+    mid: mix(PALETTE.card, accent, 0.05),
+    /**
+     * 0.14 AND NOT 0.22, AND THE NUMBER CAME OUT OF THE CONTRAST GATE. At 0.22
+     * the band was handsome and three of the six labels measured between 4.0
+     * and 4.4 against it - under the floor, on a surface that is read at a
+     * distance through a downsampled texture. The band is still the loudest
+     * thing on the card; it is just not brighter than its own writing.
+     */
+    band: mix(top, accent, 0.14),
+    bright: mix(accent, '#ffffff', 0.42),
+    second: mix(accent, PALETTE.muted, 0.45),
+    third: mix(accent, PALETTE.muted, 0.75),
+    tileTop: mix(PALETTE.card, accent, 0.19),
+    youTop: mix(PALETTE.you, accent, 0.3),
+  }
+}
+
+/**
+ * The player's name sits on a band of the project's own cyan.
+ *
+ * COMPOSITED THROUGH THE BACKGROUND AND NOT OVER `page`, because the band is
+ * translucent and the brightest part of the wash is behind exactly where it
+ * sits: the top-left of the surface, where the cyan light is. Measuring it
+ * against the flat page would measure a darker surface than the one the name is
+ * on. So this is the wash's own lightest stop, plus that light, plus the band.
+ */
+const NAME_BAND = mix(mix('#0c1a25', PALETTE.cyan, 0.2), PALETTE.cyan, 0.26)
+/** A squad row's neutral top, before its mate's own color is laid over it. */
+const MATE_TOP = mix(PALETTE.card, '#ffffff', 0.04)
+
+/**
+ * Every text-on-background pair on this board, against what is really behind it.
+ *
+ * ═══ IT IS A FUNCTION NOW AND IT WAS A LIST, BECAUSE THE BACKGROUNDS ARE
+ *     DERIVED ═══
+ *
+ * The old list measured every accent against the flat `#171c26` a card used to
+ * be. There is no flat card any more: the surface under a label is that card's
+ * own header band, which is the accent at 22% over a top that is already the
+ * accent at 13% - LIGHTER than the old card, and therefore a harder test, which
+ * is exactly why it has to be the one that runs. Measuring against the
+ * untinted base would have been measuring a surface nobody looks at.
+ *
+ * THE WORST CASE OF A GRADIENT IS ITS LIGHTEST STOP, since every piece of type
+ * here is light on dark. Each card and tile runs from a tinted top down to
+ * `deep`, so the top is what is measured and the rest of the fill is strictly
+ * safer.
+ */
+export function contrastPairs(
+  categories: ReadonlyArray<{ key: string; accent: string }>,
+  squadColors: readonly string[] = [],
+): Array<[string, string, string]> {
+  const pairs: Array<[string, string, string]> = [
+    /**
+     * THE HEADING'S NEUTRAL FALLBACK, which nothing should ever render. Every
+     * card on screen gets a category class and the class sets the label's own
+     * color; this is what a card whose class had no rule would show, and it is
+     * measured so that the failure mode is dull rather than illegible.
+     */
+    ['card title', PALETTE.label, PALETTE.card],
+    ['entry name', PALETTE.text, PALETTE.card],
+    ['entry value', PALETTE.text, PALETTE.card],
+    ['rank numeral', PALETTE.muted, PALETTE.card],
+    ['player name', PALETTE.text, NAME_BAND],
+    ['tile rank', PALETTE.muted, PALETTE.card],
+    ['mate name', PALETTE.text, MATE_TOP],
+    ['mate value', PALETTE.text, MATE_TOP],
+    /**
+     * THE HIGHLIGHTED ROW IS A SECOND BACKGROUND AND EVERY TEXT ON IT IS A NEW
+     * PAIR. `muted` on `you` measures below the floor, which is the whole
+     * reason `youMuted` exists; leaving it would have put the one row the owner
+     * asked to make MORE visible below the floor the rest of the board meets.
+     */
+    ['your name', PALETTE.text, PALETTE.you],
+    ['your numeral', PALETTE.youMuted, PALETTE.you],
+  ]
+
+  for (const c of categories) {
+    const t = tone(c.accent)
+    pairs.push(
+      [`${c.key} label`, t.accent, t.band],
+      [`${c.key} leader`, t.bright, t.top],
+      [`${c.key} second`, t.second, t.top],
+      [`${c.key} third`, t.third, t.top],
+      [`${c.key} tile value`, t.bright, t.tileTop],
+      [`${c.key} your name`, PALETTE.text, t.youTop],
+    )
+  }
+
   /**
-   * THE HIGHLIGHTED ROW IS A SECOND BACKGROUND AND EVERY TEXT ON IT IS A NEW
-   * PAIR. `muted` on `you` measures 3.88:1 and does not pass, which is the
-   * whole reason `youMuted` exists; leaving it would have put the one row the
-   * owner asked to make MORE visible below the floor the rest of the board
-   * meets.
+   * A squad mate's name is painted in their own blip color, over the strongest
+   * point of their row's wash - which is the left end, which is where the name
+   * is. That first stop is 0.12 because measuring it at 0.26 put three of the
+   * game's eight colors under the floor, and these eight are not ours to
+   * adjust: they are what is on the minimap.
    */
-  ['your name', PALETTE.text, PALETTE.you],
-  ['your numeral', PALETTE.youMuted, PALETTE.you],
-]
+  for (const color of squadColors) {
+    pairs.push([`mate ${color}`, color, mix(MATE_TOP, color, 0.12)])
+  }
+
+  return pairs
+}
 
 /**
  * Every string that reaches the document goes through this.
@@ -252,11 +429,17 @@ const BODY = `'Barlow', 'Segoe UI', sans-serif`
  * 103)." What follows is that background, and every decision in it is either the
  * CEF 103 constraint or the frame-cost one from the header.
  *
- * FOUR MOVING LAYERS AND NOT ONE MORE. Three soft orbs that wander, and the
- * striped sheet that was already here. Each is its own promoted layer, which is
- * a real GPU texture on the player's machine, so the count is the budget: the
- * three orbs and the sheet come to roughly nine megabytes of layer raster, once,
- * against a client already holding a battle royale map.
+ * FIVE MOVING LAYERS AND NOT ONE MORE. Three soft orbs that wander, a blade of
+ * light that sweeps across every half minute, and the striped sheet. Each is
+ * its own promoted layer, which is a real GPU texture on the player's machine,
+ * so the count is the budget: the five come to roughly twelve megabytes of
+ * layer raster, once, against a client already holding a battle royale map.
+ *
+ * AND THEY ARE LOUD NOW, WHICH IS THE POINT OF THIS PASS. The orbs were drawn
+ * at 0.13 to 0.20 alpha over a near-black page and the owner's verdict on the
+ * result was that the board looked flat and cheap. They are the page's LIGHT
+ * rather than its texture: the cyan reaches 0.42, the gold 0.34, and the static
+ * wash underneath them carries real color of its own.
  *
  * ONLY `transform` MOVES. The orbs are radial gradients rasterized ONCE at load
  * and then translated by the compositor; the sheet is a repeating linear
@@ -304,18 +487,18 @@ const BODY = `'Barlow', 'Segoe UI', sans-serif`
  * twice and compare it. The route supplies the real numbers. See `PHASE_COUNT`.
  */
 
-/** One phase per moving layer: three orbs, then the sheet. */
-export const PHASE_COUNT = 4
+/** One phase per moving layer: three orbs, the light sweep, then the sheet. */
+export const PHASE_COUNT = 5
 
 /**
  * The loop lengths, in seconds, in the same order as the phases.
  *
- * DELIBERATELY NOT MULTIPLES OF EACH OTHER. Four layers on 41, 53, 67 and 20
- * second loops only return to the same arrangement once every few hours, so the
- * background does not visibly repeat inside one warmup even before the random
- * phase offsets are applied.
+ * DELIBERATELY NOT MULTIPLES OF EACH OTHER. Five layers on 41, 53, 67, 29 and
+ * 20 second loops only return to the same arrangement once every few hours, so
+ * the background does not visibly repeat inside one warmup even before the
+ * random phase offsets are applied.
  */
-const PERIODS = [41, 53, 67, 20] as const
+const PERIODS = [41, 53, 67, 29, 20] as const
 
 /**
  * `-<n>s`, from a phase in [0, 1).
@@ -344,43 +527,77 @@ function driftStyles(phases: readonly number[]): string {
   animation-timing-function: ease-in-out;
 }
 .o1 {
-  left: -180px;
-  top: -220px;
-  width: 720px;
-  height: 720px;
+  left: -240px;
+  top: -300px;
+  width: 860px;
+  height: 860px;
   background-image: radial-gradient(circle closest-side,
-    rgba(124, 196, 255, 0.20) 0%,
-    rgba(124, 196, 255, 0.07) 55%,
-    rgba(124, 196, 255, 0) 100%);
+    ${rgba(PALETTE.cyan, 0.26)} 0%,
+    ${rgba(PALETTE.cyan, 0.1)} 45%,
+    ${rgba(PALETTE.cyan, 0)} 100%);
   animation-name: o1;
   animation-duration: ${PERIODS[0]}s;
   animation-delay: ${d(0)};
 }
 .o2 {
-  left: 760px;
-  top: 300px;
-  width: 660px;
-  height: 660px;
+  left: 740px;
+  top: 280px;
+  width: 800px;
+  height: 800px;
   background-image: radial-gradient(circle closest-side,
-    rgba(201, 166, 255, 0.19) 0%,
-    rgba(201, 166, 255, 0.06) 55%,
-    rgba(201, 166, 255, 0) 100%);
+    ${rgba(PALETTE.gold, 0.2)} 0%,
+    ${rgba(PALETTE.gold, 0.07)} 45%,
+    ${rgba(PALETTE.gold, 0)} 100%);
   animation-name: o2;
   animation-duration: ${PERIODS[1]}s;
   animation-delay: ${d(1)};
 }
 .o3 {
-  left: 380px;
-  top: -300px;
-  width: 560px;
-  height: 560px;
+  left: 320px;
+  top: -360px;
+  width: 680px;
+  height: 680px;
   background-image: radial-gradient(circle closest-side,
-    rgba(110, 231, 168, 0.13) 0%,
-    rgba(110, 231, 168, 0.04) 55%,
-    rgba(110, 231, 168, 0) 100%);
+    rgba(45, 212, 191, 0.18) 0%,
+    rgba(45, 212, 191, 0.06) 45%,
+    rgba(45, 212, 191, 0) 100%);
   animation-name: o3;
   animation-duration: ${PERIODS[2]}s;
   animation-delay: ${d(2)};
+}
+/* ── THE SWEEP ───────────────────────────────────────────────────────────────
+   A tall soft blade of light that crosses the whole board every ${PERIODS[3]}
+   seconds and is off the surface the rest of the time. It is the one layer that
+   is meant to be NOTICED rather than felt: the orbs are weather and this is an
+   event, which is what keeps a wall somebody stands in front of for a whole
+   warmup from being one still picture.
+
+   ITS LOOP DOES NOT NEED TO CLOSE THE WAY AN ORB'S DOES, and that is geometry
+   rather than an exemption. An orb wanders inside the frame, so a 100% keyframe
+   that is not the 0% one teleports in full view. This one STARTS AND ENDS
+   COMPLETELY OUTSIDE the 1280px surface - its right edge is still left of zero
+   at 0%, its left edge is already past 1280 at 100% - so the instant it resets
+   there is nothing on screen to jump. scoreboard.check.ts recomputes both
+   ends against the board width rather than taking that on trust. */
+.beam {
+  position: absolute;
+  top: -320px;
+  left: -560px;
+  width: 300px;
+  height: 1400px;
+  background-image: linear-gradient(90deg,
+    rgba(190, 235, 255, 0) 0%,
+    rgba(190, 235, 255, 0.05) 38%,
+    rgba(214, 244, 255, 0.10) 50%,
+    rgba(190, 235, 255, 0.05) 62%,
+    rgba(190, 235, 255, 0) 100%);
+  will-change: transform;
+  animation: beam ${PERIODS[3]}s linear infinite;
+  animation-delay: ${d(3)};
+}
+@keyframes beam {
+  from { transform: translate3d(0px, 0, 0) rotate(16deg); }
+  to   { transform: translate3d(2360px, 0, 0) rotate(16deg); }
 }
 @keyframes o1 {
   0%   { transform: translate3d(0, 0, 0); }
@@ -409,21 +626,25 @@ function driftStyles(phases: readonly number[]): string {
   left: 0;
   width: 1440px;
   height: 820px;
-  opacity: 0.5;
+  opacity: 0.75;
   background-image: repeating-linear-gradient(
     120deg,
-    rgba(255, 255, 255, 0.045) 0px,
-    rgba(255, 255, 255, 0.045) 2px,
+    rgba(255, 255, 255, 0.075) 0px,
+    rgba(255, 255, 255, 0.075) 2px,
     rgba(255, 255, 255, 0) 2px,
-    rgba(255, 255, 255, 0) 80px,
-    rgba(124, 196, 255, 0.05) 80px,
-    rgba(124, 196, 255, 0.05) 83px,
-    rgba(255, 255, 255, 0) 83px,
+    rgba(255, 255, 255, 0) 44px,
+    ${rgba(PALETTE.cyan, 0.09)} 44px,
+    ${rgba(PALETTE.cyan, 0.09)} 47px,
+    rgba(255, 255, 255, 0) 47px,
+    rgba(255, 255, 255, 0) 104px,
+    ${rgba(PALETTE.gold, 0.07)} 104px,
+    ${rgba(PALETTE.gold, 0.07)} 106px,
+    rgba(255, 255, 255, 0) 106px,
     rgba(255, 255, 255, 0) 160px
   );
   will-change: transform;
-  animation: drift ${PERIODS[3]}s linear infinite;
-  animation-delay: ${d(3)};
+  animation: drift ${PERIODS[4]}s linear infinite;
+  animation-delay: ${d(4)};
 }
 @keyframes drift {
   from { transform: translate3d(0, 0, 0); }
@@ -536,9 +757,18 @@ export function columnWidth(columns: number): number {
   return Math.floor((INNER_WIDTH - (columns - 1) * GUTTER) / columns)
 }
 
-/** One leaderboard row, and the header above five of them. */
+/**
+ * One leaderboard row, and the header band above five of them.
+ *
+ * THE HEADER'S HEIGHT IS PINNED IN THE CSS RATHER THAN LEFT TO ITS PADDING, and
+ * that is what makes this number true. It used to be padding plus whatever line
+ * box Anton produced at that size, which happened to come close to 55 and would
+ * have stopped doing so the next time anybody touched the type - pushing the
+ * fifth row past the bottom of a card that cannot scroll, in the game, on a
+ * wall, with nothing here failing.
+ */
 const ROW_H = 88
-const HEAD_H = 55
+const HEAD_H = 58
 /**
  * 497 IS 55 + 5x88 + 2 AND IT IS EXACT: the header with its dividing border,
  * five rows, and the card's own top and bottom border. It was 501 while the card
@@ -570,6 +800,135 @@ const CARD_MS = 420
  * the travel to use. The two uses are the same constant so they cannot drift.
  */
 const ENTRANCE_PX = 20
+
+/**
+ * ═══ THE COLOR, CATEGORY BY CATEGORY ═══
+ *
+ * One block per category on screen, generated from its accent by `tone()`. This
+ * is where the owner's note actually lands:
+ *
+ *   "your agent is literally just coloring the text. Stop doing low-effort
+ *   things. Color the interface. Color the cards. have gradients. add PIZZAZZ"
+ *
+ * WHAT EACH CATEGORY NOW PAINTS, in order of how much of the surface it is:
+ *
+ *   THE CARD'S WHOLE FILL. A vertical ramp from a top tinted with the accent
+ *   down to near black, plus a wide soft glow bleeding down from above the
+ *   card's top edge. That is the thing that was missing: a card used to be one
+ *   flat grey no matter what it counted.
+ *
+ *   THE HEADER BAND. Its own gradient in the same hue, strongest at the top.
+ *
+ *   THE PODIUM. First, second and third numerals step down from the accent
+ *   toward the neutral the fourth and fifth already use, so the ranking has a
+ *   temperature as well as a number. The leader's VALUE is brighter still.
+ *
+ *   THE VIEWER'S ROW. A wash of the accent across the highlight fill, fading
+ *   out to the right. This is what replaced the slab of blue he called harsh.
+ *
+ *   THE TILE, harder tinted than a card, with the glow at its floor and the
+ *   numeral itself in a bright tint of the hue.
+ *
+ * AND NOT ONE EDGE, ANYWHERE. Every border on this page is `PALETTE.edge`,
+ * neutral grey, at one pixel. `scoreboard.check.ts` finds every occurrence of
+ * every accent in the finished document and reads the CSS property it landed
+ * in; anything that is not ink or fill fails.
+ */
+function categoryStyles(
+  categories: ReadonlyArray<{ key: string; accent: string }>,
+): string {
+  return categories
+    .map(({ key, accent }) => {
+      const t = tone(accent)
+      return `
+.c-${key} .card {
+  background-image:
+    radial-gradient(340px 220px at 50% -8%,
+      ${rgba(accent, 0.26)} 0%,
+      ${rgba(accent, 0.06)} 55%,
+      ${rgba(accent, 0)} 100%),
+    linear-gradient(176deg, ${t.top} 0%, ${t.mid} 46%, ${PALETTE.deep} 100%);
+}
+.c-${key} .card h2 {
+  color: ${accent};
+  background-image: linear-gradient(180deg,
+    ${rgba(accent, 0.14)} 0%,
+    ${rgba(accent, 0.06)} 58%,
+    ${rgba(accent, 0.01)} 100%);
+}
+.c-${key} li:nth-child(1) .pos { color: ${accent}; }
+.c-${key} li:nth-child(2) .pos { color: ${t.second}; }
+.c-${key} li:nth-child(3) .pos { color: ${t.third}; }
+.c-${key} li:nth-child(1) .val { color: ${t.bright}; }
+.c-${key} .card li.you {
+  background-image: linear-gradient(90deg,
+    ${rgba(accent, 0.3)} 0%,
+    ${rgba(accent, 0.11)} 52%,
+    ${rgba(accent, 0.02)} 88%,
+    ${rgba(accent, 0)} 100%);
+}
+.c-${key} .tile {
+  background-image:
+    radial-gradient(300px 230px at 50% 104%,
+      ${rgba(accent, 0.32)} 0%,
+      ${rgba(accent, 0.08)} 55%,
+      ${rgba(accent, 0)} 100%),
+    linear-gradient(178deg, ${t.tileTop} 0%, ${t.mid} 52%, ${PALETTE.deep} 100%);
+}
+.c-${key} .tlabel { color: ${accent}; }
+.c-${key} .tval { color: ${t.bright}; }
+.c-${key} .mlabel { color: ${accent}; }`
+    })
+    .join('\n')
+}
+
+/**
+ * One rule per squad row, in that mate's own blip color.
+ *
+ * INDEXED BY POSITION ON THE SLIDE AND COLORED BY THE GAME'S INDEX. The class
+ * is `sqc-<row>` because a stylesheet needs a selector and the row is what the
+ * markup can name; the COLOR in it came from `squadColors`, which derived it
+ * the way the game does. The two indexes are deliberately not the same number
+ * and must not be confused: the rows are sorted by name and the colors by
+ * server id.
+ *
+ * TWO CLASSES DEEP (`.mate.sqc-0`) SO IT CAN WIN. `.mate.you` sets the
+ * `background` shorthand, which zeroes `background-image`; a single-class rule
+ * would lose to it on specificity no matter where it sat, and the viewer's own
+ * row would be the one row on the slide with no color on it.
+ *
+ * AND WINNING IS WHY THE HIGHLIGHT IS REPEATED IN HERE. The rule below paints an
+ * OPAQUE vertical ramp under the wash, which covers whatever fill it landed on -
+ * so the viewer's row was coming out identical to everybody else's, which is the
+ * one row that must not. The ramp is therefore built from the highlight's own
+ * slate when the mate is the viewer. It is the same cue as the leaderboard's,
+ * expressed where it cannot be overwritten.
+ */
+function squadStyles(
+  mates: ReadonlyArray<{ color: string | null; you: boolean }>,
+): string {
+  return mates
+    .map((mate, i) => {
+      if (!mate.color) return ''
+      const c = mate.color
+      const base = mate.you ? PALETTE.you : PALETTE.card
+      return `
+.mate.sqc-${i} {
+  background-image:
+    linear-gradient(90deg,
+      ${rgba(c, 0.12)} 0%,
+      ${rgba(c, 0.07)} 30%,
+      ${rgba(c, 0.03)} 58%,
+      ${rgba(c, 0)} 80%),
+    linear-gradient(176deg,
+      ${mix(base, '#ffffff', 0.055)} 0%,
+      ${base} 50%,
+      ${mix(base, PALETTE.deep, mate.you ? 0.45 : 1)} 100%);
+}
+.mate.sqc-${i} .mname { color: ${c}; }`
+    })
+    .join('\n')
+}
 
 /**
  * The stylesheet.
@@ -607,8 +966,12 @@ function styles(input: {
   phases: readonly number[]
   columns: number
   squadRows: number
+  /** Every category on screen, deduplicated, in catalog order. */
+  categories: ReadonlyArray<{ key: string; accent: string }>
+  /** The squad rows, in the order they are rendered. See `squadStyles`. */
+  mates: ReadonlyArray<{ color: string | null; you: boolean }>
 }): string {
-  const { motion, phases, columns, squadRows } = input
+  const { motion, phases, columns, squadRows, categories, mates } = input
   const w = columnWidth(columns)
 
   return `
@@ -626,16 +989,28 @@ html, body {
 }
 
 /* ── THE BACKGROUND ──────────────────────────────────────────────────────────
-   .wash is a pair of radial gradients painted once and never touched again.
-   It is the floor of the palette and costs one raster at load and nothing after
-   it. It is emitted at every motion level, because a still gradient is not
-   animation and off should still look like something.
+   .wash is four gradients painted once and never touched again. It is the floor
+   of the palette, it costs one raster at load and nothing after it, and it is
+   emitted at every motion level, because a still gradient is not animation and
+   off should still look like something.
 
-   THE MOVING LAYERS ARE IN driftStyles() AND EXIST ONLY UNDER full: three soft
-   orbs on closed paths and one striped sheet, each promoted, each animating
-   nothing but transform, each started at a random point in its own loop. See
-   that function for the arithmetic and the header for what a frame actually
-   costs on this surface. */
+   IT USED TO BE TWO GRADIENTS AT 0.15 ALPHA OVER A FLAT NEAR-BLACK, which is
+   to say it was invisible: every screenshot of the old board is a black
+   rectangle with five darker rectangles on it. The base is a real diagonal ramp
+   now - deep teal-navy at the top left down to almost nothing at the bottom
+   right - and the two lights on top of it are the project's own cyan and gold
+   at four times the alpha they had.
+
+   NO PURPLE, AND ONE OF THESE USED TO BE PURPLE. br_lib/shared/enums.lua:
+   "NEVER PURPLE, in any slot: purple belongs to the storm alone." The light in
+   the bottom right corner was a pale violet, which is a wall of storm color in
+   the one place in the game a player is safe. It is gold now.
+
+   THE MOVING LAYERS ARE IN driftStyles() AND EXIST ONLY UNDER full: three orbs
+   on closed paths, one blade of light that sweeps across, one striped sheet.
+   Each promoted, each animating nothing but transform, each started at a random
+   point in its own loop. See that function for the arithmetic and the header
+   for what a frame actually costs on this surface. */
 .wash {
   position: absolute;
   top: 0;
@@ -643,14 +1018,37 @@ html, body {
   width: ${BOARD_WIDTH}px;
   height: ${BOARD_HEIGHT}px;
   background-image:
-    radial-gradient(760px 460px at 14% -10%,
-      rgba(124, 196, 255, 0.17) 0%,
-      rgba(124, 196, 255, 0.06) 45%,
-      rgba(124, 196, 255, 0) 100%),
-    radial-gradient(760px 460px at 88% 110%,
-      rgba(201, 166, 255, 0.15) 0%,
-      rgba(201, 166, 255, 0.05) 45%,
-      rgba(201, 166, 255, 0) 100%);
+    radial-gradient(900px 620px at 10% -14%,
+      ${rgba(PALETTE.cyan, 0.2)} 0%,
+      ${rgba(PALETTE.cyan, 0.07)} 42%,
+      ${rgba(PALETTE.cyan, 0)} 100%),
+    radial-gradient(880px 600px at 94% 112%,
+      ${rgba(PALETTE.gold, 0.17)} 0%,
+      ${rgba(PALETTE.gold, 0.05)} 44%,
+      ${rgba(PALETTE.gold, 0)} 100%),
+    radial-gradient(700px 520px at 74% 4%,
+      rgba(45, 212, 191, 0.1) 0%,
+      rgba(45, 212, 191, 0.03) 46%,
+      rgba(45, 212, 191, 0) 100%),
+    linear-gradient(158deg, #0c1a25 0%, #080f18 38%, #06090f 72%, #04060a 100%);
+}
+/* THE VIGNETTE, WHICH IS WHAT MAKES THE CARDS SIT ON SOMETHING. It is painted
+   OVER the moving layers and UNDER the panels, so the light pools get darker
+   toward the four corners and the eye lands in the middle of the board where
+   the content is. Static, one raster, and it is the cheapest depth on the page:
+   without it the orbs run straight off the edges and the whole surface reads as
+   evenly lit, which is the same flatness by a different route. */
+.vig {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: ${BOARD_WIDTH}px;
+  height: ${BOARD_HEIGHT}px;
+  background-image:
+    radial-gradient(120% 108% at 50% 42%,
+      rgba(0, 0, 0, 0) 36%,
+      rgba(0, 0, 0, 0.34) 72%,
+      rgba(0, 0, 0, 0.72) 100%);
 }
 ${motion === 'full' ? driftStyles(phases) : ''}
 
@@ -695,22 +1093,63 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   height: 100%;
 }
 .col { width: ${w}px; }
+/* ── A CARD IS AN OBJECT, NOT A RECTANGLE WITH TEXT IN IT ─────────────────────
+   Owner, on the version this replaces: "Color the interface. Color the cards.
+   have gradients. add PIZZAZZ."
+
+   FOUR THINGS MAKE IT AN OBJECT and every one of them is here rather than in
+   the per-category block, because they are the same on every card:
+
+     A FILL THAT GOES SOMEWHERE. The neutral default below runs from a lifted
+     top to deep at the bottom; the category block overrides it with the same
+     shape in that category's own hue. A flat fill is what made the old board
+     read as a wireframe.
+
+     A DROP SHADOW, so the card sits ON the background instead of being a hole
+     cut in it. This page banned box-shadow outright at one point on the
+     grounds that it re-rasterizes; a STATIC one is rastered once with the rest
+     of the card and never again, and the property that mattered - that nothing
+     ANIMATES it - is held by the compositable allowlist in the check, which is
+     a rule about what may be animated rather than about what may exist.
+
+     A LIGHT EDGE ALONG THE TOP, one inset pixel of white at 7%. It is the
+     single cheapest cue that a surface is facing up toward a light, and this
+     page has a light: the wash and the orbs behind it.
+
+     A NEUTRAL HAIRLINE AROUND IT. Still PALETTE.edge, still grey, still not
+     the category's color. The card is colored by its FILL. */
 .card {
   box-sizing: border-box;
   width: ${w}px;
   height: ${CARD_H}px;
-  background: ${PALETTE.card};
+  background-color: ${PALETTE.card};
+  background-image: linear-gradient(176deg,
+    ${mix(PALETTE.card, '#ffffff', 0.06)} 0%,
+    ${PALETTE.card} 42%,
+    ${PALETTE.deep} 100%);
   border: 1px solid ${PALETTE.edge};
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.5),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
+/* THE HEADING IS A BAND, NOT A LINE OF TEXT. It gets its own fill in the
+   category's color, its own light at the top and a neutral rule under it, so
+   the top of every card is a masthead rather than a label floating on the same
+   flat plane as the rows. This is where the label's color stopped being the
+   only colored thing on the card. */
 .card h2 {
   margin: 0;
-  padding: 14px 14px 12px;
+  box-sizing: border-box;
+  height: ${HEAD_H}px;
+  padding: 0 14px;
+  line-height: ${HEAD_H - 1}px;
   font-family: ${DISPLAY};
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 400;
-  letter-spacing: 0.045em;
+  letter-spacing: 0.05em;
   color: ${PALETTE.label};
   border-bottom: 1px solid ${PALETTE.edge};
   white-space: nowrap;
@@ -726,14 +1165,22 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   display: flex;
   align-items: center;
   height: ${ROW_H}px;
-  padding: 0 12px;
+  padding: 0 13px;
   box-sizing: border-box;
 }
+/* THE ROW RULES ARE INSET SHADOWS AND NOT BORDERS, which is arithmetic rather
+   than taste: CARD_H is the header plus five rows to the pixel, and four 1px
+   top borders would push the fifth row four pixels past the bottom of a card
+   that cannot scroll. An inset shadow paints in the same place and takes no
+   layout. */
+.card li + li {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
 .pos {
-  width: 22px;
-  flex: 0 0 22px;
+  width: 24px;
+  flex: 0 0 24px;
   font-family: ${DISPLAY};
-  font-size: 19px;
+  font-size: 21px;
   color: ${PALETTE.muted};
 }
 .who {
@@ -746,11 +1193,15 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   font-weight: 600;
   font-size: 20px;
 }
+/* THE NUMBER IS WHY ANYBODY LOOKED AT THE CARD, so it is set five points
+   larger than the name beside it and in the display face rather than the body
+   one. The leading row's number is brighter again, in its category's color -
+   see the per-category block. */
 .val {
   flex: 0 0 auto;
   padding-left: 8px;
   font-family: ${DISPLAY};
-  font-size: 22px;
+  font-size: 27px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -758,19 +1209,28 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
    Owner: "if the player viewing the scoreboard is anywhere on it - highlight
    that row."
 
-   A FILL AND NOTHING ELSE NOW. It used to be a fill PLUS a 4px bar in the
+   A FILL AND NOTHING ELSE. It used to be a fill PLUS a 4px bar in the
    category's accent down the left edge, and that bar was one of the color
-   borders he asked to remove. The fill on its own is still the loudest thing in
-   a column of five identical rows, it is static (a highlight that blinks is a
-   highlight that is absent half the time), and it carries the same cue on the
+   borders he asked to remove. It is static (a highlight that blinks is a
+   highlight that is absent half the time) and it carries the same cue on the
    squad slide.
 
+   THE SLATE UNDERNEATH IS DARKER THAN IT WAS, on his other note about this row:
+   "The selected row is way too bright blue, very harsh." What makes the row
+   read now is not brightness, it is that the category's own light is laid
+   across it - see the per-category block, which paints a gradient over this
+   fill that fades out to the right. A row lit by the card it is in is a quieter
+   signal than a slab of a color that belongs to nothing on the page.
+
    THE NUMERAL CHANGES COLOR TOO, and that is a contrast fix rather than a
-   flourish. See CONTRAST_PAIRS. */
+   flourish. See contrastPairs. */
 .card li.you, .mate.you {
   background: ${PALETTE.you};
 }
 .card li.you .pos { color: ${PALETTE.youMuted}; }
+.card li.you {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
 
 /* ── THE PER-PLAYER VIEW ─────────────────────────────────────────────────── */
 /* THE NAME AND THE TILES ARE ONE STACK, CENTERED AS A BLOCK. Laid out
@@ -783,17 +1243,33 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   justify-content: center;
   height: 100%;
 }
+/* THE NAME IS ON A SHELF NOW AND IT USED TO FLOAT. A 64px word alone on a black
+   field is the same flatness the cards had: nothing behind it, nothing under
+   it, no reason for it to be where it is. The shelf is a band of the project's
+   own cyan fading out to the right, so the name reads as the masthead of the
+   slide - and the cyan rather than a category color because this half of the
+   board is about the PLAYER, who does not belong to a category.
+
+   NO WORDS ARE ADDED HERE. It is still their name and nothing else. */
 .name {
+  box-sizing: border-box;
   height: 120px;
   line-height: 120px;
-  padding: 0 4px;
+  padding: 0 26px;
+  border-radius: 16px;
   font-family: ${DISPLAY};
-  font-size: 64px;
+  font-size: 76px;
   font-weight: 400;
   letter-spacing: 0.01em;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+  background-image: linear-gradient(90deg,
+    ${rgba(PALETTE.cyan, 0.26)} 0%,
+    ${rgba(PALETTE.cyan, 0.1)} 30%,
+    ${rgba(PALETTE.cyan, 0.02)} 56%,
+    ${rgba(PALETTE.cyan, 0)} 78%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 .tiles {
   display: flex;
@@ -804,16 +1280,28 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   height: 300px;
   margin-top: 28px;
 }
+/* A TILE IS A CARD WITH ONE NUMBER ON IT, so it is built the same way and tinted
+   harder: there are no rows competing with the numeral, and the whole tile can
+   be the color of the thing it counts. The glow is at the BOTTOM rather than
+   the top, so the number reads as standing on light rather than under it. */
 .tile {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
   width: ${w}px;
   height: 300px;
-  background: ${PALETTE.card};
+  background-color: ${PALETTE.card};
+  background-image: linear-gradient(178deg,
+    ${mix(PALETTE.card, '#ffffff', 0.06)} 0%,
+    ${PALETTE.card} 44%,
+    ${PALETTE.deep} 100%);
   border: 1px solid ${PALETTE.edge};
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
+  box-shadow:
+    0 16px 34px rgba(0, 0, 0, 0.5),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
 }
 /* CENTERED IN WHAT IS LEFT OF THE TILE, rather than pinned to the top. Three
    lines against the top of a 300px tile leaves a hole that reads as a missing
@@ -827,29 +1315,35 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
 }
 .tlabel {
   font-family: ${DISPLAY};
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 400;
-  letter-spacing: 0.045em;
+  letter-spacing: 0.05em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 /* THE NUMERAL SCALES WITH THE COLUMN, because it is the one piece of type on
-   this page that is wide enough to overflow its own tile. 74px of Anton is about
-   37px per digit, so seven digits is 259px and does not fit a 240px tile, let
+   this page that is wide enough to overflow its own tile. 80px of Anton is about
+   40px per digit, so seven digits is 280px and does not fit a 240px tile, let
    alone a 198px one. Tying the size to the width keeps the ratio the same at
    every column count; overflow hidden is still there for the player who
-   somehow banks ten million Volts. */
+   somehow banks ten million Volts.
+
+   IT IS THE HERO OF THIS SLIDE AND IT IS PAINTED LIKE ONE. The color is a
+   bright tint of the category's accent rather than the same white every other
+   word on the page is, which is what a display face is FOR. Anton is already
+   loaded and was being used as if it were a body font. */
 .tval {
-  margin-top: 24px;
+  margin-top: 22px;
   font-family: ${DISPLAY};
-  font-size: ${Math.round((74 * w) / 240)}px;
+  font-size: ${Math.round((80 * w) / 240)}px;
   font-weight: 400;
   line-height: 1;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 .trank {
-  margin-top: 24px;
+  margin-top: 22px;
   font-family: ${BODY};
   font-weight: 600;
   font-size: 27px;
@@ -888,24 +1382,50 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
   flex-direction: column;
   gap: ${GUTTER}px;
 }
+/* A MATE'S ROW IS PAINTED IN THE COLOUR THEIR BLIP IS, which is the one place
+   on this board where the color is not a decision this console made. See
+   squadColors in lib/scoreboard.ts: it reproduces BR.Party.memberIndex
+   from the server ids in the live snapshot, so the row for the player whose
+   marker is orange is orange. The tint is a left-to-right wash that fades out
+   before the numbers, so it identifies the row without sitting under the
+   figures.
+
+   THE NEUTRAL BELOW IS THE FALLBACK AND IT IS A REAL ONE. When the ordering
+   cannot be reproduced - one mate's server id missing from the snapshot - every
+   row renders in this grey rather than in colors that might be one seat out.
+   Four wrong colors is worse than none: the whole claim of the slide is that
+   these are the people beside you. */
 .mate {
   box-sizing: border-box;
   display: flex;
   align-items: center;
   height: ${squadRowHeight(squadRows)}px;
-  background: ${PALETTE.card};
+  background-color: ${PALETTE.card};
+  background-image: linear-gradient(176deg,
+    ${mix(PALETTE.card, '#ffffff', 0.055)} 0%,
+    ${PALETTE.card} 50%,
+    ${PALETTE.deep} 100%);
   border: 1px solid ${PALETTE.edge};
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
+/* A COLLAPSED LINE BOX, BECAUSE ANTON'S LINE BOX IS NOT ITS INK. The face carries a
+   deep descent, so a name in a row centered by align-items sits visibly high
+   in it: the box is centered and the letters are not. Collapsing the line box to
+   the type size puts the glyphs where the row's middle is. */
 .mname {
-  flex: 0 0 300px;
+  flex: 0 0 320px;
   min-width: 0;
-  padding: 0 18px;
+  padding: 0 22px;
   box-sizing: border-box;
   font-family: ${DISPLAY};
-  font-size: 34px;
+  font-size: 38px;
+  line-height: 1;
   font-weight: 400;
+  letter-spacing: 0.01em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -925,22 +1445,37 @@ ${motion === 'off' ? '' : transitionStyles(columns)}
 }
 .mlabel {
   font-family: ${DISPLAY};
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 400;
-  letter-spacing: 0.045em;
+  letter-spacing: 0.05em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .mval {
   font-family: ${DISPLAY};
-  font-size: 34px;
+  font-size: 40px;
   font-weight: 400;
   line-height: 1;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
 }
+.mate.you {
+  box-shadow:
+    0 10px 22px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+/* ── THE COLOR ───────────────────────────────────────────────────────────────
+   LAST IN THE SHEET ON PURPOSE. Everything above is the neutral board: the
+   shapes, the type, the depth and the layout, all of which are true whatever a
+   category is called. These two blocks paint it, and they come last so a
+   single-class rule like .c-wins .card lands on top of .card without either
+   of them having to reach for a specificity trick. */
+${categoryStyles(categories)}
+${squadStyles(mates)}
 `.trim()
 }
 
@@ -1044,6 +1579,15 @@ ${names}
 `.trim()
 }
 
+/**
+ * THE COLOR IS A CLASS ON THE COLUMN NOW AND IT USED TO BE AN INLINE `style`.
+ *
+ * A `style="color:#ffc65c"` on the leading numeral was the whole of the card's
+ * color, which is the thing the owner threw out. A category paints six surfaces
+ * now and inlining six declarations per element would put the same hex in the
+ * document twenty times and make the stylesheet unreadable. `c-<key>` on the
+ * column carries all of it; `categoryStyles` above is the other half.
+ */
 function boardMarkup(board: Leaderboard): string {
   const columns = board.categories
     .map((category) => {
@@ -1051,16 +1595,14 @@ function boardMarkup(board: Leaderboard): string {
         .map(
           (entry, i) =>
             `<li${entry.you ? ` class="you"` : ''}>` +
-            `<span class="pos"${i === 0 ? ` style="color:${category.accent}"` : ''}>${
-              i + 1
-            }</span>` +
+            `<span class="pos">${i + 1}</span>` +
             `<span class="who">${esc(entry.name)}</span>` +
             `<span class="val">${esc(entry.value)}</span>` +
             `</li>`,
         )
         .join('')
       return (
-        `<div class="col"><section class="card">` +
+        `<div class="col c-${category.key}"><section class="card">` +
         `<h2>${esc(category.label)}</h2>` +
         `<ol>${rows}</ol></section></div>`
       )
@@ -1085,9 +1627,9 @@ function playerMarkup(player: PlayerPanel): string {
   const tiles = player.stats
     .map(
       (stat) =>
-        `<div class="col"><div class="tile">` +
+        `<div class="col c-${stat.key}"><div class="tile">` +
         `<div class="tbody">` +
-        `<div class="tlabel" style="color:${stat.accent}">${esc(stat.label)}</div>` +
+        `<div class="tlabel">${esc(stat.label)}</div>` +
         `<div class="tval">${esc(stat.value)}</div>` +
         `<div class="trank">${stat.rank === null ? '' : `#${stat.rank}`}</div>` +
         `</div></div></div>`,
@@ -1118,13 +1660,16 @@ function playerMarkup(player: PlayerPanel): string {
  */
 function squadMarkup(squad: SquadPanel): string {
   const headings = squad.labels
-    .map((l) => `<div class="mcell"><div class="mlabel" style="color:${l.accent}">${esc(l.label)}</div></div>`)
+    .map(
+      (l) =>
+        `<div class="mcell c-${l.key}"><div class="mlabel">${esc(l.label)}</div></div>`,
+    )
     .join('')
 
   const rows = squad.mates
     .map(
-      (mate) =>
-        `<div class="mate${mate.you ? ' you' : ''}">` +
+      (mate, i) =>
+        `<div class="mate${mate.you ? ' you' : ''}${mate.color ? ` sqc-${i}` : ''}">` +
         `<div class="mname">${esc(mate.name)}</div>` +
         `<div class="mcells">` +
         mate.values.map((v) => `<div class="mcell"><div class="mval">${esc(v)}</div></div>`).join('') +
@@ -1185,10 +1730,26 @@ export function renderScoreboard(input: {
    */
   const columns = Math.max(board.categories.length, player?.stats.length ?? 0, 1)
 
+  /**
+   * EVERY CATEGORY THAT IS ON SCREEN ANYWHERE, ONCE.
+   *
+   * The three panels do not carry the same list: the leaderboard drops a
+   * category nothing has been done in, and the per-player half always has one
+   * tile per ENABLED category. So the stylesheet is generated from the UNION -
+   * a card whose column class had no matching rule would render as the neutral
+   * grey the old board was, which is a defect that looks exactly like the thing
+   * this pass exists to fix.
+   */
+  const seen = new Map<string, { key: string; accent: string }>()
+  for (const c of board.categories) seen.set(c.key, { key: c.key, accent: c.accent })
+  for (const s of player?.stats ?? []) seen.set(s.key, { key: s.key, accent: s.accent })
+  for (const l of squad?.labels ?? []) seen.set(l.key, { key: l.key, accent: l.accent })
+
   /** `full` is the only level that emits the moving layers at all. */
   const drift =
     motion === 'full'
-      ? `<div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="drift"></div>`
+      ? `<div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div>` +
+        `<div class="beam"></div><div class="drift"></div>`
       : ''
 
   /**
@@ -1208,10 +1769,13 @@ export function renderScoreboard(input: {
       phases,
       columns,
       squadRows: squad?.mates.length ?? 0,
+      categories: [...seen.values()],
+      mates: squad?.mates ?? [],
     })}</style></head>` +
     `<body class="m-${motion}" data-motion="${motion}">` +
     `<div class="wash"></div>` +
     drift +
+    `<div class="vig"></div>` +
     boardMarkup(board) +
     (player ? playerMarkup(player) : '') +
     (squad ? squadMarkup(squad) : '') +

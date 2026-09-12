@@ -267,11 +267,29 @@ export type CategoryKey = 'wins' | 'kills' | 'matches' | 'revives' | 'level' | '
  * 12 player in an arbitrary heap and let the board reorder itself between
  * refreshes for no visible reason.
  *
- * `accent` IS INK, NOT AN EDGE. Each category carries its own color so the
- * cards read as several things rather than one grey wall - but it is spent on
- * TEXT and never on a bar, a rule or a border. Owner: "Don't add the low-effort
- * color borders. We don't need those and it makes the product look
- * AI-generated." See the stylesheet in `lib/scoreboardPage.ts`.
+ * ═══ `accent` IS A WHOLE RAMP NOW, AND IT USED TO BE ONE WORD OF INK ═══
+ *
+ * It was spent on TEXT only, on the grounds of: "Don't add the low-effort color
+ * borders. We don't need those and it makes the product look AI-generated."
+ * That reading was too narrow, and the owner said so when he saw the result:
+ * "your agent is literally just coloring the text. Stop doing low-effort things.
+ * Color the interface. Color the cards. have gradients. add PIZZAZZ"
+ *
+ * BOTH NOTES ARE THE SAME NOTE. What he threw out three times - a 4px bar, a
+ * saturated flat fill, a tinted label - is a SINGLE TOKEN OF COLOR DROPPED ON A
+ * FLAT SURFACE. So this hex is now the seed of a ramp rather than an ink value:
+ * `lib/scoreboardPage.ts` derives the card's gradient, the header band, the
+ * podium numerals, the leader's number and the tile's floor glow from it, and
+ * paints the accent itself on the label. It is still never an EDGE - every
+ * border on that page is neutral grey - and `scoreboard.check.ts` holds that
+ * rule by looking at which CSS property each occurrence lands in.
+ *
+ * NO PURPLE, AND `level` USED TO BE PURPLE. The gamemode reserves it:
+ * "NEVER PURPLE, in any slot: purple belongs to the storm alone"
+ * (`br_lib/shared/enums.lua`). That line is written about the squad palette and
+ * it is about the GAME, not about one palette - a player who has learned that a
+ * purple wall means the storm should not meet one in the warmup area. The check
+ * measures the hue of every accent below and refuses the purple band outright.
  */
 interface CategoryShape {
   key: CategoryKey
@@ -337,7 +355,15 @@ export const CATEGORIES: readonly Category[] = [
     key: 'wins',
     label: 'MOST WINS',
     tileLabel: 'WINS',
-    accent: '#ffc65c',
+    /**
+     * THE GAME'S VICTORY GOLD, AND IT IS RESERVED FOR EXACTLY THIS. The
+     * gamemode's `ui-src/src/index.css` holds `--color-royale-accent2: #facc15`
+     * above `--color-volts` and says why: "accent2 is reserved for VICTORY and
+     * nothing else". A card headed MOST WINS is the one surface outside a match
+     * that is about winning matches, so it gets that hue rather than a gold
+     * picked by eye - which is what `#ffc65c` was.
+     */
+    accent: '#facc15',
     available: true,
     sortValue: (r) => r.wins,
     display: (r) => formatCount(r.wins),
@@ -390,7 +416,20 @@ export const CATEGORIES: readonly Category[] = [
     key: 'level',
     label: 'HIGHEST LEVEL',
     tileLabel: 'LEVEL',
-    accent: '#c9a6ff',
+    /**
+     * ═══ THIS WAS PURPLE AND PURPLE IS THE STORM'S ═══
+     *
+     * `br_lib/shared/enums.lua`: "NEVER PURPLE, in any slot: purple belongs to
+     * the storm alone", and `--color-storm: #c026d3` is what that reserves it
+     * for. `#c9a6ff` was a lighter purple, on a wall, in the warmup area.
+     *
+     * CYAN IS NOT A REPLACEMENT PICKED BY EYE EITHER: the game already paints
+     * xp cyan. `--color-royale-accent` is `#22d3ee` and the xp spark head in the
+     * game's own `.xp-head` is `rgba(103, 232, 249, ...)`, which is this exact
+     * value. A level is xp, so the card that ranks levels wears the color a
+     * player has already watched fly into their xp bar.
+     */
+    accent: '#67e8f9',
     available: true,
     sortValue: (r) => r.xp,
     display: (r) => formatCount(levelFor(r.xp)),
@@ -456,7 +495,15 @@ export const CATEGORIES: readonly Category[] = [
      * for him to rule on before it can.
      */
     tileLabel: 'VOLTS SPENT',
-    accent: '#ffd08a',
+    /**
+     * THE CURRENCY'S OWN GOLD, `--color-volts` in the gamemode's `index.css`,
+     * described there as "our signature gold/yellow color that Volts uses, but
+     * not super bright" and deliberately held BELOW the victory gold that
+     * `wins` now wears. The two are the same family and that is correct rather
+     * than a collision: one card counts wins and one counts what you paid, and
+     * the brighter of the two golds is the one on the winning.
+     */
+    accent: '#d9ae35',
     available: false,
     sortValue: (r) => r.voltsSpent,
     display: (r) => formatCount(r.voltsSpent),
@@ -758,6 +805,91 @@ export interface LivePlayer {
   license: string | null
   name: string
   squadId: string | null
+  /**
+   * Their FiveM server id, which is the only thing that can reproduce the
+   * color their squad mates already see on their blip. See {@link squadColors}.
+   *
+   * OPTIONAL RATHER THAN REQUIRED, because it is only ever used for that one
+   * cosmetic derivation and a caller that cannot supply it should get a squad
+   * slide with no colors rather than a type error. The real caller always has
+   * it: `src` is a required field on the ingest row (`lib/ingest.ts`).
+   */
+  src?: number
+}
+
+/**
+ * ═══ THE COLORS A PLAYER'S SQUAD MATES ALREADY WEAR, REPRODUCED EXACTLY ═══
+ *
+ * `BR.SquadColours` in the gamemode's `br_lib/shared/enums.lua`, in its own
+ * order and with nothing added. These are not eight colors chosen to make a
+ * table look nice: they are the colors on a squad mate's MINIMAP BLIP, their
+ * destination marker's blip and that marker's world beam, which the enums file
+ * says in as many words is one palette on purpose ("a teammate is two different
+ * colours in two places" was the bug that unified them).
+ *
+ * SO A ROW ON THE SQUAD SLIDE PAINTED IN ONE OF THESE IS SAYING SOMETHING THE
+ * PLAYER CAN CHECK. The alternative - eight pretty colors handed out in the
+ * order the rows happen to be sorted - is decoration wearing meaning's clothes,
+ * and it is the exact failure this whole redesign is a correction of.
+ *
+ * NO PURPLE HERE EITHER, and that is the enums file's own rule rather than this
+ * console's: "NEVER PURPLE, in any slot: purple belongs to the storm alone."
+ */
+export const SQUAD_COLORS: readonly string[] = [
+  '#60a5fa',
+  '#4ade80',
+  '#fbbf24',
+  '#f87171',
+  '#f472b6',
+  '#2dd4bf',
+  '#fb923c',
+  '#6ee7f9',
+]
+
+/**
+ * Which squad color each member of one squad is wearing, keyed by license.
+ *
+ * ═══ THE INDEX IS THE GAME'S, DERIVED THE GAME'S WAY, OR THERE IS NO COLOR
+ *     ═══
+ *
+ * `BR.Party.memberIndex` (`br_core/server/party.lua`) collects every ROSTER
+ * ENTRY sharing a squad id, sorts their SERVER IDS ascending, and returns the
+ * 1-based position; `BR.SquadColour` wraps that over the eight. The comment
+ * above it states the property the whole thing exists for: "Sorted by server
+ * id, so every client numbers the squad identically and a teammate keeps the
+ * same colour for the whole match."
+ *
+ * THIS REPRODUCES IT RATHER THAN APPROXIMATING IT, and the two places it would
+ * have been easy to get wrong are both handled:
+ *
+ *   THE SORT IS OVER EVERY MEMBER, NOT OVER THE ONES THE SLIDE SHOWS.
+ *   `squadFrom` drops members whose license has not been filled in yet and caps
+ *   the list at `SQUAD_MAX_ROWS`; the game's index counts them all. So this
+ *   takes the unfiltered roster and filters AFTERWARDS.
+ *
+ *   AND IT IS ALL OR NOTHING. If any member of the squad arrives without a
+ *   numeric `src` there is no way to know where they sit in the game's
+ *   ordering, and every index after them would be off by one - which is not a
+ *   missing color, it is four WRONG ones, on a slide whose only claim is that
+ *   these are the people beside you. Null, and the slide renders in neutral.
+ */
+export function squadColors(
+  players: readonly LivePlayer[],
+  squadId: string,
+): Map<string, string> | null {
+  const members = players.filter((p) => p.squadId === squadId)
+  if (members.length === 0) return null
+  if (members.some((p) => typeof p.src !== 'number' || !Number.isFinite(p.src))) return null
+
+  const ordered = [...members].sort((a, b) => (a.src ?? 0) - (b.src ?? 0))
+
+  const colors = new Map<string, string>()
+  ordered.forEach((p, i) => {
+    if (typeof p.license === 'string' && p.license !== '') {
+      colors.set(p.license, SQUAD_COLORS[i % SQUAD_COLORS.length]!)
+    }
+  })
+  return colors
 }
 
 /**
@@ -840,6 +972,11 @@ export interface SquadMate {
   you: boolean
   /** One per category, in catalog order, already formatted. */
   values: string[]
+  /**
+   * The color this player's blip is, or null when it cannot be derived.
+   * See {@link squadColors}; the renderer paints the row and the name with it.
+   */
+  color: string | null
 }
 
 export interface SquadPanel {
@@ -872,8 +1009,15 @@ export function squadPanelFrom(input: {
   careerOf: (license: string) => BoardRow | null
   viewer: string
   categories?: readonly AvailableCategory[]
+  /**
+   * License to blip color, from {@link squadColors}. Omitted or null is the
+   * honest answer when the ordering could not be reproduced, and the slide
+   * renders in neutral rather than in four colors that might be the wrong four.
+   */
+  colors?: Map<string, string> | null
 }): SquadPanel {
   const categories = input.categories ?? enabledCategories()
+  const colors = input.colors ?? null
 
   return {
     labels: categories.map((c) => ({ key: c.key, label: c.tileLabel, accent: c.accent })),
@@ -894,6 +1038,7 @@ export function squadPanelFrom(input: {
         name: m.name,
         you: license !== '' && license === input.viewer,
         values: categories.map((c) => c.display(row)),
+        color: license === '' ? null : colors?.get(license) ?? null,
       }
     }),
   }

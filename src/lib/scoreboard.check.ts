@@ -132,8 +132,10 @@ import {
   playerPanelFrom,
   rankBoard,
   rankOf,
+  squadColors,
   squadFrom,
   squadPanelFrom,
+  SQUAD_COLORS,
   SQUAD_DWELL_MS,
   SQUAD_MAX_ROWS,
   type AvailableCategory,
@@ -143,12 +145,12 @@ import {
 } from './scoreboard'
 import { EMBEDDED_FACES } from './scoreboardFonts'
 import {
-  CONTRAST_PAIRS,
   INNER_WIDTH,
   PALETTE,
   PHASE_COUNT,
   SQUAD_HEAD_H,
   columnWidth,
+  contrastPairs,
   esc,
   renderScoreboard,
   squadRowHeight,
@@ -502,14 +504,21 @@ console.log('\nB2. who is in the squad, and when we may not say')
 const SQ = 'm0a3f1sq2'
 const L = (n: number) => `license:${String(n).repeat(40).slice(0, 40)}`
 
+/**
+ * THE SERVER IDS ARE DELIBERATELY OUT OF NAME ORDER, because the two orderings
+ * on this slide are different on purpose and a fixture where they agreed would
+ * pass whichever one the code used. The rows are sorted by NAME; the colors are
+ * keyed on the game's own index, which is the squad's server ids ASCENDING
+ * (`BR.Party.memberIndex`). See the squad color block below.
+ */
 const PAD: LivePlayer[] = [
-  { license: L(1), name: 'zulu', squadId: SQ },
-  { license: L(2), name: 'alpha', squadId: SQ },
-  { license: L(3), name: 'mike', squadId: SQ },
-  { license: L(4), name: 'other squad', squadId: 'm0a3f1sq1' },
-  { license: L(5), name: 'solo', squadId: null },
+  { license: L(1), name: 'zulu', squadId: SQ, src: 12 },
+  { license: L(2), name: 'alpha', squadId: SQ, src: 4 },
+  { license: L(3), name: 'mike', squadId: SQ, src: 30 },
+  { license: L(4), name: 'other squad', squadId: 'm0a3f1sq1', src: 7 },
+  { license: L(5), name: 'solo', squadId: null, src: 2 },
   /** br_stats has not filled a license in yet. Cannot be matched to anybody. */
-  { license: null, name: 'nameless', squadId: SQ },
+  { license: null, name: 'nameless', squadId: SQ, src: 9 },
 ]
 
 {
@@ -652,6 +661,85 @@ console.log('\nB2. the squad panel')
     panel.mates.find((m) => m.name === 'mike')?.values.join('|'),
     enabledCategories().map((c) => c.display(nobody)).join('|'),
   )
+
+  /** With no colors supplied there are none, and the slide renders neutral. */
+  expectTrue('no colors were asked for, so no mate has one', panel.mates.every((m) => m.color === null))
+}
+
+console.log("\nB3. a squad mate's row is the color their blip is")
+
+/**
+ * ═══ THIS IS THE ONE COLOUR ON THE BOARD THIS CONSOLE DID NOT CHOOSE ═══
+ *
+ * `BR.SquadColours` is the palette a player already sees on their squad mates'
+ * minimap blips and destination markers, and `BR.Party.memberIndex` decides who
+ * wears which: every ROSTER ENTRY sharing the squad id, server ids sorted
+ * ASCENDING, 1-based, wrapped over the eight. The gamemode's own comment says
+ * what that ordering buys - "every client numbers the squad identically and a
+ * teammate keeps the same colour for the whole match."
+ *
+ * SO THE CLAIM THE SLIDE MAKES IS FALSIFIABLE, which is the whole reason to use
+ * this palette rather than eight pretty colors: a player can look at the row,
+ * look at their minimap, and catch us. What follows is the arithmetic that
+ * decides whether they can.
+ */
+{
+  const colors = squadColors(PAD, SQ)!
+  expectTrue('a squad with server ids on every member resolves colors', colors !== null)
+
+  /**
+   * THE ORDER IS SERVER ID AND NOT NAME, AND THE FIXTURE DISAGREES ON PURPOSE.
+   * By name the squad is alpha, mike, zulu. By server id it is alpha(4),
+   * nameless(9), zulu(12), mike(30). Every color below is off the second list.
+   */
+  expect('the lowest server id takes the first color', colors.get(L(2)), SQUAD_COLORS[0])
+  expect('and the next licensed member takes the THIRD', colors.get(L(1)), SQUAD_COLORS[2])
+  expect('and the highest takes the fourth', colors.get(L(3)), SQUAD_COLORS[3])
+
+  /**
+   * WHICH IS THE POINT OF THAT SKIP. `nameless` is a roster entry with no
+   * license yet, so it is not on the slide - but the GAME counted it when it
+   * numbered the squad, so it owns the second color and zulu is third. Keying
+   * the palette on the rows this console can show would hand zulu the second
+   * color and put every mate behind them one seat out of step with their own
+   * minimap.
+   */
+  expect('the member with no license still consumes their seat', colors.size, 3)
+
+  /** A squad bigger than the palette wraps, exactly as `BR.SquadColour` does. */
+  const big: LivePlayer[] = Array.from({ length: 9 }, (_, i) => ({
+    license: `license:${String(i).repeat(40).slice(0, 40)}`,
+    name: `p${i}`,
+    squadId: SQ,
+    src: 100 + i,
+  }))
+  const wrapped = squadColors(big, SQ)!
+  expect(
+    'the ninth member wears the first color again',
+    wrapped.get(big[8]!.license!),
+    SQUAD_COLORS[0],
+  )
+
+  /**
+   * AND A SNAPSHOT WITHOUT SERVER IDS GETS NO COLOURS AT ALL. There is no way
+   * to know where an id-less member sits in the game's ordering, so every index
+   * after them is a guess - which is not a missing color, it is four wrong
+   * ones. The slide falls back to neutral rows, which say nothing rather than
+   * something false.
+   */
+  const idless = PAD.map((p) => ({ license: p.license, name: p.name, squadId: p.squadId }))
+  expect('one member with no server id and the whole squad goes neutral', squadColors(idless, SQ), null)
+  expect('and a squad id nobody is in has nothing to color', squadColors(PAD, 'm0a3f1sq9'), null)
+
+  /** The panel carries the color through to the mate, keyed on their license. */
+  const painted = squadPanelFrom({
+    members: squadFrom(PAD, L(1), 'live')!.members,
+    careerOf: () => null,
+    viewer: L(1),
+    colors,
+  })
+  expect('alpha is painted first-color on the slide', painted.mates.find((m) => m.name === 'alpha')?.color, SQUAD_COLORS[0])
+  expect('and the viewer gets theirs too', painted.mates.find((m) => m.you)?.color, SQUAD_COLORS[2])
 }
 
 // ===========================================================================
@@ -819,7 +907,12 @@ console.log('\nC. biggest spenders: the data layer is ready and the card is not'
     player: panel,
     motion: 'off',
   })
-  expect('six columns are laid out', six.split('class="col"').length - 1, 12)
+  /** Six on the leaderboard and six tiles, each carrying its category class. */
+  expect('six columns are laid out', six.split('class="col c-').length - 1, 12)
+  expectTrue(
+    'and the sixth one is painted like the other five',
+    six.includes('.c-spend .card {') && six.includes('.c-spend .tile {'),
+  )
   expectTrue(
     'and the card width is the six-column one, not the five-column one',
     six.includes(`width: ${columnWidth(6)}px`) && !six.includes('width: 240px'),
@@ -940,17 +1033,21 @@ const BOARD_ONLY = renderScoreboard({
  * interpolations, and the escaping has to hold at both - so the injection is
  * driven through the one the first HOSTILE_ROWS does not reach.
  */
+const SQUAD_PAD: LivePlayer[] = [
+  { license: VIEWER, name: 'quiet', squadId: SQ, src: 5 },
+  { license: L(2), name: HOSTILE, squadId: SQ, src: 11 },
+  { license: L(3), name: 'mike', squadId: SQ, src: 22 },
+]
+
 const SQUAD_RENDER = renderScoreboard({
   board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
   player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
   squad: squadPanelFrom({
-    members: [
-      { license: VIEWER, name: 'quiet', squadId: SQ },
-      { license: L(2), name: HOSTILE, squadId: SQ },
-      { license: L(3), name: 'mike', squadId: SQ },
-    ],
+    members: SQUAD_PAD,
     careerOf: () => null,
     viewer: VIEWER,
+    /** WITH COLORS, so `squadStyles` is exercised by every document assertion. */
+    colors: squadColors(SQUAD_PAD, SQ),
   }),
   motion: 'full',
 })
@@ -1016,43 +1113,100 @@ expectTrue(
   !BOARD_ONLY.includes('class="you"'),
 )
 
-console.log('\nD. no color borders, anywhere')
+console.log('\nD. the accent is ink and fill, never an edge')
 
 /**
- * ═══ THE OWNER'S NOTE, AND WHY IT IS A GATE RATHER THAN A DELETION ═══
+ * ═══ TWO NOTES FROM THE OWNER, AND THEY ARE THE SAME NOTE ═══
  *
  * "Don't add the low-effort color borders. We don't need those and it makes the
  * product look AI-generated."
  *
- * Deleting the 4px bars was five minutes. Keeping them deleted is the problem:
- * a category carries an `accent` and the accent has to go SOMEWHERE, so the next
- * person adding a card reaches for the same shape without knowing it was ruled
- * out. What holds it is the rule below, which is about the COLOR and not about
- * the word "border": every appearance of a category's own color in the document
- * must be a `color:` declaration, which is ink. A `background:`, a
- * `border-left-color:`, a `border-top:` or a bar of any kind fails it, including
- * ones nobody has thought of.
+ * "your agent is literally just coloring the text. Stop doing low-effort
+ * things. Color the interface. Color the cards. have gradients. add PIZZAZZ"
  *
- * THE NEUTRAL ONE-PIXEL EDGE IS UNAFFECTED AND THAT IS DELIBERATE. `PALETTE.edge`
- * is not a category color; it is what separates a card from the page. He
- * objected to the rainbow, not to the card.
+ * ═══ THIS RULE USED TO SAY `color:` AND ONLY `color:`, WHICH WAS THE WRONG
+ *     READING ═══
+ *
+ * It was written from the first note alone and it forbade the second one: a
+ * card could not be painted in its category's hue because a fill is not ink.
+ * What followed was a board of flat near-black rectangles with one tinted word
+ * on each, which is precisely what he then threw out.
+ *
+ * SO THE LINE IS BETWEEN FILL AND EDGE RATHER THAN BETWEEN INK AND EVERYTHING.
+ * What he objected to, three times, is a SINGLE TOKEN OF COLOR DROPPED ON A FLAT
+ * SURFACE - a 4px bar, a saturated slab, a tinted label. A gradient that runs
+ * through a whole card is not that, and a 4px accent stripe still is. So an
+ * accent may be:
+ *
+ *   `color:`            ink. The label, the podium numerals, the leader's value.
+ *   `background-image:` fill. The card's gradient, the header band, the glow.
+ *   `background-color:` fill, for the same reason.
+ *
+ * and it may not be anything else. `border`, `border-top`, `border-left-color`,
+ * `outline` and every property nobody has thought of fail, because this is an
+ * allowlist of the two roles rather than a list of the shapes he named.
+ *
+ * READ OUT OF THE DECLARATION RATHER THAN OFF THE PRECEDING CHARACTERS. The old
+ * version asserted the color was preceded by exactly `color:`, which is a test
+ * a gradient stop fails for the right reason and a `background-image` with four
+ * stops fails for the wrong one. This walks back to the start of the
+ * declaration - the last `;` or `{` before it - and reads the property name.
  */
+const INK_OR_FILL = new Set(['color', 'background-image', 'background-color'])
+
+function propertyAt(doc: string, at: number): string {
+  const start = Math.max(doc.lastIndexOf(';', at), doc.lastIndexOf('{', at))
+  const declaration = doc.slice(start + 1, at)
+  return /([a-z-]+)\s*:/.exec(declaration)?.[1] ?? '(none)'
+}
+
 for (const [name, doc] of LEVELS) {
   for (const category of CATEGORIES) {
-    const parts = doc.split(category.accent)
-    for (let i = 1; i < parts.length; i++) {
-      const before = parts[i - 1]!
+    let at = doc.indexOf(category.accent)
+    while (at !== -1) {
+      const property = propertyAt(doc, at)
       expectTrue(
-        `${name}: ${category.key}'s color is used as ink and not as an edge` +
-          ` (...${before.slice(-22)})`,
-        before.endsWith('color:'),
+        `${name}: ${category.key}'s color lands in ${property}, which is ink or fill`,
+        INK_OR_FILL.has(property),
       )
+      at = doc.indexOf(category.accent, at + 1)
     }
   }
   expectTrue(`${name}: no accent bar element survives`, !doc.includes('class="rule"'))
   expectTrue(`${name}: and no rule to style one`, !/\.rule\s*\{/.test(doc))
   expectTrue(`${name}: no border-left-color anywhere`, !doc.includes('border-left-color'))
-  expectTrue(`${name}: no 4px border anywhere`, !/border[a-z-]*:\s*4px/.test(doc))
+  /**
+   * AND NO BORDER IS THICKER THAN A HAIRLINE, whatever color it is. Every edge
+   * on this page is one pixel of `PALETTE.edge`; the 4px bar he named was the
+   * shape, and a 3px or 6px one in a neutral grey would read as the same
+   * decoration with the color taken off.
+   */
+  expectTrue(
+    `${name}: every border is one pixel`,
+    /** `border-radius` is a corner and not an edge, so it is not in this. */
+    !/border(-(top|right|bottom|left))?(-width)?:\s*(?!1px)\d+px/.test(doc),
+  )
+}
+
+/**
+ * AND THE CARDS ARE ACTUALLY PAINTED, which is the half a ban cannot assert.
+ * Every enabled category must appear in the document as a fill as well as as
+ * ink - otherwise this whole section passes perfectly on the flat board it was
+ * written to replace.
+ */
+for (const category of enabledCategories()) {
+  expectTrue(
+    `full: ${category.key} has a column class to paint`,
+    FULL.includes(`class="col c-${category.key}"`),
+  )
+  expectTrue(
+    `full: and a card fill in its own color`,
+    new RegExp(`\\.c-${category.key} \\.card \\{\\n  background-image:`).test(FULL),
+  )
+  expectTrue(
+    `full: and a header band in it`,
+    new RegExp(`\\.c-${category.key} \\.card h2 \\{[^}]*background-image:`).test(FULL),
+  )
 }
 
 /**
@@ -1151,14 +1305,34 @@ for (const [name, full] of LEVELS) {
   }
 
   /**
-   * THE THREE THAT LOOK CHEAP AND ARE NOT. A blur, a drop shadow or a backdrop
-   * filter re-rasterizes its layer, and on this surface that is a full-texture
-   * repaint at the frame rate. None of them appears anywhere in the document,
-   * animated or not, so there is nothing for a later transition to reach for.
+   * ═══ THE TWO THAT RE-RASTERIZE, AND THE ONE THAT WAS BANNED WITH THEM BY
+   *     MISTAKE ═══
+   *
+   * `filter` and `backdrop-filter` stay out entirely. A blur is a read of the
+   * layer beneath and a re-raster of this one, and `backdrop-filter` forces a
+   * readback of the whole compositing surface, which on this page is the whole
+   * 1280x720 texture.
+   *
+   * `box-shadow` WAS ON THIS LIST AND SHOULD NOT HAVE BEEN. The reasoning was
+   * "it re-rasterizes its layer", which is true of a shadow that is CHANGING and
+   * false of one that is not: a static shadow is painted once into the same
+   * raster as the border and the fill it belongs to, and never touched again.
+   * Banning it cost the cards the one cue that makes a surface sit ON a
+   * background rather than be a hole cut in it, and the owner's verdict on the
+   * result was that the board looked flat and cheap.
+   *
+   * WHAT ACTUALLY MATTERED IS HELD BY THE ALLOWLIST ABOVE. `box-shadow` is not
+   * in COMPOSITABLE, so a transition or a keyframe that moves one fails this
+   * section already - which is a rule about what may be ANIMATED rather than a
+   * rule about what may exist, and it is the rule that was wanted.
    */
-  for (const banned of ['filter:', 'backdrop-filter:', 'box-shadow']) {
+  for (const banned of ['filter:', 'backdrop-filter:']) {
     expectTrue(`${name}: no ${banned} anywhere in the document`, !doc.includes(banned))
   }
+  expectTrue(
+    `${name}: the cards do have depth`,
+    doc.includes('box-shadow:'),
+  )
 
   /**
    * NO UNBOUNDED LOOP DRIVEN FROM SCRIPT. The background drift is CSS, which the
@@ -1190,7 +1364,14 @@ for (const [name, doc] of [
   ['off', OFF],
 ] as Array<[string, string]>) {
   expectTrue(`${name}: no moving layer is in the document at all`, !doc.includes('class="orb'))
+  expectTrue(`${name}: nor the sweep`, !doc.includes('class="beam"'))
   expectTrue(`${name}: nor the striped sheet`, !doc.includes('class="drift"'))
+  /**
+   * THE STILL LAYERS DO SURVIVE, and that is the point of the split: `off` is
+   * the level for a struggling pad, not a level that looks unfinished. The
+   * wash and the vignette are one raster each at load and nothing after.
+   */
+  expectTrue(`${name}: but the wash and the vignette are still painted`, doc.includes('class="wash"') && doc.includes('class="vig"'))
   expectTrue(`${name}: and nothing is promoted, because nothing moves`, !doc.includes('will-change'))
   expectTrue(`${name}: no animation-delay`, !doc.includes('animation-delay'))
 }
@@ -1217,7 +1398,7 @@ console.log('\nD. the animated background, which only full has')
  * allowlist above already holds that), and that each loop CLOSES so the wall
  * does not jump once a minute in front of somebody standing at it.
  */
-const MOVING_LAYERS = ['o1', 'o2', 'o3', 'drift']
+const MOVING_LAYERS = ['o1', 'o2', 'o3', 'beam', 'drift']
 
 for (const layer of MOVING_LAYERS) {
   expect(
@@ -1237,6 +1418,7 @@ for (const layer of MOVING_LAYERS) {
  */
 for (const [rule, selector] of [
   ['the three orbs', '.orb {'],
+  ['the sweep', '.beam {'],
   ['the striped sheet', '.drift {'],
 ] as Array<[string, string]>) {
   const block = FULL.slice(FULL.indexOf(selector))
@@ -1244,15 +1426,18 @@ for (const [rule, selector] of [
   expectTrue(`full: ${rule} are promoted`, body.includes('will-change: transform'))
 }
 expect(
-  'full: and promotion is spent twice, not sprinkled',
+  'full: and promotion is spent three times, not sprinkled',
   (FULL.match(/will-change/g) ?? []).length,
-  2,
+  3,
 )
 expect(
   'full: every one of them loops forever',
   (FULL.match(/infinite/g) ?? []).length,
-  /** One shared `.orb` declaration for the three orbs, plus the sheet's shorthand. */
-  2,
+  /**
+   * One shared `.orb` declaration covering the three orbs, plus the sweep's
+   * shorthand and the sheet's.
+   */
+  3,
 )
 
 /**
@@ -1303,6 +1488,65 @@ for (const orb of ['o1', 'o2', 'o3']) {
   }
 }
 
+/**
+ * ═══ THE SWEEP HAS NO SEAM EITHER, AND ITS REASON IS DIFFERENT ═══
+ *
+ * An orb closes its loop because it wanders inside the frame and a 100%
+ * keyframe that is not the 0% one teleports in full view. The sweep cannot
+ * close - it crosses the board in one direction - so it is seamless a different
+ * way: it is ENTIRELY OFF THE SURFACE at both ends of its animation, and the
+ * reset happens where nobody can see it.
+ *
+ * WHICH IS GEOMETRY AND THEREFORE CHECKABLE. The layer is a rotated rectangle,
+ * so its footprint on the page is the bounding box of the rotation:
+ * `w*cos + h*sin` wide, centered on the element's own center because that is
+ * where `transform-origin` defaults to. At 0% the right edge of that box has to
+ * be left of zero and at 100% its left edge has to be past `BOARD_WIDTH`.
+ *
+ * IT IS RECOMPUTED HERE RATHER THAN ASSERTED AS TWO MAGIC NUMBERS, because
+ * every one of the five inputs is a number somebody will nudge by eye - the
+ * angle, the width, the height, the offset and the travel - and four of the
+ * five change the answer.
+ */
+{
+  const rule = /\.beam \{([^]*?)\n\}/.exec(FULL)?.[1] ?? ''
+  const num = (property: string): number =>
+    Number(new RegExp(`${property}:\\s*(-?[\\d.]+)px`).exec(rule)?.[1] ?? Number.NaN)
+
+  const left = num('left')
+  const width = num('width')
+  const height = num('height')
+
+  const block = /@keyframes beam \{([^]*?)\n\}/.exec(FULL)?.[1] ?? ''
+  const ends = [...block.matchAll(/translate3d\((-?[\d.]+)px, 0, 0\) rotate\((-?[\d.]+)deg\)/g)]
+
+  expectTrue('full: the sweep declares both ends of its travel', ends.length === 2)
+  if (ends.length === 2 && Number.isFinite(left + width + height)) {
+    const angle = (Number(ends[0]![2]) * Math.PI) / 180
+    const footprint =
+      Math.abs(width * Math.cos(angle)) + Math.abs(height * Math.sin(angle))
+    const center = left + width / 2
+
+    const at = (travel: number): number => center + travel
+    const first = at(Number(ends[0]![1]))
+    const last = at(Number(ends[1]![1]))
+
+    expectTrue(
+      `full: the sweep starts off the left edge (right edge at ${(first + footprint / 2).toFixed(0)}px)`,
+      first + footprint / 2 < 0,
+    )
+    expectTrue(
+      `full: and ends off the right edge (left edge at ${(last - footprint / 2).toFixed(0)}px)`,
+      last - footprint / 2 > BOARD_WIDTH,
+    )
+    expect(
+      'full: and it does not change angle on the way across',
+      ends[0]![2],
+      ends[1]![2],
+    )
+  }
+}
+
 console.log('\nD. the background starts at a random point, per client')
 
 /**
@@ -1337,19 +1581,19 @@ console.log('\nD. the background starts at a random point, per client')
     board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
     player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
     motion: 'full',
-    phases: [0.1, 0.2, 0.3, 0.4],
+    phases: [0.1, 0.2, 0.3, 0.4, 0.5],
   })
   const again = renderScoreboard({
     board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
     player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
     motion: 'full',
-    phases: [0.1, 0.2, 0.3, 0.4],
+    phases: [0.1, 0.2, 0.3, 0.4, 0.5],
   })
   const other = renderScoreboard({
     board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
     player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
     motion: 'full',
-    phases: [0.9, 0.8, 0.7, 0.6],
+    phases: [0.9, 0.8, 0.7, 0.6, 0.15],
   })
 
   /** The renderer is pure, which is why the route holds the `Math.random()`. */
@@ -1428,7 +1672,20 @@ console.log('\nD. the squad slide, rendered')
     enabledCategories().length,
   )
   expect('one row per mate', SQUAD_RENDER.split('class="mate').length - 1, 3)
-  expect('the viewer is marked once', SQUAD_RENDER.split('class="mate you"').length - 1, 1)
+  expect('the viewer is marked once', SQUAD_RENDER.split('class="mate you').length - 1, 1)
+
+  /**
+   * AND EVERY ROW CARRIES ITS MATE'S OWN COLOUR, the viewer's included. The
+   * viewer's row is the one that can lose it: `.mate.you` sets the `background`
+   * shorthand, which zeroes `background-image`, so the color rule has to be two
+   * classes deep to win. A single-class rule would leave exactly one row grey
+   * and it would be the row the player is looking for.
+   */
+  expect('one color rule per mate', SQUAD_RENDER.split('.mate.sqc-').length - 1, 6)
+  expectTrue(
+    "and the viewer's row is one of them",
+    SQUAD_RENDER.includes('class="mate you sqc-'),
+  )
 
   /**
    * PLAYER NAMES ON THIS SLIDE ARE THE LIVE ONES AND ARE EQUALLY PLAYER
@@ -1555,14 +1812,25 @@ console.log('\nD. the palette is legible')
  * category carries an accent that cannot reach a screen yet, which is exactly
  * why it has to be measured NOW: the day somebody flips one boolean is not the
  * day to discover the color they picked is illegible on a card.
+ *
+ * ═══ THE BACKGROUNDS ARE THE REAL ONES NOW, AND THEY USED TO BE A CONSTANT
+ *     ═══
+ *
+ * Every accent used to be measured against the flat `#171c26` a card was. There
+ * are no flat cards any more: a label sits on a header band which is its accent
+ * at 24% over a card top which is that accent again at 13%, which is LIGHTER
+ * than the old value and therefore a harder test for light type. `contrastPairs`
+ * in the renderer composites each of those and hands back the pair, so what is
+ * measured here is what a player is actually looking at rather than a surface
+ * that no longer exists.
+ *
+ * THE SQUAD COLORS ARE IN TOO. A mate's name is painted in their own blip color
+ * on their own row, and those eight hexes come from the GAMEMODE rather than
+ * from this repository - so the one thing this console can do about them is
+ * find out early if one of them cannot be read on a dark row.
  */
 const FLOOR = 4.5
-const PAIRS: Array<[string, string, string]> = [
-  ...CONTRAST_PAIRS.map((p) => [...p] as [string, string, string]),
-  ...CATEGORIES.map(
-    (c) => [`${c.key} accent`, c.accent, '#171c26'] as [string, string, string],
-  ),
-]
+const PAIRS = contrastPairs(CATEGORIES, SQUAD_COLORS)
 for (const [label, fg, bg] of PAIRS) {
   const f = parseHex(fg)
   const b = parseHex(bg)
@@ -1570,10 +1838,53 @@ for (const [label, fg, bg] of PAIRS) {
     fail(`contrast: ${label}`, `${fg} on ${bg} did not parse`)
     continue
   }
+  ran++
   const ratio = contrastRatio(relativeLuminance(f), relativeLuminance(b))
   const mark = ratio < FLOOR ? 'FAIL' : '  ok'
   if (ratio < FLOOR) failed++
-  console.log(`  ${mark}  ${label.padEnd(16)} ${fg} on ${bg}  ${ratio.toFixed(2)}:1`)
+  console.log(`  ${mark}  ${label.padEnd(20)} ${fg} on ${bg}  ${ratio.toFixed(2)}:1`)
+}
+
+/**
+ * ═══ AND NONE OF THEM IS PURPLE ═══
+ *
+ * `br_lib/shared/enums.lua`, on the squad palette: "NEVER PURPLE, in any slot:
+ * purple belongs to the storm alone." The gamemode backs that with
+ * `--color-storm: #c026d3`, and a player who has learned that purple means the
+ * wall is closing in should not meet a purple wall in the warmup area.
+ *
+ * A HUE BAND RATHER THAN A LIST OF BANNED HEXES, because the rule is about the
+ * color and not about one value somebody typed. `level` was `#c9a6ff` and the
+ * background's second light was `rgba(201, 166, 255)`; a list would have caught
+ * those two and nothing else.
+ *
+ * 255 TO 320 DEGREES. Blue ends around 250 and magenta-pink starts around 320 -
+ * `#f472b6`, which is on the game's own squad palette at hue 330 and is
+ * therefore, by the gamemode's own reckoning, not purple.
+ */
+function hueOf(color: string): number {
+  const c = parseHex(color)
+  if (!c) return -1
+  /** `parseHex` already returns the three channels as 0..1. */
+  const [r, g, b] = c
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const d = max - min
+  if (d === 0) return 0
+  const h =
+    max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4
+  return ((h * 60) % 360 + 360) % 360
+}
+
+for (const c of CATEGORIES) {
+  const hue = hueOf(c.accent)
+  expectTrue(
+    `${c.key}'s accent is not the storm's color (${c.accent}, hue ${hue.toFixed(0)})`,
+    hue < 255 || hue >= 320,
+  )
+}
+for (const [name, doc] of LEVELS) {
+  expectTrue(`${name}: no purple survives anywhere in the document`, !/#c9a6ff|#c026d3|201, 166, 255/i.test(doc))
 }
 
 console.log('\nD. formatting')

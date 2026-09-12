@@ -5,6 +5,7 @@ import {
   normalizeLicense,
   playerPanelFrom,
   rankBoard,
+  squadColors,
   squadFrom,
   squadPanelFrom,
   type BoardRow,
@@ -259,11 +260,19 @@ export async function GET(req: Request): Promise<Response> {
   for (const r of snapshot.rows) careers.set(r.license, r)
   if (row) careers.set(license, row)
 
+  /**
+   * AND THE COLORS COME OFF THE SAME UNFILTERED SNAPSHOT, not off the members
+   * the slide ended up showing. `squadColors` reproduces `BR.Party.memberIndex`
+   * by sorting the whole squad's server ids, so it has to see the whole squad -
+   * handing it `squadMembers.members` would silently renumber everybody behind
+   * a mate whose license had not landed yet. See the note on that function.
+   */
   const squad = squadMembers
     ? squadPanelFrom({
         members: squadMembers.members,
         careerOf: (l) => careers.get(l) ?? null,
         viewer: license,
+        colors: squadColors(live.players, squadMembers.squadId),
       })
     : null
 
