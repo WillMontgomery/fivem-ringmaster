@@ -146,7 +146,22 @@ const LICENSE = 'license:preview000000000000000000000000000'
  */
 const MATCHES: ProfileMatch[] = [
   {
-    matchId: 412,
+    /**
+     * ═══ THE TWO ID SHAPES A REAL HISTORY CARRIES, SIDE BY SIDE (#291) ═══
+     *
+     * The newest two matches here were played since #291 and carry random 20-bit
+     * ids; the older four are from the pure increment that came before it and are
+     * small numbers. THAT MIX IS THE REAL STATE OF EVERY PROFILE ON THE SERVER
+     * RIGHT NOW and it will be for months, because nothing renumbers a match that
+     * has already been played.
+     *
+     * It matters here because the two render differently in the Match column and
+     * only one of them is a fair test of it: `0xc41e7` renders `c41e7`, five real
+     * characters, while 412 renders `0019c` and is three fifths padding. A
+     * harness carrying only the second would prove the column fits an id that no
+     * new match can produce.
+     */
+    matchId: 0xc41e7,
     endedAt: BASE,
     mode: 'squad',
     placement: 1,
@@ -161,7 +176,7 @@ const MATCHES: ProfileMatch[] = [
     won: true,
   },
   {
-    matchId: 411,
+    matchId: 0x3b0d9,
     endedAt: BASE - 1 * HOUR,
     mode: 'squad',
     placement: 1,
@@ -1228,7 +1243,10 @@ function fixture(
     // The live block only decides in-match detail; the "ONLINE NOW" chip and
     // the kick button both read the same fact, so they move together.
     live: MOD_CASES[mod].online
-      ? { src: 12, state: 'in_match', matchId: 412, squadId: 'm412sq3', hp: 100, inventory: [] }
+      ? // THE SQUAD ID CARRIES THE HEX TAG, because party.lua mints
+        // `('m%ssq%d'):format(BR.MatchTag(m.id), i)` since #291. `m412sq3` was
+        // the old decimal shape and is no longer a string the game can send.
+        { src: 12, state: 'in_match', matchId: 0xc41e7, squadId: 'mc41e7sq3', hp: 100, inventory: [] }
       : null,
     incidents: reportsAgainst(counts.against),
     reportsFiled: reportsFiledBy(counts.filed),

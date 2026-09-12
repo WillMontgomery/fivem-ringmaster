@@ -46,7 +46,19 @@ import { snapshotEnvelope } from './ingest'
 
 let failed = 0
 
+/**
+ * COUNTED RATHER THAN ASSERTED IN THE CLOSING LINE.
+ *
+ * That line said "9 envelope cases pass" as a hardcoded literal, and it had to be
+ * edited by hand every time a case was added — which is to say it was a number
+ * that could silently stop being true, printed confidently, in a file whose whole
+ * purpose is catching exactly that. Adding two cases for the hex squad ids (#291)
+ * is what made it wrong; counting is what stops it happening again.
+ */
+let ran = 0
+
 function check(name: string, body: unknown, shouldPass: boolean): void {
+  ran += 1
   const result = snapshotEnvelope.safeParse(body)
   if (result.success === shouldPass) return
   failed += 1
@@ -135,6 +147,36 @@ check(
   true,
 )
 
+/**
+ * ═══ THE SHAPE THE GAME MINTS TODAY, WHICH IS NOT THE ONE ABOVE (#291) ═══
+ *
+ * `party.lua` mints `('m%ssq%d'):format(BR.MatchTag(m.id), i)` now, so the match
+ * half of a squad id is five HEX characters and a real one looks like
+ * `md93aasq1`. Every fixture in this file predates that and spells the match half
+ * in decimal — they still parse, because the schema is `z.string()`, but they
+ * describe a wire the game no longer speaks.
+ *
+ * IT IS PINNED HERE BECAUSE THE LAST TIME THIS FIELD'S SHAPE MOVED IT TOOK THE
+ * INGEST ENDPOINT DOWN. The schema said `z.number().int()`, the game sent
+ * `m3sq1`, the route answered 400 for every squads match, and the feed aged out —
+ * 2026-09-04. A schema tightened toward "the match half is digits" would do it
+ * again, and this case is what would stop it.
+ *
+ * THE DECIMAL CASES ABOVE ARE DELIBERATELY KEPT. They are the shape every squad
+ * id already written to a history row still has, and nothing backfills them.
+ */
+check(
+  'the hex-tagged squad id the game mints since #291',
+  envelope([player({ matchId: 0xd93aa, squadId: 'md93aasq1' })]),
+  true,
+)
+
+check(
+  'a hex tag whose characters are all letters, which a digits-only rule would refuse',
+  envelope([player({ matchId: 0xfffff, squadId: 'mfffffsq12' })]),
+  true,
+)
+
 // A NUMBER IS NOT A SQUAD ID, and pinning the refusal is what stops somebody
 // "restoring" the old type to make a stale fixture parse.
 check('a numeric squad id is refused', envelope([player({ matchId: 3, squadId: 7 })]), false)
@@ -173,4 +215,4 @@ if (failed) {
   )
   process.exit(1)
 }
-console.log('check:ingest — 9 envelope cases pass, including squadded rosters')
+console.log(`check:ingest — ${ran} envelope cases pass, including squadded rosters`)

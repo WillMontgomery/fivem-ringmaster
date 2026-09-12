@@ -1,4 +1,5 @@
 import { snapshotEnvelope, type SnapshotEnvelope } from '@/lib/ingest'
+import { matchTag } from '@/lib/matchTag'
 import { isInMatch } from '@/lib/playerState'
 
 /**
@@ -76,33 +77,61 @@ export function synthSnapshot(): SnapshotEnvelope {
   const r = rng(20260809)
   const gameMs = 4_281_003
 
+  /**
+   * ═══ REAL 20-BIT IDS, NOT 41/42/43 (#291) ═══
+   *
+   * These were 41, 42 and 43 — ids from the pure increment the gamemode used
+   * before #291 mints `0x00001` to `0xFFFFF` at random. A fixture full of
+   * two-digit ids cannot reproduce what the owner actually saw ("the live players
+   * view also still just says `match 889770`") and, worse, every id in it renders
+   * as a tag that is four fifths padding, so the harness would show `00029` and
+   * prove nothing about a real one.
+   *
+   * `0xd93aa` IS 889770, THE NUMBER FROM THE COMPLAINT, so the harness renders
+   * the exact match he was looking at. `0x0a3f1` is here because it is the case
+   * the padding exists for — a four-digit id that must render `0a3f1` and never
+   * `a3f1`. `0xa70bf` is a full-width one.
+   *
+   * THE BUCKETS DO NOT MOVE, and that is the point of #291's split: the routing
+   * bucket comes from `m.seq`, the internal increment, and not from `m.id`. Three
+   * concurrent matches are buckets 141, 142, 143 whatever their ids are.
+   */
   const matches = [
-    { id: 41, state: 'STORM', mode: 'squads', bucket: 141, endsAt: 4_400_000, alive: 0, squadsAlive: 0 },
-    { id: 42, state: 'BUS', mode: 'squads', bucket: 142, endsAt: null, alive: 0, squadsAlive: 0 },
-    { id: 43, state: 'WARMUP', mode: 'solo', bucket: 143, endsAt: null, alive: 0, squadsAlive: 0 },
+    { id: 0xd93aa, state: 'STORM', mode: 'squads', bucket: 141, endsAt: 4_400_000, alive: 0, squadsAlive: 0 },
+    { id: 0x0a3f1, state: 'BUS', mode: 'squads', bucket: 142, endsAt: null, alive: 0, squadsAlive: 0 },
+    { id: 0xa70bf, state: 'WARMUP', mode: 'solo', bucket: 143, endsAt: null, alive: 0, squadsAlive: 0 },
   ]
 
   const players: SnapshotEnvelope['snapshot']['players'] = []
   let src = 3
 
-  // Match 41 — mid-storm squads, some wiped, so squad colours and the "wiped"
+  // The storm match — mid-storm squads, some wiped, so squad colours and the "wiped"
   // label both have something to show.
   const layout: Array<{ match: number; squads: number[][] }> = [
-    { match: 41, squads: [[1, 2, 3], [4, 5], [6, 7, 8, 9], [10, 11]] },
-    { match: 42, squads: [[12, 13, 14, 15], [16, 17, 18]] },
-    { match: 43, squads: [[19], [20], [21]] },
+    { match: matches[0]!.id, squads: [[1, 2, 3], [4, 5], [6, 7, 8, 9], [10, 11]] },
+    { match: matches[1]!.id, squads: [[12, 13, 14, 15], [16, 17, 18]] },
+    { match: matches[2]!.id, squads: [[19], [20], [21]] },
   ]
 
   for (const { match, squads } of layout) {
     const m = matches.find((x) => x.id === match)!
 
     squads.forEach((members, squadIdx) => {
-      // THE GAME'S OWN SHAPE, `m<match>sq<index>` (server/party.lua:873).
-      // A fixture that mints a bare number is a fixture that cannot reproduce
-      // the 400 this file's schema once returned for every squads match.
-      const squadId = `m${match}sq${squadIdx + 1}`
+      /**
+       * THE GAME'S OWN SHAPE, `m<match>sq<index>` (server/party.lua). A fixture
+       * that mints a bare number is a fixture that cannot reproduce the 400 this
+       * file's schema once returned for every squads match.
+       *
+       * AND THE MATCH HALF IS THE HEX TAG NOW, not the decimal id: party.lua
+       * mints `('m%ssq%d'):format(BR.MatchTag(m.id), i)` since #291, so a real
+       * squad id is `md93aasq1`. The console's `squadIndex` only ever reads the
+       * `sq(\d+)$` suffix, which is why the change cost it nothing — but a
+       * fixture still has to carry the shape the wire carries, or it is proving
+       * the parser against a string the game no longer sends.
+       */
+      const squadId = `m${matchTag(match)}sq${squadIdx + 1}`
       // Deliberately wipe one squad in the storm match.
-      const wiped = match === 41 && squadIdx === 1
+      const wiped = match === matches[0]!.id && squadIdx === 1
 
       members.forEach((_, i) => {
         const state: string = wiped
