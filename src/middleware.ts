@@ -91,6 +91,15 @@ const SESSION_COOKIES = [
  * skip above, and that is not an accident of naming either: the owner specified
  * the URL as `https://ringmaster.blitz-royale.com/scoreboard?id=...`.
  *
+ * AND IT IS THE WHOLE SUBTREE NOW, NOT THE ONE PATH. `/scoreboard/squad` is the
+ * probe the served board polls to find out that its squad slide has gone stale
+ * (#247), and it is fetched by the same DUI, with the same absence of a cookie,
+ * for the same reason. A 307 to `/login` would answer it with HTML and a 200,
+ * which is a success the poller cannot tell from a digest - so the board would
+ * quietly stop updating and nothing anywhere would say why. The prefix rather
+ * than a second literal, on the reasoning the `/api` skip above already gives:
+ * the failure mode of a list is forgetting to add to it.
+ *
  * IT SKIPS THE BOUNCE AND NOTHING ELSE. The origin refusal above still runs, as
  * it does for every path; the route exports only `GET`, reads only, and takes
  * one argument that must match forty hex characters before it reaches DynamoDB.
@@ -106,7 +115,8 @@ function bounceExempt(pathname: string): boolean {
     pathname.startsWith('/login/') ||
     pathname === '/preview' ||
     pathname.startsWith('/preview/') ||
-    pathname === '/scoreboard'
+    pathname === '/scoreboard' ||
+    pathname.startsWith('/scoreboard/')
   )
 }
 

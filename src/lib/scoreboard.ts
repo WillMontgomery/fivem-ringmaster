@@ -1,4 +1,6 @@
-import { feedFailed, type Feed } from './feedHealth'
+import { createHash } from 'node:crypto'
+
+import { feedFailed, feedNow, type Feed } from './feedHealth'
 import { levelFor } from './xp'
 
 /**
@@ -1116,6 +1118,187 @@ export function squadPanelFrom(input: {
     }),
   }
 }
+
+/**
+ * ═══ THE WHOLE SQUAD SLIDE, FROM ONE LIVE SNAPSHOT, IN ONE PLACE ═══
+ *
+ * This is `squadFrom` + `squadColors` + `squadPanelFrom` in the order they have
+ * to be called, and it exists because there are now TWO callers who must agree
+ * about the answer to the letter: `/scoreboard`, which renders the slide, and
+ * `/scoreboard/squad`, which tells a page already on a wall whether that slide
+ * has gone out of date. See `squadDigest`.
+ *
+ * TWO COPIES OF THIS SEQUENCE WOULD BE THE BUG THIS ROUTE PAIR EXISTS TO FIX,
+ * one level up. A probe that resolved the squad even slightly differently from
+ * the renderer would either report a change that is not there - a board that
+ * re-fetches itself every five seconds forever - or miss one that is, which is
+ * exactly the complaint. So the sequence is written once and both ends call it.
+ *
+ * THE FEED VERDICT IS DERIVED HERE RATHER THAN PASSED IN, for the same reason.
+ * `feedNow` is the console's own word about the age of the last push, and a
+ * caller that computed it from a different clock reading could hand the probe a
+ * `live` where the renderer saw a `dead`.
+ *
+ * `careerOf` IS STILL THE CALLER'S, because the two ends genuinely do differ
+ * there and the difference does not matter: the renderer has the snapshot's
+ * careers to hand, and the probe has no use for a number it will not draw.
+ * `squadDigest` reads nothing a career could move.
+ */
+export function squadPanelFor(input: {
+  players: readonly LivePlayer[]
+  /** How old the live snapshot is, from `liveView`. */
+  ageMs: number | null
+  /** The qualified license in the URL. */
+  viewer: string
+  careerOf: (license: string) => BoardRow | null
+  categories?: readonly AvailableCategory[]
+}): SquadPanel | null {
+  const found = squadFrom(input.players, input.viewer, feedNow(input.ageMs))
+  if (!found) return null
+
+  return squadPanelFrom({
+    members: found.members,
+    careerOf: input.careerOf,
+    viewer: input.viewer,
+    categories: input.categories,
+    /**
+     * OFF THE UNFILTERED SNAPSHOT, not off the members the slide ended up with.
+     * See {@link squadColors}: it reproduces the game's own index by sorting the
+     * WHOLE squad's server ids, so handing it the filtered list would renumber
+     * everybody behind a mate whose license had not landed yet.
+     */
+    colors: squadColors(input.players, found.squadId),
+  })
+}
+
+/**
+ * A short, opaque fingerprint of the squad slide's COMPOSITION.
+ *
+ * ═══ WHAT IT IS FOR ═══
+ *
+ * Owner, 2026-09-12: "Let's say I'm in squads, yeah? I'm alone when the page
+ * loads, then I get matched with some others. The 'squads' display on the
+ * scoreboard doesn't show the others after the page loads."
+ *
+ * The document is rendered once, by a route, for a browser that then never asks
+ * again, so the squad slide was whatever the live snapshot said in the
+ * millisecond the DUI was created - and on a pad that is the millisecond BEFORE
+ * `BR.Party.formSquads` has run. This is the value the page carries so it can
+ * find out that it is now wrong, from `/scoreboard/squad`, and re-fetch the one
+ * panel that changed.
+ *
+ * ═══ WHAT GOES INTO IT, AND WHAT DELIBERATELY DOES NOT ═══
+ *
+ * Every input the squad slide's MARKUP AND ITS OWN STYLESHEET are drawn from:
+ * how many mates there are, their names, their order, which one is the viewer,
+ * and the blip color each of them wears. Change any of those and the slide on
+ * the wall is a slide about the wrong people.
+ *
+ * THE CAREER NUMBERS ARE NOT IN IT, on purpose. They move once per player per
+ * match, at match end, on the game box - and this board is read during WARMUP,
+ * which is the one part of the cycle when nothing is being added to them. The
+ * leaderboard half already accepts a minute of staleness for that exact reason
+ * (`SNAPSHOT_TTL_MS`), and a digest that moved with a number would have every
+ * board in the lobby re-fetching itself for a value nobody can see change.
+ *
+ * ═══ IT IS A HASH, AND THAT IS A SAFETY PROPERTY RATHER THAN A SIZE ONE ═══
+ *
+ * The composition contains PLAYER AUTHORED NAMES, and this value is emitted into
+ * a `<script>` as a JavaScript string literal as well as into a JSON body. A
+ * digest that carried the names would put `</script>` one unlucky player name
+ * away from the only injection this page has ever had a shape for. Sixteen hex
+ * characters cannot carry a quote, a backslash, an angle bracket or a newline,
+ * so both emitters are safe by construction rather than by remembering to
+ * escape - and `scoreboard.check.ts` drives a hostile name through it and
+ * asserts the output is still only `[0-9a-f]`.
+ *
+ * SHA-256 FROM `node:crypto` RATHER THAN ARITHMETIC INVENTED HERE. This file is
+ * the pure half and reaches no network, no environment and no database; a
+ * builtin digest is none of those, and the alternative was a hand-rolled hash
+ * nobody would ever have reason to trust. Truncated to 64 bits because what it
+ * has to survive is a squad changing between two polls five seconds apart, not
+ * an adversary.
+ *
+ * THE SEPARATORS ARE CONTROL CHARACTERS, WRITTEN AS ESCAPES. Names may contain
+ * any character a player can type, `|` and `:` included, so a field separator
+ * drawn from printable characters could be forged: two mates named `a` and
+ * `b:c` would digest identically to one named `a:b` and one named `c`. The unit
+ * and record separators cannot appear in a name, and they are spelled `\u001f`
+ * and `\u001e` rather than pasted, so nothing here depends on an invisible byte
+ * surviving an editor.
+ */
+export function squadDigest(squad: SquadPanel | null): string {
+  const parts = squad
+    ? squad.mates.map((m) => [m.color ?? '', m.you ? '1' : '0', m.name].join('\u001f'))
+    : []
+
+  return createHash('sha256').update(parts.join('\u001e')).digest('hex').slice(0, 16)
+}
+
+/**
+ * Where the page asks whether its squad slide has gone stale.
+ *
+ * A SIBLING OF THE BOARD'S OWN PATH AND NOT AN `/api` ONE. The owner specified
+ * `https://ringmaster.blitz-royale.com/scoreboard?id=...` and this is the same
+ * document asking about itself, from a DUI with no session and no cookie, so it
+ * lives beside it and carries the same CORS wildcard and the same `no-store`.
+ * `src/middleware.ts` exempts the whole `/scoreboard` subtree from the
+ * signed-out bounce for the reason it already exempted the board: a client that
+ * follows a 307 to `/login` gets HTML with a 200 and cannot tell that apart from
+ * an answer.
+ */
+export const SQUAD_PROBE_PATH = '/scoreboard/squad'
+
+/**
+ * The URL the served page polls, or nothing.
+ *
+ * ═══ IT IS BUILT HERE BECAUSE THIS IS WHERE THE LICENSE RULE LIVES ═══
+ *
+ * The renderer emits this string into a `<script>`, and a license is the one
+ * value on this page that arrives from a query string on the public internet. It
+ * goes through `normalizeLicense` first and is re-attached to the path as the
+ * BARE forty hex characters - the owner's own URL shape - which is the same
+ * forty characters the pattern has already proved cannot carry markup, a quote,
+ * a newline or a path segment.
+ *
+ * NULL RATHER THAN A BEST EFFORT when the id is not a license. Nothing upstream
+ * can reach the renderer with a bad one today, because the route refuses a bad
+ * id with a 400 long before it renders; this is the belt that makes that a
+ * property of the page rather than of the order two files happen to run in.
+ */
+export function probePath(license: string): string | null {
+  const qualified = normalizeLicense(license)
+  if (!qualified) return null
+  return `${SQUAD_PROBE_PATH}?id=${qualified.slice(LICENSE_PREFIX.length)}`
+}
+
+/**
+ * How often the page asks.
+ *
+ * ═══ FIVE SECONDS, AND BOTH ENDS OF THAT ARE MEASURED ═══
+ *
+ * THE FLOOR IS WHAT THE ANSWER CAN ACTUALLY CHANGE AT. The game pushes the whole
+ * roster to `/api/ingest` every two seconds, so nothing this polls can move
+ * faster than that and a one-second poll would spend three quarters of its
+ * requests learning the same thing twice.
+ *
+ * THE CEILING IS THE OWNER STANDING IN FRONT OF THE PROP. He walks onto the pad,
+ * the DUI is created, and `BR.Party.formSquads` runs on the same edge - so the
+ * wrong slide is on the wall for as long as this number and no longer. Five
+ * seconds is over before he has finished walking to it.
+ *
+ * WHAT IT COSTS THE CONSOLE, STATED RATHER THAN WAVED AT: one small request per
+ * player per five seconds, answered from the live snapshot already in this
+ * process with no DynamoDB read behind it. A full field is about ten requests a
+ * second, against the `/api/ingest` push the same box is already taking every
+ * two seconds from the game.
+ *
+ * AND NOTHING BREAKS IF IT NEVER ANSWERS. A failed poll changes nothing on the
+ * wall: the page keeps the slide it has and asks again. See the script in
+ * `lib/scoreboardPage.ts`, which is written so that every failure is the
+ * behavior this board had before any of this existed.
+ */
+export const SQUAD_POLL_MS = 5_000
 
 /**
  * ═══ EVERY ANSWER THIS FEATURE SENDS, INCLUDING THE REFUSALS ═══

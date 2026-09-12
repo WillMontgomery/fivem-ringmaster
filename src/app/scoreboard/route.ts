@@ -1,13 +1,12 @@
 import { env } from '@/lib/env'
-import { feedNow } from '@/lib/feedHealth'
 import {
   boardHeaders,
   normalizeLicense,
   playerPanelFrom,
+  probePath,
   rankBoard,
-  squadColors,
-  squadFrom,
-  squadPanelFrom,
+  squadDigest,
+  squadPanelFor,
   type BoardRow,
 } from '@/lib/scoreboard'
 import { PHASE_COUNT, renderScoreboard } from '@/lib/scoreboardPage'
@@ -254,30 +253,54 @@ export async function GET(req: Request): Promise<Response> {
    * match a snapshot that has forgotten the match they just played.
    */
   const live = liveView(Date.now())
-  const squadMembers = squadFrom(live.players, license, feedNow(live.ageMs))
 
   const careers = new Map<string, BoardRow>()
   for (const r of snapshot.rows) careers.set(r.license, r)
   if (row) careers.set(license, row)
 
   /**
-   * AND THE COLORS COME OFF THE SAME UNFILTERED SNAPSHOT, not off the members
-   * the slide ended up showing. `squadColors` reproduces `BR.Party.memberIndex`
-   * by sorting the whole squad's server ids, so it has to see the whole squad -
-   * handing it `squadMembers.members` would silently renumber everybody behind
-   * a mate whose license had not landed yet. See the note on that function.
+   * THE ASSEMBLY IS `squadPanelFor` AND NOT THIS ROUTE'S OWN SEQUENCE, because
+   * `/scoreboard/squad` has to reach the same answer to the letter or the board
+   * either re-fetches itself forever or never notices a change at all. The
+   * colors, the feed verdict and the member filter all live in that one
+   * function now. See it for why each of them is where it is.
    */
-  const squad = squadMembers
-    ? squadPanelFrom({
-        members: squadMembers.members,
-        careerOf: (l) => careers.get(l) ?? null,
-        viewer: license,
-        colors: squadColors(live.players, squadMembers.squadId),
-      })
-    : null
+  const squad = squadPanelFor({
+    players: live.players,
+    ageMs: live.ageMs,
+    viewer: license,
+    careerOf: (l) => careers.get(l) ?? null,
+  })
+
+  /**
+   * ═══ AND THE PAGE IS TOLD HOW TO FIND OUT THAT THIS HAS GONE STALE ═══
+   *
+   * Owner, 2026-09-12: "I'm alone when the page loads, then I get matched with
+   * some others. The 'squads' display on the scoreboard doesn't show the others
+   * after the page loads."
+   *
+   * Everything above is a photograph of one millisecond, and on a warmup pad it
+   * is very often the millisecond before `BR.Party.formSquads` has run. These
+   * two values are what let the served document notice: where to ask, and what
+   * the answer was when this document was built. The renderer emits a poller
+   * from them; omitting them is the board exactly as it was.
+   *
+   * THE DIGEST IS TAKEN FROM THE PANEL THAT WAS ACTUALLY RENDERED, not from a
+   * second resolution of the squad. Any gap between "what is on the wall" and
+   * "what this page thinks is on the wall" is a board that either never updates
+   * or updates every five seconds forever.
+   */
+  const refresh = { probe: probePath(license), digest: squadDigest(squad) }
 
   return new Response(
-    renderScoreboard({ board, player, squad, motion, phases: randomPhases() }),
+    renderScoreboard({
+      board,
+      player,
+      squad,
+      motion,
+      phases: randomPhases(),
+      refresh: refresh.probe ? { probe: refresh.probe, digest: refresh.digest } : null,
+    }),
     {
       status: 200,
       headers: boardHeaders('text/html; charset=utf-8'),

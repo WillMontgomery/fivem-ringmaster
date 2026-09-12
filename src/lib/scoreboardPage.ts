@@ -4,6 +4,8 @@ import {
   DESIGN_WIDTH,
   PLAYER_DWELL_MS,
   SQUAD_DWELL_MS,
+  SQUAD_MAX_ROWS,
+  SQUAD_POLL_MS,
   TOP_N,
   TRANSITION_MS,
   UI_SCALE,
@@ -1897,10 +1899,24 @@ function squadStyles(
  * purple belongs to the storm alone." Amber is not near it, and the eight squad
  * colors do not contain one.
  */
-function slideStyles(
-  mates: ReadonlyArray<{ color: string | null; you: boolean }>,
-): string {
-  const board = `
+/**
+ * ⚠ IT IS TWO FUNCTIONS NOW, AND THE SPLIT IS THE SQUAD REFRESH'S DOING.
+ *
+ * This used to emit `#board`'s light and `#squad`'s together, which was right
+ * while the document was written once and never touched. It is not any more: the
+ * squad slide is REPLACED IN PLACE when the roster changes under a page that is
+ * already on a wall (see `refreshScript`), and everything that moves with the
+ * squad has to live in the one small stylesheet that gets swapped. Leaving the
+ * leaderboard's wash in there would mean re-creating its rules on every swap,
+ * which restarts the background it declares and would show as the board blinking
+ * for a reason a player cannot see.
+ *
+ * SO THE DIVISION IS EXACTLY "DOES A DIFFERENT SQUAD CHANGE THIS". `#board`'s
+ * amber does not, and `#player` still has no rule anywhere, which is the thing
+ * `scoreboard.check.ts` asserts by absence.
+ */
+function boardSlideStyle(): string {
+  return `
 #board {
   background-image:
     radial-gradient(1180px 540px at 50% -16%,
@@ -1918,9 +1934,14 @@ function slideStyles(
       rgba(12, 7, 1, 0.34) 58%,
       rgba(0, 0, 0, 0) 100%);
 }`
+}
 
+/** The squad slide's own light, which is the people on it. See above. */
+function squadSlideStyle(
+  mates: ReadonlyArray<{ color: string | null; you: boolean }>,
+): string {
   const colors = mates.map((m) => m.color).filter((c): c is string => Boolean(c))
-  if (colors.length === 0) return board
+  if (colors.length === 0) return ''
 
   /**
    * ONE LIGHT PER PERSON, CENTERED ON WHERE THEIR CARD IS. `(i + 0.5) / n` is
@@ -1937,7 +1958,7 @@ function slideStyles(
     })
     .join(',\n')
 
-  return `${board}
+  return `
 #squad {
   background-image:
 ${lights},
@@ -1946,6 +1967,152 @@ ${lights},
       rgba(2, 4, 8, 0.30) 58%,
       rgba(0, 0, 0, 0) 100%);
 }`
+}
+
+
+/**
+ * ═══ THE SQUAD SLIDE'S OWN STYLESHEET, WHICH IS A SECOND `<style>` ON PURPOSE
+ *     ═══
+ *
+ * Owner, 2026-09-12: "I'm alone when the page loads, then I get matched with
+ * some others. The 'squads' display on the scoreboard doesn't show the others
+ * after the page loads."
+ *
+ * EVERY RULE BELOW MOVES WITH THE SQUAD, and that is the whole membership test
+ * for this function. A card's WIDTH is `columnWidth(mates)`, its HEIGHT is the
+ * category count, its fill and its name band are that mate's blip color, and the
+ * panel's wash is one light per person. A page that gains a squad mate needs all
+ * of it replaced, and a page that gains nothing needs none of it touched.
+ *
+ * SO IT IS SERVED AS ITS OWN ELEMENT AND THE REFRESH ASSIGNS ONE `textContent`.
+ * The alternative - one stylesheet, rewritten whole - re-creates every
+ * `@keyframes` and every `animation` in the document, which restarts the three
+ * orbs, the two beams, the two sheets, the ten motes and BOTH MARQUEE TRACKS.
+ * The leaderboard would snap back to MOST WINS in the middle of its drift
+ * because somebody four meters away joined a squad. See `refreshScript`.
+ *
+ * IT IS EMPTY WHEN THERE IS NO SQUAD, rather than absent. An element that is
+ * always there is an element the refresh can always write to, so there is no
+ * "first squad" case in the script and no `createElement` on a document that is
+ * being looked at.
+ *
+ * AND IT IS LAST IN THE DOCUMENT'S CASCADE, which it has to be: `.mate` and
+ * `.card` sit on the same element with the same specificity, so `.mate`'s width
+ * and height only win by coming after. A later `<style>` in the same `<head>` is
+ * exactly that, and `scoreboard.check.ts` asserts the order.
+ */
+function squadSheet(input: {
+  /** How many stat rows one squad card lists: one per category on the slide. */
+  squadStats: number
+  /** The squad cards, in the order they are rendered. See `squadStyles`. */
+  mates: ReadonlyArray<{ color: string | null; you: boolean }>
+}): string {
+  const { squadStats, mates } = input
+  if (mates.length === 0) return ''
+
+  /** The squad's own column arithmetic: one card per mate, across the safe area. */
+  const mw = columnWidth(Math.max(mates.length, 1))
+  const mateRowH = mateStatRowHeight(squadStats)
+  const mateCardH = mateCardHeight(squadStats)
+
+  return `
+/* ONE COLUMN PER MATE, SIZED BY THE SAME ARITHMETIC THE LEADERBOARD USES. The
+   game's own maximum squad is four (BR.Config.Match.maxSquadSize) and
+   SQUAD_MAX_ROWS guards six, so this divides the safe area the way columnWidth
+   divides it for cards - which is the function that exists precisely so a count
+   nobody anticipated cannot push a column off a surface that cannot scroll. */
+.sqcol { width: ${mw}px; }
+/* A MATE'S CARD IS A LEADERBOARD CARD WITH A PERSON ON IT. Everything structural
+   comes from '.card' above; these are the three things that are its own.
+
+   ITS HEIGHT IS DERIVED FROM THE CATEGORY COUNT rather than from TOP_N, because
+   a squad card lists one row per CATEGORY and a leaderboard card lists TOP_N
+   players. Five categories and five ranks happen to be the same number today and
+   stopped being so the moment BIGGEST SPENDERS was switched on. See mateCardH.
+
+   IT IS TALLER IN THE HEAD, because the header is somebody's NAME rather than a
+   category label, and a name is the card's whole identity on this slide. */
+.mate {
+  width: ${mw}px;
+  height: ${mateCardH}px;
+}
+/* A NEARLY COLLAPSED LINE BOX, BECAUSE ANTON'S LINE BOX IS NOT ITS INK. The face
+   carries a deep descent, so a name centered by its LINE BOX sits visibly high
+   in its band: the box is centered and the letters are not. Flex centering with
+   a collapsed line box puts the glyphs where the middle is.
+
+   1.2 AND NOT 1, AND THE DIFFERENCE IS A WHOLE CHARACTER. At exactly 1 the line
+   box is the type size, 'overflow: hidden' clips at its bottom edge, and every
+   glyph that descends below the baseline loses its tail - which on a display
+   face is not an aesthetic nicety: an UNDERSCORE is entirely below the baseline,
+   and 'Hollowpoint_77' rendered as 'Hollowpoint 77' on the squad slide. Player
+   names are full of underscores.
+
+   AND THE NAME IS PALETTE.text, WHICH IS THE WHOLE POINT OF THIS PASS. The blip
+   color is on the band behind it and on the card's fill. See squadStyles. */
+.mate h2 {
+  display: flex;
+  align-items: center;
+  height: ${MATE_HEAD_H}px;
+  line-height: 1.2;
+  font-size: ${mateNameSize(mw)}px;
+  letter-spacing: 0.01em;
+  color: ${PALETTE.text};
+}
+/* THE STAT ROW. Label left, number right, the same shape as a leaderboard row
+   with the rank numeral taken off - there is no ranking on this slide, only five
+   or six things one person has done. */
+.mate li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: ${mateRowH}px;
+  padding: 0 14px;
+  box-sizing: border-box;
+}
+.mate li + li {
+  box-shadow: inset 0 ${EDGE_PX}px 0 rgba(255, 255, 255, 0.05);
+}
+/* NEUTRAL, AND DELIBERATELY NOT THE CATEGORY'S ACCENT. Five accents on each of
+   four cards is twenty colored words, which is the thing he threw out with more
+   steps. The categories are in a fixed order and read down every card
+   identically; what distinguishes one card from another is whose it is. */
+.mlabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: ${DISPLAY};
+  font-size: ${mateLabelSize(mw)}px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  color: ${PALETTE.label};
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mval {
+  flex: 0 0 auto;
+  padding-left: 8px;
+  font-family: ${DISPLAY};
+  font-size: ${mateValueSize(mateRowH)}px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* THE VIEWER'S OWN CARD LIFTS ITS LABELS TO FULL WHITE, AND THE GATE CHOSE THAT
+   RATHER THAN TASTE. 'PALETTE.youMuted' is the brighter grey that exists for
+   exactly this surface on the leaderboard, and on a squad card it measured
+   between 3.88 and 4.40 against four of the eight blip colors - under the floor,
+   on the one card the owner asked to be MORE visible. The fill it sits on is the
+   highlight slate with a light saturated color mixed 30% into it, which is the
+   lightest surface anywhere on this board; there is no grey that survives it.
+   White does, on all eight, and the label/value hierarchy is carried by size and
+   position here the way it is on a leaderboard row the viewer owns. */
+.mate.you .mlabel { color: ${PALETTE.text}; }
+
+${squadStyles(mates)}
+${squadSlideStyle(mates)}
+`.trim()
 }
 
 /**
@@ -1990,20 +2157,11 @@ function styles(input: {
   boardScroll: number
   /** How many DISTINCT tiles the per-player slide has, and 0 when it does not drift. */
   tileScroll: number
-  /** How many stat rows one squad card lists: one per category on the slide. */
-  squadStats: number
   /** Every category on screen, deduplicated, in catalog order. */
   categories: ReadonlyArray<{ key: string; accent: string }>
-  /** The squad cards, in the order they are rendered. See `squadStyles`. */
-  mates: ReadonlyArray<{ color: string | null; you: boolean }>
 }): string {
-  const { motion, phases, columns, slots, boardScroll, tileScroll, squadStats, categories, mates } = input
+  const { motion, phases, columns, slots, boardScroll, tileScroll, categories } = input
   const w = columnWidth(slots)
-
-  /** The squad's own column arithmetic: one card per mate, across the safe area. */
-  const mw = columnWidth(Math.max(mates.length, 1))
-  const mateRowH = mateStatRowHeight(squadStats)
-  const mateCardH = mateCardHeight(squadStats)
 
   return `
 ${faces()}
@@ -2656,100 +2814,6 @@ ${motion === 'off' ? '' : transitionStyles(columns, slots)}
   gap: ${GUTTER}px;
   height: ${CONTENT_HEIGHT}px;
 }
-/* ONE COLUMN PER MATE, SIZED BY THE SAME ARITHMETIC THE LEADERBOARD USES. The
-   game's own maximum squad is four (BR.Config.Match.maxSquadSize) and
-   SQUAD_MAX_ROWS guards six, so this divides the safe area the way columnWidth
-   divides it for cards - which is the function that exists precisely so a count
-   nobody anticipated cannot push a column off a surface that cannot scroll. */
-.sqcol { width: ${mw}px; }
-/* A MATE'S CARD IS A LEADERBOARD CARD WITH A PERSON ON IT. Everything structural
-   comes from '.card' above; these are the three things that are its own.
-
-   ITS HEIGHT IS DERIVED FROM THE CATEGORY COUNT rather than from TOP_N, because
-   a squad card lists one row per CATEGORY and a leaderboard card lists TOP_N
-   players. Five categories and five ranks happen to be the same number today and
-   stopped being so the moment BIGGEST SPENDERS was switched on. See mateCardH.
-
-   IT IS TALLER IN THE HEAD, because the header is somebody's NAME rather than a
-   category label, and a name is the card's whole identity on this slide. */
-.mate {
-  width: ${mw}px;
-  height: ${mateCardH}px;
-}
-/* A NEARLY COLLAPSED LINE BOX, BECAUSE ANTON'S LINE BOX IS NOT ITS INK. The face
-   carries a deep descent, so a name centered by its LINE BOX sits visibly high
-   in its band: the box is centered and the letters are not. Flex centering with
-   a collapsed line box puts the glyphs where the middle is.
-
-   1.2 AND NOT 1, AND THE DIFFERENCE IS A WHOLE CHARACTER. At exactly 1 the line
-   box is the type size, 'overflow: hidden' clips at its bottom edge, and every
-   glyph that descends below the baseline loses its tail - which on a display
-   face is not an aesthetic nicety: an UNDERSCORE is entirely below the baseline,
-   and 'Hollowpoint_77' rendered as 'Hollowpoint 77' on the squad slide. Player
-   names are full of underscores.
-
-   AND THE NAME IS PALETTE.text, WHICH IS THE WHOLE POINT OF THIS PASS. The blip
-   color is on the band behind it and on the card's fill. See squadStyles. */
-.mate h2 {
-  display: flex;
-  align-items: center;
-  height: ${MATE_HEAD_H}px;
-  line-height: 1.2;
-  font-size: ${mateNameSize(mw)}px;
-  letter-spacing: 0.01em;
-  color: ${PALETTE.text};
-}
-/* THE STAT ROW. Label left, number right, the same shape as a leaderboard row
-   with the rank numeral taken off - there is no ranking on this slide, only five
-   or six things one person has done. */
-.mate li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: ${mateRowH}px;
-  padding: 0 14px;
-  box-sizing: border-box;
-}
-.mate li + li {
-  box-shadow: inset 0 ${EDGE_PX}px 0 rgba(255, 255, 255, 0.05);
-}
-/* NEUTRAL, AND DELIBERATELY NOT THE CATEGORY'S ACCENT. Five accents on each of
-   four cards is twenty colored words, which is the thing he threw out with more
-   steps. The categories are in a fixed order and read down every card
-   identically; what distinguishes one card from another is whose it is. */
-.mlabel {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-family: ${DISPLAY};
-  font-size: ${mateLabelSize(mw)}px;
-  font-weight: 400;
-  letter-spacing: 0.05em;
-  color: ${PALETTE.label};
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.mval {
-  flex: 0 0 auto;
-  padding-left: 8px;
-  font-family: ${DISPLAY};
-  font-size: ${mateValueSize(mateRowH)}px;
-  font-weight: 400;
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-/* THE VIEWER'S OWN CARD LIFTS ITS LABELS TO FULL WHITE, AND THE GATE CHOSE THAT
-   RATHER THAN TASTE. 'PALETTE.youMuted' is the brighter grey that exists for
-   exactly this surface on the leaderboard, and on a squad card it measured
-   between 3.88 and 4.40 against four of the eight blip colors - under the floor,
-   on the one card the owner asked to be MORE visible. The fill it sits on is the
-   highlight slate with a light saturated color mixed 30% into it, which is the
-   lightest surface anywhere on this board; there is no grey that survives it.
-   White does, on all eight, and the label/value hierarchy is carried by size and
-   position here the way it is on a leaderboard row the viewer owns. */
-.mate.you .mlabel { color: ${PALETTE.text}; }
-
 ${
   boardScroll > 0
     ? marqueeStyles({
@@ -2780,8 +2844,7 @@ ${
    single-class rule like .c-wins .card lands on top of .card without either
    of them having to reach for a specificity trick. */
 ${categoryStyles(categories)}
-${squadStyles(mates)}
-${slideStyles(mates)}
+${boardSlideStyle()}
 `.trim()
 }
 
@@ -2854,23 +2917,103 @@ export function mateValueSize(rowHeight: number): number {
   return Math.min(30, Math.round(rowHeight * 0.34))
 }
 
+/** The id of the one stylesheet the refresh rewrites. See `squadSheet`. */
+export const SQUAD_SHEET_ID = 'sqsheet'
+
 /**
- * The alternation.
+ * What the page needs in order to notice that its squad slide has gone stale.
  *
- * THE PAGE OWNS IT, WHICH IS THE OWNER'S DECISION STATED TWICE: "I want the page
- * itself to automatically transition between these 2 views." Every layout is
- * already in this document and the client already has a clock, so alternating
- * costs one `className` write every ten to fifteen seconds. The alternative, a
- * push from Lua, would need the game to hold a timer per prop and to reach into
- * a browser it does not otherwise talk to.
+ * BOTH HALVES OR NEITHER. A probe with no digest is a page that re-fetches
+ * itself on the first poll for no reason; a digest with no probe is a value
+ * nothing ever compares. The route builds them together from the same panel it
+ * just rendered.
+ */
+export interface Refresh {
+  /** Where to ask. `probePath` in `lib/scoreboard.ts` builds it. */
+  probe: string
+  /** What that path answers for the squad THIS DOCUMENT was rendered with. */
+  digest: string
+}
+
+/**
+ * The alternation, and the one thing on this page that asks a question.
  *
- * IT IS A LIST NOW AND IT WAS A BOOLEAN. Two panels toggled; three do not, and a
- * second boolean would have been a state machine written as two flags. The list
- * carries each panel's id beside its own dwell, in the order they are shown, and
- * the script is the same length it was.
+ * THE PAGE OWNS THE ALTERNATION, WHICH IS THE OWNER'S DECISION STATED TWICE: "I
+ * want the page itself to automatically transition between these 2 views." Every
+ * layout is already in this document and the client already has a clock, so
+ * alternating costs one `className` write every ten to fifteen seconds. The
+ * alternative, a push from Lua, would need the game to hold a timer per prop and
+ * to reach into a browser it does not otherwise talk to.
  *
- * A DWELL PER PANEL, EMITTED BY NAME, because the owner is going to tune them on
- * the pad and they are not the same reading job. See `lib/scoreboard.ts`.
+ * ═══ AND IT NOW ALSO KEEPS THE SQUAD SLIDE TRUE ═══
+ *
+ * Owner, 2026-09-12: "Let's say I'm in squads, yeah? I'm alone when the page
+ * loads, then I get matched with some others. The 'squads' display on the
+ * scoreboard doesn't show the others after the page loads."
+ *
+ * THE ROOT CAUSE IS THAT THIS DOCUMENT WAS A PHOTOGRAPH. `/scoreboard` resolves
+ * the squad from `liveView` at REQUEST TIME and renders it into the markup and
+ * the stylesheet, and until now nothing on the page ever asked again. On a
+ * warmup pad the DUI is created on the same edge that runs
+ * `BR.Party.formSquads`, so the request very often lands in the window where the
+ * viewer has no squad id yet - and a page that starts solo does not merely show
+ * a stale squad, it has NO `#squad` PANEL AT ALL and no third slide to reach.
+ *
+ * SO THE PANEL LIST IS READ OFF THE DOM ON EVERY TICK RATHER THAN BAKED IN. It
+ * used to be a list emitted by the server and resolved to elements once, which
+ * is the stale-closure half of the same bug: a squad slide inserted later could
+ * never enter a cycle that had already decided there were two panels. `ORDER` is
+ * the fixed display order; which of those three exist is a question asked fresh
+ * every time, so a panel that appears joins the cycle and a panel that
+ * disappears leaves it with no other bookkeeping.
+ *
+ * ═══ WHAT THE REFRESH ACTUALLY DOES, AND WHAT IT REFUSES TO DO ═══
+ *
+ * It polls `/scoreboard/squad?id=...` for a digest of the squad's COMPOSITION
+ * (`squadDigest`). While that digest is the one this document was rendered with,
+ * it does nothing at all - no DOM write, no repaint, no work on the surface.
+ * When it differs it re-fetches THIS PAGE'S OWN URL and moves exactly two things
+ * across: the `#squad` panel and the `<style>` that sizes and colors it.
+ *
+ * ONE RENDERER, WHICH IS THE POINT OF DOING IT THIS WAY. The replacement markup
+ * and CSS are produced by the same `renderScoreboard` that produced the page, on
+ * the server, from the same functions. There is no second squad renderer written
+ * in ES5 that has to be kept in step with this file, which is the version of
+ * this feature that would rot.
+ *
+ * AND NOTHING ELSE IN THE DOCUMENT IS TOUCHED. Not `#board`, not `#player`, not
+ * the background elements, not the main stylesheet. The leaderboard keeps
+ * drifting at the offset it was at, the orbs keep their random phases, and the
+ * slide the viewer is looking at stays up.
+ *
+ * ═══ EVERY FAILURE IS THE BEHAVIOR THIS BOARD HAD BEFORE ANY OF THIS EXISTED
+ *     ═══
+ *
+ * Owner: "I don't want the game server to be reliant on Ringmaster - only the
+ * reverse is okay." Nothing here reaches the game, and nothing here can take the
+ * board away:
+ *
+ *   A POLL THAT FAILS, TIMES OUT OR ANSWERS ANYTHING BUT 200 changes nothing and
+ *   is retried. A body that is not JSON, or whose `squad` is not a string, is
+ *   the same case.
+ *
+ *   A PAGE FETCH THAT FAILS changes nothing, AND THE DIGEST IS NOT ADVANCED, so
+ *   the next poll tries again. That ordering is deliberate: recording the new
+ *   digest before the swap landed would mean one bad fetch froze the slide for
+ *   the rest of the warmup.
+ *
+ *   AN ANSWER THAT IS NOT A BOARD is refused before anything is written. The
+ *   parsed document has to contain `#board` or the page keeps what it has - which
+ *   is what catches a 503 body, a login page, or a proxy's error document.
+ *
+ *   EVERY BRANCH IS INSIDE A `try`. There is no exception in here that reaches
+ *   the surface, and the worst outcome of any of them is a board that carries on
+ *   showing exactly what it showed a second ago.
+ *
+ * ═══ THE PARTS THAT WERE ALREADY TRUE AND STILL ARE ═══
+ *
+ * A DWELL PER PANEL, EMITTED BY NAME, because the owner tunes them on the pad and
+ * they are not the same reading job. See `lib/scoreboard.ts`.
  *
  * THE TRANSITION IS ADDED TO THE DWELL, NOT TAKEN OUT OF IT. A dwell is time
  * spent still and readable; scheduling the next swap at `dwell` alone would mean
@@ -2878,61 +3021,182 @@ export function mateValueSize(rowHeight: number): number {
  * emitted transition is 0, so the timings are exactly what they were before any
  * of this existed.
  *
- * `setTimeout` CHAINED, NOT `setInterval`. Three different dwell times are not
- * an interval, and an interval would hold whichever panel it started on for the
+ * `setTimeout` CHAINED, NOT `setInterval`. Three different dwell times are not an
+ * interval, and an interval would hold whichever panel it started on for the
  * wrong one of the durations forever.
  *
- * THE FIRST PAINT IS NOT ANIMATED, and that is deliberate. The DUI is being
- * created at the moment a player walks onto the pad; the fastest possible first
- * frame is the board already assembled. The first swap is therefore scheduled at
- * the leaderboard's own dwell with no transition added, because no transition
- * preceded it.
+ * THE FIRST PAINT IS NOT ANIMATED. The DUI is created at the moment a player
+ * walks onto the pad; the fastest possible first frame is the board already
+ * assembled. The first swap is scheduled at the leaderboard's own dwell with no
+ * transition added, because no transition preceded it.
  *
- * NOT EMITTED AT ALL WHEN THERE IS ONLY ONE PANEL. A player with no career row
- * and no squad gets the leaderboard and nothing else, so there is nothing to
- * alternate with and the document carries no timer, no script and nothing to
- * repaint. The check asserts that too, because a timer swapping to a panel that
- * does not exist would blank the wall every fifteen seconds.
+ * IT IS EMITTED EVEN WITH ONE PANEL NOW, AND THAT REPLACES AN OLD RULE RATHER
+ * THAN BREAKING IT. The rule was "no script when there is nothing to alternate
+ * with", and its reason was that "a timer swapping to a panel that does not exist
+ * would blank the wall". That reason is now held by construction instead: the
+ * cycle only ever shows an id it has just found in the DOM, so it cannot name a
+ * missing panel whatever the timer does. And the player this used to apply to -
+ * no career row, no squad - is exactly the player whose squad is about to form,
+ * which is the case the owner reported.
  *
- * ES5 AND NOTHING NEWER. This runs in Chromium 103, which would take a good deal
- * more than this - but the check bans optional chaining and nullish coalescing
- * outright rather than tracking which syntax landed in which release, and a
- * script written in `var` and `function` cannot fail that test by accident.
+ * ES5 AND NOTHING NEWER. This runs in Chromium 103. The check bans optional
+ * chaining and nullish coalescing outright rather than tracking which syntax
+ * landed in which release, and a script written in `var` and `function` cannot
+ * fail that test by accident. `XMLHttpRequest` rather than `fetch` for the same
+ * reason: it is the one that has never not worked, and it needs no promise.
+ *
+ * `DOMParser` NEVER RUNS A SCRIPT. `parseFromString(html, 'text/html')` builds an
+ * inert document: its `<script>` elements are parsed and not executed, and the
+ * only node this takes out of it is a `<div id="squad">` that contains none. The
+ * names inside it were escaped by `esc()` on the server before they were ever
+ * markup.
  */
-function swapScript(
-  panels: ReadonlyArray<[string, string, number]>,
-  motion: MotionLevel,
-): string {
+function pageScript(input: { motion: MotionLevel; refresh: Refresh | null }): string {
+  const { motion, refresh } = input
   const transition = motion === 'off' ? 0 : TRANSITION_MS
+
   /**
    * EACH DWELL IS DECLARED UNDER ITS OWN NAME AND THEN REFERENCED, rather than
-   * inlined into the list. The values would work either way; the names are what
-   * make the served document say WHICH number the owner is looking at when he
-   * opens it to tune one, and `scoreboard.check.ts` asserts all three appear.
+   * inlined. The values would work either way; the names are what make the served
+   * document say WHICH number the owner is looking at when he opens it to tune
+   * one, and `scoreboard.check.ts` asserts all three appear.
    */
-  const names = panels.map(([, name, dwell]) => `  var ${name} = ${dwell};`).join('\n')
-  const order = panels.map(([id, name]) => `['${id}', ${name}]`).join(', ')
+  const dwells = [
+    `  var BOARD_DWELL_MS = ${BOARD_DWELL_MS};`,
+    `  var PLAYER_DWELL_MS = ${PLAYER_DWELL_MS};`,
+    `  var SQUAD_DWELL_MS = ${SQUAD_DWELL_MS};`,
+  ].join('\n')
+
+  /**
+   * ⚠ BOTH OF THESE ARE EMITTED INTO A JAVASCRIPT STRING LITERAL AND BOTH ARE
+   * CONSTRAINED TO CHARACTERS THAT CANNOT END ONE. The probe is `probePath`'s
+   * output, which is a fixed path and forty hex characters; the digest is
+   * `squadDigest`'s, which is sixteen. Anything else is dropped rather than
+   * escaped, because a value this file cannot vouch for has no business being in
+   * a script tag at all and silently emitting no poller is the safe failure.
+   */
+  const safe =
+    refresh && /^\/[a-z/]+\?id=[0-9a-f]{40}$/.test(refresh.probe) && /^[0-9a-f]{16}$/.test(refresh.digest)
+      ? refresh
+      : null
+
+  const poller = safe
+    ? `
+  var PROBE = '${safe.probe}';
+  var POLL_MS = ${SQUAD_POLL_MS};
+  var digest = '${safe.digest}';
+
+  /* THE ONE PANEL THE SERVER RE-RENDERS AND THIS MOVES ACROSS. Nothing else in
+     the document is read or written, so there is no path from a bad answer to a
+     blank board: #board and #player are never named here. */
+  function apply(html, fresh) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    if (!doc || !doc.getElementById('board')) return;
+
+    var sheet = document.getElementById('${SQUAD_SHEET_ID}');
+    if (!sheet) return;
+    var next = doc.getElementById('${SQUAD_SHEET_ID}');
+    sheet.textContent = next ? next.textContent : '';
+
+    var have = document.getElementById('squad');
+    var made = doc.getElementById('squad');
+    if (made) {
+      var node = document.importNode(made, true);
+      node.className = 'panel';
+      if (have) document.body.replaceChild(node, have);
+      else document.body.appendChild(node);
+    } else if (have) {
+      document.body.removeChild(have);
+    }
+
+    /* WHICHEVER SLIDE WAS UP STAYS UP, and if it was the one that just went away
+       the leaderboard takes over immediately rather than at the next tick. */
+    show(document.getElementById(current) ? current : 'board');
+    digest = fresh;
+  }
+
+  function refresh(fresh) {
+    try {
+      var r = new XMLHttpRequest();
+      r.open('GET', location.href, true);
+      r.onreadystatechange = function () {
+        if (r.readyState !== 4) return;
+        try {
+          if (r.status === 200) apply(r.responseText, fresh);
+        } catch (e) {}
+      };
+      r.send();
+    } catch (e) {}
+  }
+
+  function poll() {
+    var again = false;
+    function later() {
+      if (again) return;
+      again = true;
+      setTimeout(poll, POLL_MS);
+    }
+    try {
+      var x = new XMLHttpRequest();
+      x.open('GET', PROBE, true);
+      x.onreadystatechange = function () {
+        if (x.readyState !== 4) return;
+        later();
+        try {
+          if (x.status !== 200) return;
+          var said = JSON.parse(x.responseText).squad;
+          if (typeof said !== 'string' || said === digest) return;
+          refresh(said);
+        } catch (e) {}
+      };
+      x.send();
+    } catch (e) {
+      later();
+    }
+  }
+  setTimeout(poll, POLL_MS);`
+    : ''
 
   return `
 (function () {
   var TRANSITION_MS = ${transition};
-${names}
-  var order = [${order}];
-  var els = [];
-  for (var i = 0; i < order.length; i++) {
-    var el = document.getElementById(order[i][0]);
-    if (!el) return;
-    els.push(el);
+${dwells}
+  var ORDER = ['board', 'player', 'squad'];
+  var DWELL = { board: BOARD_DWELL_MS, player: PLAYER_DWELL_MS, squad: SQUAD_DWELL_MS };
+  var current = 'board';
+
+  /* ASKED FRESH EVERY TIME, WHICH IS WHAT LETS A SLIDE ARRIVE LATE. */
+  function here() {
+    var out = [];
+    for (var i = 0; i < ORDER.length; i++) {
+      if (document.getElementById(ORDER[i])) out.push(ORDER[i]);
+    }
+    return out;
   }
-  var at = 0;
-  function swap() {
-    var was = at;
-    at = (at + 1) % els.length;
-    els[was].className = 'panel';
-    els[at].className = 'panel on';
-    setTimeout(swap, order[at][1] + TRANSITION_MS);
+
+  function show(id) {
+    for (var i = 0; i < ORDER.length; i++) {
+      var el = document.getElementById(ORDER[i]);
+      if (el) el.className = ORDER[i] === id ? 'panel on' : 'panel';
+    }
+    current = id;
   }
-  setTimeout(swap, order[0][1]);
+
+  function tick() {
+    var list = here();
+    if (list.length > 1) {
+      var at = 0;
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] === current) at = i;
+      }
+      show(list[(at + 1) % list.length]);
+      setTimeout(tick, DWELL[current] + TRANSITION_MS);
+      return;
+    }
+    setTimeout(tick, DWELL[current]);
+  }
+  setTimeout(tick, DWELL[current]);
+${poller}
 })();
 `.trim()
 }
@@ -3107,6 +3371,12 @@ function squadMarkup(squad: SquadPanel): string {
  * route draws the real numbers. Omitting it is a still, synchronized background,
  * which is a legitimate thing for a caller to want and is what every check that
  * is not about phases passes.
+ *
+ * `refresh` IS THE SAME SHAPE OF ARGUMENT AND IS OMITTED FOR THE SAME REASON. A
+ * caller that hands over a probe path and the digest that path currently answers
+ * gets a page that keeps its squad slide up to date; a caller that does not gets
+ * exactly the document this function has always produced, minus nothing. The
+ * route supplies both. See `pageScript`.
  */
 export function renderScoreboard(input: {
   board: Leaderboard
@@ -3114,10 +3384,12 @@ export function renderScoreboard(input: {
   squad?: SquadPanel | null
   motion: MotionLevel
   phases?: readonly number[]
+  refresh?: Refresh | null
 }): string {
   const { board, player, motion } = input
   const squad = input.squad ?? null
   const phases = input.phases ?? []
+  const refresh = input.refresh ?? null
 
   /**
    * THE COLUMN COUNT IS THE LEADERBOARD'S, NOT THE CATALOG'S. A category that
@@ -3171,10 +3443,27 @@ export function renderScoreboard(input: {
   const slots = boardScrolls || tilesScroll ? SLOTS : count
   const boardRepeat = boardScrolls ? 2 : 1
   const tileRepeat = tilesScroll ? 2 : 1
+  /**
+   * ⚠ `SQUAD_MAX_ROWS` AND NOT THE SQUAD THIS PAGE HAPPENS TO HAVE, which is the
+   * one place the refresh reaches back into the stable stylesheet.
+   *
+   * `columns` feeds `transitionStyles`, which emits one `.col:nth-child(N)`
+   * entrance delay per column. A page rendered for a solo player carries no
+   * squad and would emit none for one - and then a squad arrives, the slide is
+   * swapped in under a stylesheet that was written before it existed, and its
+   * cards have no entrance delay at all: four cards arriving together instead of
+   * fanning in, on the one slide the change exists to show him.
+   *
+   * IT COSTS NOTHING AND IT CANNOT MOVE AN EXISTING DELAY. The delay is
+   * `(i % span) * step` and `span` is the SLOT count, so raising `columns`
+   * only ever APPENDS rules for positions further along the row; every rule that
+   * was emitted before is emitted with the same value. The squad's own maximum
+   * is six and `scoreboard.check.ts` recomputes both halves.
+   */
   const columns = Math.max(
     boardCards * boardRepeat,
     playerTiles * tileRepeat,
-    squad?.mates.length ?? 0,
+    SQUAD_MAX_ROWS,
     1,
   )
 
@@ -3211,16 +3500,6 @@ export function renderScoreboard(input: {
         Array.from({ length: MOTES }, (_, i) => `<div class="mote mt${i}"></div>`).join('')
       : ''
 
-  /**
-   * THE ORDER IS THE ORDER THEY ARE SHOWN IN, and the leaderboard is first
-   * because it is the panel that is already on screen at first paint.
-   */
-  const panels: Array<[string, string, number]> = [
-    ['board', 'BOARD_DWELL_MS', BOARD_DWELL_MS],
-  ]
-  if (player) panels.push(['player', 'PLAYER_DWELL_MS', PLAYER_DWELL_MS])
-  if (squad) panels.push(['squad', 'SQUAD_DWELL_MS', SQUAD_DWELL_MS])
-
   return (
     `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">` +
     `<style>${styles({
@@ -3230,8 +3509,15 @@ export function renderScoreboard(input: {
       slots,
       boardScroll: boardScrolls ? boardCards : 0,
       tileScroll: tilesScroll ? playerTiles : 0,
-      squadStats: squad?.labels.length ?? 0,
       categories: [...seen.values()],
+    })}</style>` +
+    /**
+     * THE SQUAD'S OWN SHEET, SECOND AND NAMED. It is the only stylesheet the
+     * refresh rewrites and it is empty when there is no squad; see `squadSheet`
+     * for why both of those are true and why it must come after the first.
+     */
+    `<style id="${SQUAD_SHEET_ID}">${squadSheet({
+      squadStats: squad?.labels.length ?? 0,
       mates: squad?.mates ?? [],
     })}</style></head>` +
     `<body class="m-${motion}" data-motion="${motion}">` +
@@ -3241,7 +3527,7 @@ export function renderScoreboard(input: {
     boardMarkup(board, boardRepeat) +
     (player ? playerMarkup(player, tileRepeat) : '') +
     (squad ? squadMarkup(squad) : '') +
-    (panels.length > 1 ? `<script>${swapScript(panels, motion)}</script>` : '') +
+    `<script>${pageScript({ motion, refresh })}</script>` +
     `</body></html>`
   )
 }

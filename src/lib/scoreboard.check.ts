@@ -115,6 +115,7 @@ import { resolve } from 'node:path'
 import { NextRequest } from 'next/server'
 
 import { GET } from '../app/scoreboard/route'
+import { GET as PROBE_GET } from '../app/scoreboard/squad/route'
 import middleware from '../middleware'
 import { contrastRatio, parseHex, relativeLuminance } from './contrast'
 import {
@@ -133,14 +134,19 @@ import {
   formatCount,
   normalizeLicense,
   playerPanelFrom,
+  probePath,
   rankBoard,
   rankOf,
   squadColors,
+  squadDigest,
   squadFrom,
+  squadPanelFor,
   squadPanelFrom,
   SQUAD_COLORS,
   SQUAD_DWELL_MS,
   SQUAD_MAX_ROWS,
+  SQUAD_POLL_MS,
+  SQUAD_PROBE_PATH,
   type AvailableCategory,
   type BlockedCategory,
   type BoardRow,
@@ -158,6 +164,7 @@ import {
   SAFE_INSET,
   SCROLL_MS_PER_CARD,
   SLOTS,
+  SQUAD_SHEET_ID,
   TITLES,
   TITLE_H,
   columnWidth,
@@ -764,6 +771,178 @@ console.log("\nB3. a squad mate's row is the color their blip is")
   expect('and the viewer gets theirs too', painted.mates.find((m) => m.you)?.color, SQUAD_COLORS[2])
 }
 
+console.log('\nB4. the squad is assembled once, and both ends of the refresh use it')
+
+/**
+ * ═══ THE PROBE AND THE PAGE MUST REACH THE SAME SQUAD OR THE BOARD NEVER
+ *     SETTLES ═══
+ *
+ * `/scoreboard` renders the slide and `/scoreboard/squad` reports whether that
+ * slide is still about the right people. If the two resolved the squad even
+ * slightly differently the board would either re-fetch itself every five seconds
+ * for the rest of the warmup, or never notice a change at all - which is the
+ * owner's original complaint with an extra request per player per five seconds
+ * on top of it.
+ *
+ * SO `squadPanelFor` IS THE ONE SEQUENCE AND THIS IS WHAT HOLDS IT THERE: the
+ * hand-rolled version the route used to carry, written out here, has to agree
+ * with it exactly.
+ */
+{
+  const hand = squadPanelFrom({
+    members: squadFrom(PAD, L(1), 'live')!.members,
+    careerOf: () => null,
+    viewer: L(1),
+    colors: squadColors(PAD, SQ),
+  })
+  const via = squadPanelFor({ players: PAD, ageMs: 0, viewer: L(1), careerOf: () => null })
+
+  expect(
+    'the assembly and the sequence it replaced agree, mate for mate',
+    JSON.stringify(via),
+    JSON.stringify(hand),
+  )
+  expect('and therefore so do their digests', squadDigest(via), squadDigest(hand))
+}
+
+/**
+ * THE FEED VERDICT IS DERIVED INSIDE, FROM THE AGE, so the two ends cannot be
+ * looking at different clock readings. `DEAD_MS` is fifteen missed pushes; an age
+ * past it is a snapshot that may describe a previous match.
+ */
+expect(
+  'an ancient snapshot resolves no squad, the same way squadFrom refuses one',
+  squadPanelFor({ players: PAD, ageMs: 600_000, viewer: L(1), careerOf: () => null }),
+  null,
+)
+expect(
+  'and a solo player has none whatever the feed says',
+  squadPanelFor({ players: PAD, ageMs: 0, viewer: L(5), careerOf: () => null }),
+  null,
+)
+
+console.log('\nB4. the digest moves with the people and not with their numbers')
+
+const HEX16 = /^[0-9a-f]{16}$/
+
+/**
+ * ⚠ THE DIGEST IS EMITTED INTO A `<script>` AS A STRING LITERAL AS WELL AS INTO
+ * A JSON BODY, AND IT CARRIES PLAYER AUTHORED NAMES.
+ *
+ * That is the one shape this page has ever had for an injection, and the answer
+ * is that the value cannot carry a character that could end either context. This
+ * drives the hostile name all the way through and asserts the output is still
+ * sixteen hex characters, which is the property both emitters rely on.
+ */
+{
+  const nasty: LivePlayer[] = [
+    { license: L(1), name: `</script><img onerror=alert(1)>`, squadId: SQ, src: 3 },
+    { license: L(2), name: `" onload='x' & \\ ' \` <b>`, squadId: SQ, src: 9 },
+  ]
+  const panel = squadPanelFor({ players: nasty, ageMs: 0, viewer: L(1), careerOf: () => null })
+  expectTrue('a hostile squad digests to hex and nothing else', HEX16.test(squadDigest(panel)))
+}
+
+expectTrue('no squad is a digest too, because a page has to learn it has one', HEX16.test(squadDigest(null)))
+expectTrue(
+  'and it is not the digest of any squad',
+  squadDigest(null) !==
+    squadDigest(squadPanelFor({ players: PAD, ageMs: 0, viewer: L(1), careerOf: () => null })),
+)
+
+{
+  const here = squadPanelFor({ players: PAD, ageMs: 0, viewer: L(1), careerOf: () => null })
+  const again = squadPanelFor({ players: PAD, ageMs: 0, viewer: L(1), careerOf: () => null })
+  expect('the same squad digests the same, or the board refetches forever', squadDigest(here), squadDigest(again))
+
+  /** The owner's own case: he was alone, and then he was not. */
+  const alone = squadPanelFor({
+    players: [{ license: L(1), name: 'zulu', squadId: null, src: 12 }],
+    ageMs: 0,
+    viewer: L(1),
+    careerOf: () => null,
+  })
+  expectTrue('and getting squad mates changes it, which is the whole feature', squadDigest(alone) !== squadDigest(here))
+
+  /** One person leaves. */
+  const smaller = squadPanelFor({
+    players: PAD.filter((p) => p.name !== 'mike'),
+    ageMs: 0,
+    viewer: L(1),
+    careerOf: () => null,
+  })
+  expectTrue('losing one changes it too', squadDigest(smaller) !== squadDigest(here))
+
+  /**
+   * A MATE'S BLIP COLOR IS IN IT, because the slide's whole stylesheet is drawn
+   * from those eight values: a squad renumbered by a joining server id is four
+   * cards painted the wrong four colors, which is a claim a player can check
+   * against their own minimap.
+   */
+  const idless = PAD.map((p) => ({ license: p.license, name: p.name, squadId: p.squadId }))
+  const neutral = squadPanelFor({ players: idless, ageMs: 0, viewer: L(1), careerOf: () => null })
+  expectTrue('a squad that lost its colors digests differently', squadDigest(neutral) !== squadDigest(here))
+
+  /**
+   * AND A CAREER NUMBER IS NOT IN IT, ON PURPOSE. Career totals move once per
+   * player per match, at match end, and this board is read during warmup. A
+   * digest that moved with one would have every board in the lobby re-fetching
+   * itself for a value nobody can watch change - and the leaderboard half already
+   * accepts a minute of staleness for exactly the same reason.
+   */
+  const rich = squadPanelFor({
+    players: PAD,
+    ageMs: 0,
+    viewer: L(1),
+    careerOf: () => row({ name: 'whoever', wins: 9_999, kills: 9_999, xp: 9_999 }),
+  })
+  expect('career numbers are deliberately not in it', squadDigest(rich), squadDigest(here))
+}
+
+console.log('\nB4. the probe path is built from the license rule, not beside it')
+
+expect(
+  "the owner's bare id becomes the probe he would type",
+  probePath(OWNER_ID),
+  `${SQUAD_PROBE_PATH}?id=${OWNER_ID}`,
+)
+expect(
+  'the qualified spelling reaches the same path',
+  probePath(`license:${OWNER_ID}`),
+  `${SQUAD_PROBE_PATH}?id=${OWNER_ID}`,
+)
+expect(
+  'and an uppercase transcription is normalized like every other id',
+  probePath(OWNER_ID.toUpperCase()),
+  `${SQUAD_PROBE_PATH}?id=${OWNER_ID}`,
+)
+
+/**
+ * ANYTHING THAT IS NOT A LICENSE IS NOTHING, which is what makes it safe to put
+ * this string inside a script tag. The renderer refuses to emit a poller at all
+ * for a null, so there is no best-effort path from a query string to a `<script>`.
+ */
+for (const bad of [
+  '',
+  'not-a-license',
+  `${OWNER_ID}'`,
+  `${OWNER_ID}</script>`,
+  `../../admin?x=${OWNER_ID}`,
+  `${OWNER_ID}${OWNER_ID}`,
+]) {
+  expect(`a probe path is refused for ${JSON.stringify(bad).slice(0, 28)}`, probePath(bad), null)
+}
+
+expectTrue('the poll interval is a real duration', SQUAD_POLL_MS > 0)
+/**
+ * FASTER THAN THE PAGE COULD NOTICE BY ITSELF AND SLOWER THAN THE PUSH THAT
+ * FEEDS IT. The game pushes the roster every two seconds, so nothing this asks
+ * about can move faster than that; and the wrong slide is on the wall for at
+ * most this long, which has to be over before the owner has walked to the prop.
+ */
+expectTrue('it is not faster than the feed it reads', SQUAD_POLL_MS >= 2_000)
+expectTrue('and the wrong slide is never up for a whole dwell', SQUAD_POLL_MS < SQUAD_DWELL_MS)
+
 // ===========================================================================
 // C. THE CATALOG
 // ===========================================================================
@@ -1179,11 +1358,28 @@ const HOSTILE_ROWS: BoardRow[] = [
 
 const VIEWER = HOSTILE_ROWS[0]!.license
 
+/**
+ * ⚠ EVERY DOCUMENT IN THIS SECTION CARRIES THE POLLER, WHICH IS WHY THE REFRESH
+ * IS HERE AND NOT IN A FIXTURE OF ITS OWN.
+ *
+ * The squad refresh (#247) emits a `<script>` into the served page, and that
+ * script has to survive every general assertion below: the Chromium 103 syntax
+ * ban, the "no absolute URL" rule, the escaping gate and the single-`</script>`
+ * count. A separate polling fixture would have been a second document that none
+ * of those ran against, which is exactly how the ban on optional chaining would
+ * come to be enforced everywhere except the one script that was written last.
+ *
+ * `BOARD_ONLY` IS DELIBERATELY LEFT WITHOUT ONE, so the omitted-refresh path is
+ * a rendered document too rather than a branch nobody drives.
+ */
+const REFRESH = { probe: probePath(VIEWER)!, digest: squadDigest(null) }
+
 function render(motion: MotionLevel): string {
   return renderScoreboard({
     board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
     player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
     motion,
+    refresh: REFRESH,
   })
 }
 
@@ -1212,17 +1408,20 @@ const SQUAD_PAD: LivePlayer[] = [
   { license: L(3), name: 'mike', squadId: SQ, src: 22 },
 ]
 
+const SQUAD_PANEL = squadPanelFrom({
+  members: SQUAD_PAD,
+  careerOf: () => null,
+  viewer: VIEWER,
+  /** WITH COLORS, so `squadStyles` is exercised by every document assertion. */
+  colors: squadColors(SQUAD_PAD, SQ),
+})
+
 const SQUAD_RENDER = renderScoreboard({
   board: rankBoard(HOSTILE_ROWS, { viewer: VIEWER }),
   player: playerPanelFrom(HOSTILE_ROWS[0]!, HOSTILE_ROWS, {}),
-  squad: squadPanelFrom({
-    members: SQUAD_PAD,
-    careerOf: () => null,
-    viewer: VIEWER,
-    /** WITH COLORS, so `squadStyles` is exercised by every document assertion. */
-    colors: squadColors(SQUAD_PAD, SQ),
-  }),
+  squad: SQUAD_PANEL,
   motion: 'full',
+  refresh: { probe: probePath(VIEWER)!, digest: squadDigest(SQUAD_PANEL) },
 })
 
 /** The label is only ever printed, so it is wider than `MotionLevel`. */
@@ -2301,12 +2500,213 @@ expectTrue(
 expectTrue('the squad dwell is named when there is a squad', SQUAD_RENDER.includes('SQUAD_DWELL_MS'))
 expectTrue('and its value is emitted', SQUAD_RENDER.includes(String(SQUAD_DWELL_MS)))
 
+console.log('\nD. the cycle is driven, not read')
+
+/**
+ * ═══ THE EMITTED SCRIPT IS RUN HERE RATHER THAN GREPPED ═══
+ *
+ * This section used to assert the SHAPE of the alternation: that the served
+ * document contained a list of the right length with the right ids in it. That
+ * test passed for the whole life of the bug the owner reported, because the bug
+ * was never in the list - it was that the list existed at all. A page rendered
+ * for a player standing alone on the pad baked "there are two panels" into its
+ * own script, and a squad slide arriving four seconds later had no way into a
+ * cycle that had already resolved its elements once.
+ *
+ * SO THE CYCLE READS THE DOM ON EVERY TICK NOW, AND WHAT IS ASSERTED IS THE
+ * BEHAVIOR. The script is pulled out of the real document and executed against a
+ * fake `document` and a virtual clock, which is the only way to state the
+ * property that matters: a panel that appears LATE joins the rotation, a panel
+ * that disappears leaves it, and nothing is ever shown that is not there.
+ *
+ * THE POLLER IS INERT IN HERE AND THAT IS ITSELF A TEST. There is no
+ * `XMLHttpRequest` in this shim, so the poll throws on its first line every time
+ * - and the cycle below still runs for a simulated minute without a single
+ * failure reaching it. That is the degradation rule from the brief, driven
+ * rather than described: a console that cannot be reached leaves the board doing
+ * exactly what it did before.
+ */
+function driveCycle(doc: string, present: readonly string[]) {
+  const script = /<script>([^]*?)<\/script>/.exec(doc)
+  if (!script) throw new Error('the document carries no script')
+
+  /**
+   * EVERY PANEL THE SCRIPT LIGHTS IS RECORDED, not just whichever one happens to
+   * be up when a sample is taken. The three dwells are different lengths, so a
+   * test that advanced by a fixed amount and looked would see a moving subset of
+   * the rotation and pass or fail on arithmetic that has nothing to do with the
+   * property. `className` is an accessor for exactly this.
+   */
+  const log: string[] = []
+  const panel = (id: string) => {
+    let cls = 'panel'
+    return {
+      get className() {
+        return cls
+      },
+      set className(next: string) {
+        cls = next
+        if (next === 'panel on') log.push(id)
+      },
+    }
+  }
+
+  const els = new Map<string, { className: string }>()
+  for (const id of present) els.set(id, panel(id))
+
+  let now = 0
+  const queue: Array<{ at: number; fn: () => void }> = []
+
+  const shim = {
+    getElementById: (id: string) => els.get(id) ?? null,
+    body: {},
+  }
+  const timer = (fn: () => void, ms: number) => {
+    queue.push({ at: now + Math.max(0, ms | 0), fn })
+    return 0
+  }
+
+  new Function('document', 'setTimeout', 'JSON', 'location', script[1]!)(
+    shim,
+    timer,
+    JSON,
+    { href: '/scoreboard?id=x' },
+  )
+
+  /** Whichever panel is `on` right now, or nothing. */
+  const showing = () => {
+    const on: string[] = []
+    for (const [id, el] of els) if (el.className === 'panel on') on.push(id)
+    return on
+  }
+
+  /** Run every timer due in the next `ms`, in order, and return what is up. */
+  const advance = (ms: number) => {
+    const until = now + ms
+    for (let guard = 0; guard < 10_000; guard++) {
+      queue.sort((a, b) => a.at - b.at)
+      const next = queue[0]
+      if (!next || next.at > until) break
+      queue.shift()
+      now = next.at
+      next.fn()
+    }
+    now = until
+    return showing()
+  }
+
+  return {
+    advance,
+    showing,
+    /** Every panel lit since the last `since()`, in order. */
+    since: () => log.splice(0, log.length),
+    /** What the roster change does to a document already running. */
+    arrive: (id: string) => els.set(id, panel(id)),
+    leave: (id: string) => els.delete(id),
+  }
+}
+
+{
+  const solo = driveCycle(FULL, ['board', 'player'])
+  expect('the leaderboard is what first paint leaves up', solo.showing().join(), '')
+  expect(
+    'the first swap is the per-player half, at the board dwell',
+    solo.advance(BOARD_DWELL_MS).join(),
+    'player',
+  )
+  expect(
+    'and it comes back, a player dwell plus a transition later',
+    solo.advance(PLAYER_DWELL_MS + TRANSITION_MS).join(),
+    'board',
+  )
+  expectTrue(
+    'exactly one panel is ever up',
+    solo.showing().length === 1,
+  )
+}
+
+{
+  const three = driveCycle(SQUAD_RENDER, ['board', 'player', 'squad'])
+  expect('squads: the board hands over to the player', three.advance(BOARD_DWELL_MS).join(), 'player')
+  expect(
+    'squads: and the player hands over to the squad',
+    three.advance(PLAYER_DWELL_MS + TRANSITION_MS).join(),
+    'squad',
+  )
+  expect(
+    'squads: and the squad hands back to the board',
+    three.advance(SQUAD_DWELL_MS + TRANSITION_MS).join(),
+    'board',
+  )
+}
+
+/**
+ * ═══ THE OWNER'S OWN CASE, DRIVEN ═══
+ *
+ * "Let's say I'm in squads, yeah? I'm alone when the page loads, then I get
+ * matched with some others. The 'squads' display on the scoreboard doesn't show
+ * the others after the page loads."
+ *
+ * This is the solo document - the one that carries two panels and no squad slide
+ * - with a squad panel inserted into it after it has already been alternating for
+ * half a minute, which is what the refresh does. The old script could not reach
+ * it; this one has to.
+ */
+{
+  const late = driveCycle(FULL, ['board', 'player'])
+  late.advance(60_000)
+  expectTrue(
+    'before the squad arrives it is never shown, because it is not there',
+    !late.since().includes('squad'),
+  )
+
+  late.arrive('squad')
+  late.advance(120_000)
+  const seen = new Set(late.since())
+  expectTrue('a squad slide that arrives late joins the rotation', seen.has('squad'))
+  expectTrue('and it does not displace the leaderboard', seen.has('board'))
+  expectTrue('or the per-player half', seen.has('player'))
+}
+
+/** And the other direction: everybody disconnects and the slide goes away. */
+{
+  const gone = driveCycle(SQUAD_RENDER, ['board', 'player', 'squad'])
+  gone.advance(BOARD_DWELL_MS + PLAYER_DWELL_MS + TRANSITION_MS)
+  expect('the squad slide is up', gone.showing().join(), 'squad')
+
+  gone.leave('squad')
+  gone.since()
+  gone.advance(120_000)
+  const after = new Set(gone.since())
+  expectTrue('a squad slide that leaves is not shown again', !after.has('squad'))
+  expectTrue('and the two that remain still alternate', after.has('board') && after.has('player'))
+}
+
 console.log('\nD. with no per-player half there is nothing to alternate')
 
+/**
+ * ⚠ THE SCRIPT IS EMITTED NOW EVEN THOUGH THERE IS NOTHING TO SWAP TO, AND THE
+ * OLD RULE IS REPLACED RATHER THAN BROKEN.
+ *
+ * The rule was "no script when there is one panel", and its stated reason was
+ * that "a timer swapping to a panel that does not exist would blank the wall
+ * every fifteen seconds". That reason is now held by construction: the cycle
+ * only ever shows an id it has just found in the DOM. And the player it applied
+ * to - no career row, no squad - is precisely the player whose squad is about to
+ * form, which is the case the owner reported. A page with no script is a page
+ * that can never learn it has squad mates.
+ *
+ * SO WHAT IS ASSERTED IS THE PROPERTY THE OLD RULE WAS PROTECTING: run this
+ * document's script for five simulated minutes and nothing is ever shown, because
+ * there is nothing to show it beside.
+ */
 expectTrue('no second panel', !BOARD_ONLY.includes('id="player"'))
-expectTrue('no script at all', !BOARD_ONLY.includes('<script'))
-expectTrue('no timer', !BOARD_ONLY.includes('setTimeout'))
+expectTrue('and no squad slide either', !BOARD_ONLY.includes('id="squad"'))
 expectTrue('and the leaderboard is still there', BOARD_ONLY.includes('id="board"'))
+{
+  const alone = driveCycle(BOARD_ONLY, ['board'])
+  expect('one panel: the cycle never swaps to anything', alone.advance(300_000).join(), '')
+}
 
 console.log('\nD. two slides in solos, three in squads')
 
@@ -2316,16 +2716,19 @@ console.log('\nD. two slides in solos, three in squads')
  *
  * "the slide appears ONLY when the viewer is in a squad, so solos cycles two
  * slides and squads cycles three."
+ *
+ * IT IS COUNTED OFF THE PANELS NOW AND NOT OFF A LIST IN THE SCRIPT, because
+ * there is no longer a list in the script: what exists in the document IS the
+ * cycle. That is a stronger statement of the same rule - the old one could have
+ * passed with a named panel that was never emitted.
  */
+const PANEL_IDS = (doc: string) => (doc.match(/ id="(board|player|squad)"/g) ?? []).length
+
 expectTrue('solos: there is no squad panel', !FULL.includes('id="squad"'))
-expect('solos: the cycle names two panels', (FULL.match(/\['(board|player|squad)',/g) ?? []).length, 2)
+expect('solos: the document carries two panels', PANEL_IDS(FULL), 2)
 
 expectTrue('squads: there is one', SQUAD_RENDER.includes('id="squad"'))
-expect(
-  'squads: the cycle names three',
-  (SQUAD_RENDER.match(/\['(board|player|squad)',/g) ?? []).length,
-  3,
-)
+expect('squads: the document carries three', PANEL_IDS(SQUAD_RENDER), 3)
 expect(
   'and exactly one of them starts visible',
   (SQUAD_RENDER.match(/class="panel on"/g) ?? []).length,
@@ -2335,6 +2738,145 @@ expectTrue(
   'which is the leaderboard, because it is what first paint should be',
   SQUAD_RENDER.includes('<div id="board" class="panel on"'),
 )
+
+console.log('\nD. the squad slide has its own stylesheet, and only its own')
+
+/**
+ * ═══ TWO `<style>` ELEMENTS, AND THE SECOND ONE IS THE ONLY THING THE REFRESH
+ *     REWRITES ═══
+ *
+ * When a squad forms under a page already on a wall, the served document is
+ * re-fetched and exactly two things move across: the `#squad` panel and this
+ * sheet. Everything else - the layout, the type, the depth, the category colors,
+ * every `@keyframes` and every `animation` - stays on the element it was parsed
+ * into.
+ *
+ * THAT IS NOT TIDINESS, IT IS WHAT STOPS THE BOARD BLINKING. Rewriting one
+ * combined stylesheet re-creates every animation in it, which restarts the three
+ * orbs, the two beams, the two sheets, the ten motes and BOTH marquee tracks: the
+ * leaderboard would snap back to MOST WINS mid-drift because somebody joined a
+ * squad four meters away.
+ */
+const STYLES = (doc: string) => doc.match(/<style[^>]*>([^]*?)<\/style>/g) ?? []
+const SHEET = (doc: string, i: number) =>
+  /<style[^>]*>([^]*?)<\/style>/.exec(STYLES(doc)[i] ?? '')?.[1] ?? ''
+
+for (const [name, doc] of LEVELS) {
+  expect(`${name}: exactly two stylesheets`, STYLES(doc).length, 2)
+  expectTrue(
+    `${name}: and the squad's is the second, so .mate outranks .card`,
+    STYLES(doc)[1]!.startsWith(`<style id="${SQUAD_SHEET_ID}">`),
+  )
+  /**
+   * THE MAIN SHEET KNOWS NOTHING ABOUT A SQUAD. A single `.mate` rule left behind
+   * in it is a rule the refresh cannot update, which on a squad that grows from
+   * three to four is four cards laid out at three cards' width.
+   */
+  const main = SHEET(doc, 0)
+  for (const leaked of ['.mate', '.sqcol', '#squad', '.mlabel', '.mval', '.sq-0']) {
+    expectTrue(`${name}: the main sheet carries no ${leaked} rule`, !main.includes(leaked))
+  }
+  /** And `#player` still has no rule anywhere, which is the owner's own note. */
+  expectTrue(`${name}: and no #player rule either`, !doc.includes('#player {'))
+}
+
+expect('solos: the squad sheet is present and empty', SHEET(FULL, 1), '')
+expectTrue('squads: it carries the card', SHEET(SQUAD_RENDER, 1).includes('.mate {'))
+expectTrue('squads: and the blip colors', SHEET(SQUAD_RENDER, 1).includes('.sq-0 .card {'))
+expectTrue('squads: and the panel wash', SHEET(SQUAD_RENDER, 1).includes('#squad {'))
+
+/**
+ * ═══ AND THE ENTRANCE DELAYS COVER A SQUAD THAT IS NOT THERE YET ═══
+ *
+ * `.col:nth-child(N)` is emitted from the column count, and a solo document has
+ * no squad to count. Without this a squad slide swapped in later would have no
+ * entrance delay on any of its cards: four cards arriving at once instead of
+ * fanning in, on the one slide the whole refresh exists to show him.
+ */
+for (const [name, doc] of LEVELS) {
+  /** `off` emits no entrance at all, so there is no delay for a column to miss. */
+  if (name === 'off') {
+    expectTrue(`${name}: there is no entrance to delay`, !doc.includes('.col:nth-child('))
+    continue
+  }
+  expectTrue(
+    `${name}: the entrance delays reach a full squad (${SQUAD_MAX_ROWS} columns)`,
+    doc.includes(`.col:nth-child(${SQUAD_MAX_ROWS}) .card`),
+  )
+}
+
+console.log('\nD. the poller, and every way it is allowed to fail')
+
+/**
+ * ═══ WHAT THE PAGE IS TOLD, AND IT IS ONLY EVER THESE TWO STRINGS ═══
+ *
+ * Where to ask, and what the answer was when this document was built. Both are
+ * constrained to characters that cannot end a JavaScript string literal - forty
+ * hex for the one, sixteen for the other - which is why neither is escaped and
+ * why an unconstrained value emits no poller at all rather than an escaped one.
+ */
+expectTrue('the probe is named in the page', FULL.includes(`var PROBE = '${probePath(VIEWER)}'`))
+expectTrue(
+  'and the digest it was rendered with',
+  SQUAD_RENDER.includes(`var digest = '${squadDigest(SQUAD_PANEL)}'`),
+)
+expectTrue('and the interval is named', FULL.includes(`var POLL_MS = ${SQUAD_POLL_MS}`))
+
+/**
+ * THE REFUSAL PATH IS DRIVEN RATHER THAN DESCRIBED. A probe or digest the
+ * renderer cannot vouch for produces a document with no poller in it, which is
+ * the board exactly as it was before any of this existed.
+ */
+for (const bad of [
+  { probe: `/scoreboard/squad?id=${OWNER_ID}'; alert(1); var x='`, digest: squadDigest(null) },
+  { probe: `${SQUAD_PROBE_PATH}?id=nothex`, digest: squadDigest(null) },
+  { probe: `https://elsewhere.example/?id=${OWNER_ID}`, digest: squadDigest(null) },
+  { probe: probePath(VIEWER)!, digest: `</script><img>` },
+  { probe: probePath(VIEWER)!, digest: `'; alert(1); '` },
+]) {
+  const doc = renderScoreboard({
+    board: rankBoard(ROWS),
+    player: null,
+    motion: 'full',
+    refresh: bad,
+  })
+  expectTrue(
+    `a refresh the renderer cannot vouch for emits no poller: ${bad.probe.slice(0, 32)}`,
+    !doc.includes('XMLHttpRequest'),
+  )
+  expectTrue('and nothing of it reaches the document', !doc.includes('alert(1)'))
+}
+
+expectTrue('a caller that omits the refresh gets no poller', !BOARD_ONLY.includes('XMLHttpRequest'))
+expectTrue('and no probe', !BOARD_ONLY.includes('PROBE'))
+expectTrue('but it still gets the cycle, because a squad may still form', BOARD_ONLY.includes('<script>'))
+
+/**
+ * ═══ THE REFRESH WRITES TWO THINGS AND READS ONE ═══
+ *
+ * Owner: "I don't want the game server to be reliant on Ringmaster - only the
+ * reverse is okay." Nothing here reaches the game, and nothing here can take the
+ * board away: `#board` is READ, as the proof that what came back is a board at
+ * all, and it is never written. A page that cannot reach the console keeps the
+ * slide it has.
+ */
+{
+  const script = /<script>([^]*?)<\/script>/.exec(FULL)?.[1] ?? ''
+  expectTrue(
+    'the answer has to contain a board before anything is written',
+    script.includes("doc.getElementById('board')"),
+  )
+  expectTrue(
+    'nothing replaces the leaderboard',
+    !/replaceChild\([^)]*board/.test(script) && !script.includes("removeChild(document.getElementById('board'))"),
+  )
+  expectTrue(
+    'the digest is advanced only after the swap has landed',
+    script.indexOf('digest = fresh') > script.indexOf("show(document.getElementById(current)"),
+  )
+  /** Every path through both requests is inside a `try`. */
+  expect('every branch is caught', (script.match(/catch \(e\) \{/g) ?? []).length, 4)
+}
 
 console.log('\nD. the squad slide is cards now, and the color is not on the type')
 
@@ -2775,15 +3317,32 @@ for (const [name, doc] of LEVELS) {
   }
 }
 
-console.log('\nD. the document fetches nothing')
+console.log('\nD. the first paint fetches nothing')
 
 /**
- * ONE REQUEST AND NO SECOND ONE. This is fetched by a game client on somebody's
- * home connection at the same moment it is streaming a map. A webfont over the
- * wire, a stylesheet or an image would be a second round trip that can hang, and
- * a DUI that hangs is a prop wearing a half-painted page with nothing to say so.
+ * ⚠ NOTHING THE FIRST PAINT WAITS ON, WHICH IS A NARROWER RULE THAN THE ONE THIS
+ * SECTION USED TO STATE AND IS THE ONE IT ALWAYS MEANT.
  *
- * `url(` IS NOW ALLOWED AND `@font-face` IS EXPECTED, because the typefaces are
+ * IT SAID "ONE REQUEST AND NO SECOND ONE", and the reason it gave is the reason
+ * that still holds: this is fetched by a game client on somebody's home
+ * connection at the same moment it is streaming a map, and a webfont, a
+ * stylesheet or an image is a SUB-RESOURCE - the document is not finished until
+ * it arrives, so one that hangs is a prop wearing a half-painted page with
+ * nothing to say so.
+ *
+ * THE SQUAD POLL IS NOT THAT AND CANNOT BECOME IT. It is an `XMLHttpRequest`
+ * started five seconds after the page has already painted, on a timer, whose
+ * every failure mode is "change nothing and ask again". There is no state in
+ * which the board is waiting for it, and the section below this one drives that.
+ * Banning it under the old wording would have been enforcing the letter of a rule
+ * against the thing the rule exists to protect: a board that is wrong for the
+ * whole warmup because it could not ask a question.
+ *
+ * SO WHAT IS ASSERTED IS THE ABSENCE OF SUB-RESOURCES, and the poll's own URL is
+ * kept honest by being a same-origin path with no scheme in it - which is what
+ * the absolute-URL and protocol-relative bans below still catch.
+ *
+ * `url(` IS ALLOWED AND `@font-face` IS EXPECTED, because the typefaces are
  * embedded. What is asserted instead is the property those bans were standing in
  * for: EVERY `url(` IN THE DOCUMENT IS A `data:` URI. That is the real rule, and
  * it is the one a future `url(/logo.svg)` breaks.
@@ -3090,12 +3649,35 @@ expect('the board, with no cookie', through(`/scoreboard?id=${OWNER_ID}`), 200)
 expect('and with no query string either', through('/scoreboard'), 200)
 
 /**
- * THE EXEMPTION IS AN EXACT PATH, NOT A PREFIX, and these are what hold it
- * there. A `startsWith('/scoreboard')` would open every future path under that
- * name to an unauthenticated fetch by having been named similarly.
+ * ═══ THE PROBE IS UNDER THE SAME EXEMPTION, ON PURPOSE ═══
+ *
+ * `/scoreboard/squad` is what a board already on a wall polls to find out that
+ * its squad slide is about the wrong people (#247). It is the same DUI, with the
+ * same absence of a cookie, and a 307 would answer it with a login page and a
+ * 200 - a success the poller cannot tell from a digest, so the board would stop
+ * updating with nothing anywhere saying why.
+ */
+expect('the probe, with no cookie', through(`/scoreboard/squad?id=${OWNER_ID}`), 200)
+
+/**
+ * ⚠ SO THE EXEMPTION IS A PREFIX NOW AND IT USED TO BE AN EXACT PATH, and the
+ * reason it was exact is worth restating rather than deleting: a
+ * `startsWith('/scoreboard')` opens every future path under that name to an
+ * unauthenticated fetch by having been named similarly.
+ *
+ * WHAT MAKES THAT ACCEPTABLE HERE IS THE SLASH, which is the whole difference
+ * between the two lines below. `/scoreboard/` is a directory this feature owns
+ * and both routes in it are the same thing: `GET` only, no session, no cookie,
+ * read only, one argument that must match forty hex characters. A page added
+ * under it by somebody who has not read this is a page added inside a folder
+ * whose two files both say so at the top.
+ *
+ * AND THE LOOKALIKE IS STILL BOUNCED, which is the half the slash buys: nothing
+ * merely BEGINNING with the word is exempt, so a future `/scoreboardadmin` is a
+ * signed-out bounce like every other page.
  */
 expect('a lookalike path is still bounced', through('/scoreboardx'), 307)
-expect('a path beneath it is still bounced', through('/scoreboard/secret'), 307)
+expect('and a longer lookalike too', through('/scoreboard-admin'), 307)
 
 /** The bounce still bounces, or the case above proves nothing. */
 expect('an ordinary page with no cookie', through('/players'), 307)
@@ -3249,16 +3831,52 @@ console.log('\nI. Access-Control-Allow-Origin, on every answer')
  * missing the header would have to be a response built some other way, and that
  * is exactly what this counts.
  */
-{
-  const routeText = read('src/app/scoreboard/route.ts')
+for (const file of ['src/app/scoreboard/route.ts', 'src/app/scoreboard/squad/route.ts']) {
+  const routeText = read(file)
   const responses = (routeText.match(/new Response\(/g) ?? []).length
   const helpers = (routeText.match(/boardHeaders\(/g) ?? []).length
-  expectTrue('the route builds more than one response', responses >= 2)
-  expect('every response in the route gets its headers from one place', helpers, responses)
+  expectTrue(`${file} builds a response at all`, responses >= 1)
+  expect(`${file}: every response gets its headers from one place`, helpers, responses)
   expectTrue(
-    'and no response sets a content-type by hand beside it',
+    `${file}: and no response sets a content-type by hand beside it`,
     !/headers:\s*\{/.test(routeText),
   )
+}
+
+console.log('\nI. the probe answers the page that is already on a wall')
+
+/**
+ * ═══ DRIVEN THROUGH THE REAL EXPORTED HANDLER, WITH NO TABLE BEHIND IT ═══
+ *
+ * This is the one route in the feature that needs no DynamoDB at all - it reads
+ * the in-process snapshot the game pushes to `/api/ingest` - so unlike the board
+ * its 200 CAN be driven here, closed port and all. That is worth having: this
+ * answer is what tells a board on a wall that it is about the wrong people, and
+ * a 307, a 500 or an unparseable body all look like "nothing changed" to a
+ * poller.
+ */
+{
+  const bad = await PROBE_GET(new Request(`https://${HOST}${SQUAD_PROBE_PATH}?id=not-a-license`))
+  expect('a bad id is a 400', bad.status, 400)
+  expect('and it carries the header', bad.headers.get('access-control-allow-origin'), '*')
+
+  const none = await PROBE_GET(new Request(`https://${HOST}${SQUAD_PROBE_PATH}`))
+  expect('a missing id is a 400', none.status, 400)
+
+  const ok = await PROBE_GET(new Request(`https://${HOST}${SQUAD_PROBE_PATH}?id=${OWNER_ID}`))
+  expect('a license gets an answer even with no table anywhere', ok.status, 200)
+  expect('and it carries the header', ok.headers.get('access-control-allow-origin'), '*')
+  expect('and is never cached', ok.headers.get('cache-control'), 'no-store')
+  expect('and says it is JSON', ok.headers.get('content-type'), 'application/json; charset=utf-8')
+
+  const body = JSON.parse(await ok.text()) as { squad?: unknown }
+  expectTrue('the body is one hex digest under one key', typeof body.squad === 'string' && HEX16.test(body.squad))
+  /**
+   * AN EMPTY CONSOLE IS "NO SQUAD" AND NOT AN ERROR. Nothing has ever been pushed
+   * to this process, so `feedNow` is `offline` and `squadFrom` refuses - which is
+   * the same answer a solo player gets, and the page has to be able to read it.
+   */
+  expect('a console nobody has pushed to reports no squad', body.squad, squadDigest(null))
 }
 
 // ===========================================================================
