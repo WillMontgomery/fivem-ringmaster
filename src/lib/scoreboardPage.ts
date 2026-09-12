@@ -1470,11 +1470,26 @@ export const SLOTS = 5
  * whole cycle is this times the number of categories, and any one card is on
  * screen for this times `SLOTS`.
  *
- * 9 SECONDS BECAUSE A LEADERBOARD HAS TO BE READABLE WHILE IT MOVES. At five
- * slots a card is 210 design pixels wide, so this is about 25 pixels a second: a name
- * moves its own width in roughly six seconds and a card takes 45 seconds to
- * cross the board. That is slow enough that the eye tracks a row without
- * chasing it, and the whole six-card cycle is 54 seconds.
+ * IT WAS 9 SECONDS AND IT IS 6, WHICH IS HIS CHANGE. Owner, 2026-09-12:
+ * "Increase the scroll speed by 50%". Speed and time per card are reciprocal, so
+ * a board that drifts half again as fast spends two thirds as long on each card:
+ * 9000 x (1 / 1.5) = 6000. The alternative reading - 9000 x 1.5 - is a SLOWER
+ * board, which is the opposite of the sentence.
+ *
+ * WHAT IT IS NOW, AT THE SAME FIVE SLOTS AND THE SAME 210 DESIGN PIXELS PER
+ * CARD: about 37 pixels a second rather than 25, a card crossing the board in 30
+ * seconds rather than 45, and a whole six-card cycle in 36 seconds rather than
+ * 54. That is still slow enough that the eye tracks a row without chasing it,
+ * which is the property this number exists to hold and the reason it is not
+ * tuned any further than he asked.
+ *
+ * NOTHING ELSE ON THE PAGE IS DERIVED FROM IT, which was checked rather than
+ * assumed before this was changed. `marqueeStyles` spends it in exactly one
+ * place - `duration = count x SCROLL_MS_PER_CARD` on the track's own keyframes -
+ * and the edge-fade mask beside it is a fraction of a CARD WIDTH (`FADE_FRACTION`),
+ * not of a duration. So the fade is the same gesture at any rate, the two tracks
+ * keep their separate durations, and there is no second constant to move with
+ * this one.
  *
  * IT IS DELIBERATELY NOT TIED TO `BOARD_DWELL_MS`. The leaderboard is up for 12
  * seconds at a time and the page never reloads during a warmup, so the track
@@ -1490,7 +1505,7 @@ export const SLOTS = 5
  * production inside CEF, and this is one composited layer translating. See the
  * header. The constraint is reading speed, which is what this number is.
  */
-export const SCROLL_MS_PER_CARD = 9_000
+export const SCROLL_MS_PER_CARD = 6_000
 
 /**
  * ═══ THE SAFE AREA, WHICH IS A BUG FIX AND NOT A MARGIN PREFERENCE ═══
