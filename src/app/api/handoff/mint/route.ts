@@ -1,10 +1,9 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
-
 import { DynamoDBAdapter } from '@auth/dynamodb-adapter'
 
 import { checkAdminRole } from '@/lib/discordRole'
 import { ddb, tables } from '@/lib/dynamo'
 import { env } from '@/lib/env'
+import { resolveServerId } from '@/lib/ingestAuth'
 import {
   HANDOFF_TTL_MS,
   MINT_ROLE_TIMEOUT_MS,
@@ -44,31 +43,35 @@ export const dynamic = 'force-dynamic'
 /** Enough for `{"discordId":"..."}` and nothing that needs streaming. */
 const MAX_BYTES = 4_096
 
-/**
- * Constant-time comparison of the shared secret.
- *
- * Lifted deliberately unchanged from `/api/ingest` — hashed first so both sides
- * are always 32 bytes, because `timingSafeEqual` throws on a length mismatch
- * and catching that throw would leak the length of the real secret through
- * timing.
- */
-function secretMatches(presented: string | null): boolean {
-  if (!presented) return false
-
-  const a = createHash('sha256').update(presented).digest()
-  const b = createHash('sha256').update(env().INGEST_SECRET).digest()
-
-  return timingSafeEqual(a, b)
-}
-
 function deny(error: string, status: number): Response {
   return Response.json({ ok: false, error }, { status })
 }
 
 export async function POST(req: Request): Promise<Response> {
-  if (!secretMatches(req.headers.get('x-ringmaster-secret'))) {
+  /**
+   * THE SAME CREDENTIAL SET `/api/ingest` USES, resolved by the same function.
+   *
+   * IT HAD ITS OWN COPY OF A ONE-SECRET COMPARISON, and once the console held a
+   * secret per game server that copy would have been a console with a working
+   * ingest and a mint that refused every box configured through
+   * `INGEST_SECRETS`. Two doors opened by one credential must ask one question
+   * about it.
+   *
+   * ANY KNOWN SERVER MAY MINT, and that is deliberate rather than an oversight
+   * of the new identity. A token is bound to the Discord id it names and to an
+   * Auth.js user that must already exist; nothing about it is scoped to a game
+   * server, and an admin on the dev box needs the pause-menu handoff exactly as
+   * much as one on prod. The identity is resolved and discarded here because
+   * there is nothing on this path for it to mean.
+   */
+  if (
+    !resolveServerId(
+      req.headers.get('x-ringmaster-secret'),
+      env().INGEST_CREDENTIALS,
+    )
+  ) {
     // No detail, same as /api/ingest. A caller that got this wrong is either
-    // misconfigured or is not the game server.
+    // misconfigured or is not one of our game servers.
     return deny('auth', 401)
   }
 

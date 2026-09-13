@@ -105,9 +105,11 @@ import { ddb, tables } from './dynamo'
  *
  * THE HASH IS STORED, NOT THE TOKEN. The raw token exists in exactly two
  * places — the mint response and the redeem URL — and never at rest. So a
- * table export, a point-in-time backup, or the `GetItem` on `ringmaster-*` that
- * the game box holds today (docs/aws-setup.md, section 3) yields a sha256
- * digest and no way back to a usable credential.
+ * table export, a point-in-time backup, or the `ringmaster-*` reach the game
+ * box holds today yields a sha256 digest and no way back to a usable
+ * credential. That reach is `GetItem`, `PutItem`, `UpdateItem` and
+ * `BatchWriteItem` on every `ringmaster-*` table, this one included, and the
+ * breadth is the owner's deliberate choice (docs/aws-setup.md, section 3).
  *
  * ----------------------------------------------------------------------------
  * WHERE IT LIVES, AND WHY NOT ON AN EXISTING TABLE

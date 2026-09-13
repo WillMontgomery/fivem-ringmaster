@@ -4,12 +4,13 @@ import {
   type GameEvent,
   type SnapshotEnvelope,
 } from './ingest'
+import { DEFAULT_SERVER_ID, type ServerId } from './ingestAuth'
 
 /**
- * Live server state, in memory.
+ * Live server state, in memory, kept apart per game server.
  *
  * THIS IS CORRECT FOR EXACTLY ONE INSTANCE, and that is worth reading before
- * anyone puts this behind a load balancer. The game host pushes to one
+ * anyone puts this behind a load balancer. The game hosts push to one
  * endpoint; two app instances would each hold half the pushes and each show a
  * confidently incomplete player list, with nothing anywhere saying so. If a
  * second instance is ever wanted, this moves to a shared store first.
@@ -17,9 +18,32 @@ import {
  * Deliberately not persisted. A snapshot is worthless two seconds after it was
  * taken, and the durable record of what happened is the event stream and
  * DynamoDB, not this. Losing all of it on restart costs one push interval.
+ *
+ * ═══ ONE BOARD PER SERVER, KEYED ON A PROVEN IDENTITY ═══
+ *
+ * There are two game servers now, `dev` and `prod`, and a single global
+ * `LiveState` would have merged them into one player list that was wrong about
+ * both. So every entry point takes a {@link ServerId}, and that id ALWAYS comes
+ * from `resolveServerId` in lib/ingestAuth.ts, which derives it from the secret
+ * that authenticated the push. Nothing here can be keyed on a string out of a
+ * request body, because the route never has one to pass.
+ *
+ * THE MAP IS BOUNDED BY THE CREDENTIAL SET, for the same reason. A key can only
+ * exist because a configured secret matched, so the number of boards is the
+ * number of servers in `INGEST_SECRETS`, not the number of distinct strings a
+ * caller felt like sending.
+ *
+ * DEDUPE STATE IS PER SERVER, AND THAT IS NOT COSMETIC. Events are deduped on
+ * `(bootEpoch, seq)`, and `seq` restarts at 0 on every resource start. Neither
+ * half is unique across BOXES: two servers deployed from the same commit in the
+ * same minute can mint colliding epochs, and a shared `seen` set would then read
+ * the second server's first events as the first server's retries and silently
+ * drop them.
  */
 
-const globalForState = globalThis as unknown as { ringState?: LiveState }
+const globalForState = globalThis as unknown as {
+  ringServerStates?: Map<ServerId, LiveState>
+}
 
 interface LiveState {
   snapshot: SnapshotEnvelope | null
@@ -93,7 +117,49 @@ function create(): LiveState {
  * otherwise reset live state on every edit. Same escape hatch as the DynamoDB
  * client.
  */
-export const state: LiveState = (globalForState.ringState ??= create())
+const servers: Map<ServerId, LiveState> = (globalForState.ringServerStates ??=
+  new Map())
+
+/**
+ * The board for one server, created the first time that server pushes.
+ *
+ * CREATED ON DEMAND RATHER THAN FROM THE CREDENTIAL SET, so that a read for a
+ * server which has not pushed yet is an empty board rather than a throw. The
+ * dropdown will be able to name a configured server before it has ever sent
+ * anything, and `online: false` is the honest answer to that.
+ */
+function forServer(serverId: ServerId): LiveState {
+  let s = servers.get(serverId)
+  if (!s) {
+    s = create()
+    servers.set(serverId, s)
+  }
+  return s
+}
+
+/**
+ * Every server this console has heard from, sorted.
+ *
+ * WHAT THE SELECTION DROPDOWN WILL READ (#23, the follow-up half). It is the
+ * servers that have actually PUSHED, not the ones configured: a console can
+ * hold a credential for a box that has never been switched on, and offering it
+ * in a picker would be offering an empty board with no way to say why.
+ */
+export function knownServers(): ServerId[] {
+  return [...servers.keys()].sort()
+}
+
+/**
+ * Forget everything, for `ingestAuth.check.ts`.
+ *
+ * A CHECK THAT INHERITED STATE FROM AN EARLIER CASE WOULD BE A CHECK THAT PASSES
+ * IN THE WRONG ORDER. Nothing in the app calls this and nothing should: live
+ * state is rebuilt by the next push, so there is no operational reason to drop
+ * it and one obvious way to misuse it.
+ */
+export function resetServers(): void {
+  servers.clear()
+}
 
 /**
  * Apply a snapshot. Latest wins.
@@ -107,7 +173,12 @@ export const state: LiveState = (globalForState.ringState ??= create())
  * since *server start*, so it goes backwards across a restart. Comparing
  * across epochs would reject everything after one.
  */
-export function applySnapshot(env: SnapshotEnvelope, now: number): boolean {
+export function applySnapshot(
+  serverId: ServerId,
+  env: SnapshotEnvelope,
+  now: number,
+): boolean {
+  const state = forServer(serverId)
   const prev = state.snapshot
 
   if (
@@ -128,7 +199,7 @@ export function applySnapshot(env: SnapshotEnvelope, now: number): boolean {
   // the first time the GAME meets a license, so a console that started
   // afterwards would never hear about anybody already playing.
   for (const p of env.snapshot.players) {
-    remember(p.license, p.name, now)
+    remember(state, p.license, p.name, now)
   }
 
   return true
@@ -152,7 +223,12 @@ export function applySnapshot(env: SnapshotEnvelope, now: number): boolean {
  * everyone currently on. Neither alone is complete — events are missed if the
  * console was down, and snapshots forget the moment somebody leaves.
  */
-function remember(license: string | null | undefined, name: string, now: number) {
+function remember(
+  state: LiveState,
+  license: string | null | undefined,
+  name: string,
+  now: number,
+) {
   if (!license) return
   const existing = state.directory.get(license)
   if (existing) {
@@ -174,8 +250,17 @@ function remember(license: string | null | undefined, name: string, now: number)
  * MATCHES ON BOTH because the two realistic starting points are a name
  * somebody typed in Discord and a license pasted from a report, and an admin
  * should not have to know which box to use.
+ *
+ * SCOPED TO ONE SERVER, like every other reader here. The cross-server answer
+ * to "who is this person" is `players.search` over the durable registry, which
+ * is keyed on the human and not on where they were playing.
  */
-export function searchDirectory(query: string, limit = 10): DirectoryEntry[] {
+export function searchDirectory(
+  query: string,
+  limit = 10,
+  serverId: ServerId = DEFAULT_SERVER_ID,
+): DirectoryEntry[] {
+  const state = forServer(serverId)
   const q = query.trim().toLowerCase()
   const online = new Set(
     (state.snapshot?.snapshot.players ?? []).map((p) => p.license).filter(Boolean),
@@ -201,8 +286,12 @@ export function searchDirectory(query: string, limit = 10): DirectoryEntry[] {
 }
 
 /** Is this license connected right now? For labelling search results. */
-export function isOnline(license: string): boolean {
-  return (state.snapshot?.snapshot.players ?? []).some((p) => p.license === license)
+export function isOnline(
+  license: string,
+  serverId: ServerId = DEFAULT_SERVER_ID,
+): boolean {
+  const snap = forServer(serverId).snapshot
+  return (snap?.snapshot.players ?? []).some((p) => p.license === license)
 }
 
 /** One connected player, reduced to what a search result needs. */
@@ -229,16 +318,23 @@ export interface OnlinePlayer {
  * link a search result to, and inventing a key here is how the wrong profile
  * gets opened.
  */
-export function onlinePlayers(): OnlinePlayer[] {
+export function onlinePlayers(
+  serverId: ServerId = DEFAULT_SERVER_ID,
+): OnlinePlayer[] {
   const rows: OnlinePlayer[] = []
-  for (const p of state.snapshot?.snapshot.players ?? []) {
+  for (const p of forServer(serverId).snapshot?.snapshot.players ?? []) {
     if (!p.license) continue
     rows.push({ license: p.license, name: p.name || 'Unknown' })
   }
   return rows
 }
 
-export function applyEvents(env: EventsEnvelope, now: number): number {
+export function applyEvents(
+  serverId: ServerId,
+  env: EventsEnvelope,
+  now: number,
+): number {
+  const state = forServer(serverId)
   let applied = 0
 
   for (const ev of env.events) {
@@ -253,7 +349,7 @@ export function applyEvents(env: EventsEnvelope, now: number): number {
     // player_seen is how a license first becomes known to this console.
     if (ev.kind === 'player_seen') {
       const p = ev.data as { license?: string; name?: string }
-      remember(p.license, p.name ?? 'Unknown', now)
+      remember(state, p.license, p.name ?? 'Unknown', now)
     }
 
     state.events.push({
@@ -313,17 +409,24 @@ export function applyEvents(env: EventsEnvelope, now: number): number {
  * snapshot yet, a game build that predates the block, br_ddb not started. All
  * three are "we have not been told", which `reachNow` renders as silence.
  */
-export function ddbProbe(): {
+export function ddbProbe(serverId: ServerId = DEFAULT_SERVER_ID): {
   probe: NonNullable<SnapshotEnvelope['snapshot']['ddb']>
   atMs: number
 } | null {
-  const snap = state.snapshot
+  const snap = forServer(serverId).snapshot
   const ddb = snap?.snapshot.ddb
   if (!snap || !ddb) return null
   return { probe: ddb, atMs: realTime(snap.server, ddb.at) }
 }
 
-export function liveView(now: number) {
+/**
+ * @param serverId which game server's board to read. Defaults to
+ * {@link DEFAULT_SERVER_ID} so that every page written before there was a
+ * second server keeps showing exactly what it showed before; the selection
+ * dropdown (#23, follow-up) is what will start passing this explicitly.
+ */
+export function liveView(now: number, serverId: ServerId = DEFAULT_SERVER_ID) {
+  const state = forServer(serverId)
   const snap = state.snapshot
 
   return {

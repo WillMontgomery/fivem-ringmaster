@@ -97,6 +97,42 @@ and Discord rejects a mismatch.
 > anyway. An `http://` origin here is therefore not merely insecure; it is a
 > pause-menu Admin tab that can never hold a session.
 
+#### `INGEST_SECRETS`, one secret per game server
+
+The console ingests from more than one FXServer now, and **which secret
+authenticated a push is what decides which server it came from.** There is no
+server name in the payload and there must never be one: a sender that could name
+itself could name itself `prod`.
+
+```
+INGEST_SECRETS={"prod":"<the prod box's secret>","dev":"<the dev box's secret>"}
+```
+
+The ids are `dev` and `prod`, the same two words the `Env` instance tag carries
+on both boxes and `blitz-metrics` dimensions every metric by. A third server is a
+third key here; nothing in the code needs to change for it.
+
+On each **GAME** box, the matching value goes on the existing convar:
+
+```
+set br_ringmaster_ingest_secret <that box's secret>
+```
+
+A different value per box, and that is the whole of the game-side change.
+
+> **`INGEST_SECRET`, singular, still works and still means `prod`.** Leave it
+> exactly as it is through this deploy. The live prod server keeps pushing with
+> no change on its side at all. Set one variable or the other or both; with
+> **neither**, every push from every game server is refused and the console stops
+> at boot saying so.
+>
+> Both are accepted at once, which is how prod is rotated without a gap: put the
+> new value under `"prod"` in `INGEST_SECRETS`, leave the old one in
+> `INGEST_SECRET`, move the game box over, then delete the old line. The one
+> configuration refused outright is **the same secret under two different server
+> ids**. A push carrying it could not be attributed, so it is a boot failure
+> rather than a coin flip.
+
 **Four are genuinely optional** and the app starts without them —
 `DISCORD_BOT_TOKEN`, `COMMAND_SECRET`, and `GAME_HOST` / `GAME_SSH_KEY`. Without
 the last two the Host page says "not configured" rather than erroring, and that
@@ -445,10 +481,11 @@ on 22 from the us-west-2 CIDR.
 
 **Port 3000 carries two endpoints now, not one.** The realtime push was always
 there; the game *server* also POSTs `/api/handoff/mint` to ask for a sign-in
-token when an admin opens the pause menu. Both present the same
-`INGEST_SECRET` in the same `x-ringmaster-secret` header, both are excluded from
-the session middleware, and **neither is ever called by a game client** — a
-client that could mint a token could mint somebody else's.
+token when an admin opens the pause menu. Both present that box's own ingest
+secret in the same `x-ringmaster-secret` header and resolve it against the same
+credential set, both are excluded from the session middleware, and **neither is
+ever called by a game client**. A client that could mint a token could mint
+somebody else's.
 
 **Port 3000 must not be open to the internet.** Those endpoints authenticate
 with a shared secret over the peered link; the security group is what actually
@@ -694,11 +731,12 @@ process, not once per request.
 steps above, in that order. There is no revocation list and no second credential
 to fall back on; the old value stops working the moment the console restarts.
 
-### It is a different secret from `INGEST_SECRET`, on purpose
+### It is a different secret from the ingest ones, on purpose
 
-`INGEST_SECRET` lives on the **GAME** box. If it also opened this door, then a
-compromise of the game host would come with the ability to ban players and
-schedule restarts. Two secrets, two blast radii. Do not reuse one for the other.
+The ingest secrets live on the **GAME** boxes, one per box. If any of them also
+opened this door, then a compromise of a game host would come with the ability to
+ban players and schedule restarts. Separate secrets, separate blast radii. Do not
+reuse one for the other.
 
 ### Where the bot connects
 

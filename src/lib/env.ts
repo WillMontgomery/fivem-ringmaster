@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { parseIngestCredentials, type IngestCredential } from './ingestAuth'
+
 /**
  * Environment, validated once at startup.
  *
@@ -169,11 +171,48 @@ const schema = z.object({
   SCOREBOARD_MOTION: z.enum(['full', 'transitions', 'off']).default('full'),
 
   // --- Ingest ----------------------------------------------------------
-  // Shared secret the game server presents on its push. The endpoint is only
-  // reachable over the peered CIDR, so this is defence in depth rather than
-  // the primary control — but the primary control is a security group, and
-  // security groups get edited by tired people.
-  INGEST_SECRET: z.string().min(16),
+  /**
+   * ONE SECRET PER GAME SERVER, as a JSON object: `{"prod":"...","dev":"..."}`.
+   *
+   * THE SERVER'S IDENTITY IS WHICHEVER KEY'S SECRET AUTHENTICATED THE PUSH, and
+   * that is the whole design: a server proves who it is rather than saying so.
+   * lib/ingestAuth.ts holds the reasoning and the two alternatives that were
+   * refused (a field in the payload, and the source address).
+   *
+   * A THIRD SERVER IS A THIRD KEY HERE AND NOTHING ELSE. No code change, no
+   * build, no deploy of this console beyond restarting it with a longer value.
+   *
+   * OPTIONAL, BECAUSE {@link INGEST_SECRET} BELOW IS STILL A CREDENTIAL. With
+   * this unset the console behaves exactly as it did with one server. What is
+   * NOT optional is having at least one of the two: the transform at the foot of
+   * this file refuses a console with no ingest credential at all, because that
+   * console refuses every push from every game server while looking healthy.
+   */
+  INGEST_SECRETS: z.string().optional(),
+
+  /**
+   * The single shared secret this console shipped with, and it still works.
+   *
+   * IT MEANS `prod`, WHICH IS WHAT IT HAS ALWAYS MEANT, because there was one
+   * game server and it is the live one. A console deployed with today's `.env.local`
+   * untouched keeps accepting today's prod push, which is the only acceptable
+   * behavior for a change that lands in front of a closed beta.
+   *
+   * IT COMPOSES WITH `INGEST_SECRETS` RATHER THAN BEING REPLACED BY IT, so prod
+   * can be rotated without a window where neither value is accepted: put the new
+   * secret under `"prod"` there, leave the old one here, move the game box, then
+   * delete this.
+   *
+   * OPTIONAL NOW, AND IT WAS REQUIRED. A console configured entirely through
+   * `INGEST_SECRETS` must not be stopped at boot for the absence of a variable
+   * it has outgrown. The sixteen-character floor still applies when it is set,
+   * and "absent or valid" never means "absent or anything".
+   *
+   * The endpoint is only reachable over the peered CIDR, so all of this is
+   * defense in depth rather than the primary control, but the primary control
+   * is a security group, and security groups get edited by tired people.
+   */
+  INGEST_SECRET: z.string().min(16).optional(),
 
   // --- Command credential ----------------------------------------------
   /**
@@ -230,14 +269,48 @@ const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })
 
-export type Env = z.infer<typeof schema>
+/**
+ * The ingest credential set, derived from the two variables above.
+ *
+ * DERIVED HERE RATHER THAN AT THE ENDPOINT so that a typo in `INGEST_SECRETS` is
+ * reported in the same message, at the same moment, as a missing
+ * `DISCORD_CLIENT_SECRET`, which is the one thing this file exists to do.
+ * Parsing it on first push instead would present as every game server in the
+ * estate being refused at once, with a 500 in the journal and a console that
+ * looks entirely well.
+ *
+ * IT IS ALSO WHERE "AT LEAST ONE CREDENTIAL" IS ENFORCED. Neither variable is
+ * required on its own now, and a console holding neither is a console that
+ * silently refuses every push, so the combination is checked where combinations
+ * can be.
+ */
+const withIngest = schema.transform((raw, ctx) => {
+  let credentials: IngestCredential[]
+  try {
+    credentials = parseIngestCredentials({
+      secrets: raw.INGEST_SECRETS,
+      legacy: raw.INGEST_SECRET,
+    })
+  } catch (e) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['INGEST_SECRETS'],
+      message: e instanceof Error ? e.message : String(e),
+    })
+    return z.NEVER
+  }
+
+  return { ...raw, INGEST_CREDENTIALS: credentials }
+})
+
+export type Env = z.infer<typeof withIngest>
 
 let cached: Env | null = null
 
 export function env(): Env {
   if (cached) return cached
 
-  const parsed = schema.safeParse(process.env)
+  const parsed = withIngest.safeParse(process.env)
   if (!parsed.success) {
     // Name every missing variable at once. Reporting them one per restart is
     // how a five-minute setup becomes an hour.

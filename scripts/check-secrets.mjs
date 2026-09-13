@@ -88,6 +88,22 @@ const RULES = [
   },
   {
     /**
+     * THE PLURAL IS A SEPARATE RULE AND NOT A TWEAK TO THE ONE ABOVE. That
+     * pattern needs `=` or `:` straight after the name, so `INGEST_SECRETS=`, with
+     * an S in the way, slides past it entirely. A variable holding EVERY game
+     * server's secret at once sliding past the scanner is the worst version of
+     * this gate's failure mode.
+     *
+     * Matches the JSON value rather than a long string, because that is the
+     * shape: `INGEST_SECRETS={"prod":"...","dev":"..."}`. The placeholder rule
+     * still applies, so `.env.example`'s REPLACE_ME template is fine.
+     */
+    name: 'per-server ingest secrets with values',
+    re: /\bINGEST_SECRETS\s*[=:]\s*['"]?\{[^}]*:\s*"[A-Za-z0-9/+=_-]{12,}/,
+    why: 'One shared secret per game server, and the identity each one proves.',
+  },
+  {
+    /**
      * The same rule as INGEST_SECRET above, for the credential that opens the
      * kick, ban and drain routes to `blitz-bot` (lib/service.ts).
      *

@@ -27,11 +27,13 @@
  * ═══ WHY THIS PROBES INSTEAD OF READING A LIST ═══
  *
  * Nothing in DynamoDB says which frames a case has, and nothing can. The game
- * writes the incident row under a grant of `PutItem` conditional on the id
- * being absent — it can file a case and cannot reach inside one, so it has no
- * way to append a key after the fact. Widening that to an `UpdateItem` would
- * cost exactly what the append-only posture buys: a compromised game box that
- * can file noise but cannot touch a verdict.
+ * writes the incident row with a `PutItem` conditional on the id being absent
+ * and never appends a key to it afterwards; the only later write `br_ddb` makes
+ * to a case is the match timeline at match end, which names its own attributes
+ * and does not name these. THAT IS A PROPERTY OF THE GAME'S CODE, NOT OF ITS
+ * IAM: `FiveMGameServerRole` grants `GetItem`, `PutItem`, `UpdateItem` and
+ * `BatchWriteItem` on every `ringmaster-*` table, deliberately broad, and
+ * docs/aws-setup.md §3 carries the full statement list.
  *
  * So the key format is fixed and enumerable ON PURPOSE, and this console holds
  * `s3:GetObject` with deliberately **no `ListBucket`**. It finds a case's frames

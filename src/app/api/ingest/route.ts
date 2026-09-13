@@ -1,19 +1,29 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
-
 import * as bans from '@/lib/bans'
 import { corroborationText } from '@/lib/corroborationText'
 import { env } from '@/lib/env'
 import { ingestEnvelope, realTime } from '@/lib/ingest'
+import { resolveServerId } from '@/lib/ingestAuth'
 import * as incidents from '@/lib/incidents'
 import * as players from '@/lib/players'
 import { applyEvents, applySnapshot } from '@/lib/state'
 
 /**
- * Where the game server pushes.
+ * Where the game servers push.
  *
  * Reachable only over the VPC peering link, never through Cloudflare, and
  * excluded from the session middleware — the sender has no session and never
  * will. Its credential is a shared secret in a header.
+ *
+ * ═══ WHICH SERVER SENT IT IS DECIDED BY THE SECRET, NOT BY THE BODY ═══
+ *
+ * There is one secret per game server and the envelope carries no server id at
+ * all. `resolveServerId` maps the presented credential to `dev` or `prod`, and
+ * that is the only place an identity comes from on this path. A sender holding
+ * a valid dev secret cannot write into the prod board by spelling `prod`
+ * anywhere, because nothing here reads a name out of what it was sent. See
+ * lib/ingestAuth.ts for why the two alternatives were refused, and
+ * `lib/ingestAuth.check.ts` section D, which reads this file to assert that no
+ * second source of identity has appeared in it.
  *
  * THE HARD CONSTRAINT IS TIME. `PerformHttpRequest` on the game side has a
  * hardcoded 5-second no-response timeout that is not configurable, so a slow
@@ -29,26 +39,25 @@ export const dynamic = 'force-dynamic'
 /** ~1MB. A full 2048-player snapshot is well under this; anything over is a bug or an attack. */
 const MAX_BYTES = 1_048_576
 
-/**
- * Constant-time comparison of the shared secret.
- *
- * Hashed first so both sides are always 32 bytes: `timingSafeEqual` throws on
- * a length mismatch, and catching that throw would itself leak the length of
- * the real secret through timing. Comparing digests removes the question.
- */
-function secretMatches(presented: string | null): boolean {
-  if (!presented) return false
-
-  const a = createHash('sha256').update(presented).digest()
-  const b = createHash('sha256').update(env().INGEST_SECRET).digest()
-
-  return timingSafeEqual(a, b)
-}
-
 export async function POST(req: Request): Promise<Response> {
-  if (!secretMatches(req.headers.get('x-ringmaster-secret'))) {
-    // No detail. A sender that got this wrong is either misconfigured (and the
-    // game-side log says so plainly) or is not the game server.
+  /**
+   * AUTHENTICATION AND IDENTITY ARE THE SAME STEP, and they are one line on
+   * purpose. Every configured credential is compared, in constant time, with no
+   * early exit; the answer is the server that presented it, or null.
+   *
+   * THIS IS THE ONLY ASSIGNMENT OF `serverId` IN THIS FILE. A second one would
+   * be a second source of identity, and the second source is always the
+   * untrusted one. `ingestAuth.check.ts` D2 counts them.
+   */
+  const serverId = resolveServerId(
+    req.headers.get('x-ringmaster-secret'),
+    env().INGEST_CREDENTIALS,
+  )
+
+  if (!serverId) {
+    // No detail: not which server it failed to be, not how many there are. A
+    // sender that got this wrong is either misconfigured (and the game-side log
+    // says so plainly) or is not one of our game servers.
     return Response.json({ ok: false }, { status: 401 })
   }
 
@@ -85,11 +94,11 @@ export async function POST(req: Request): Promise<Response> {
   // Faking asynchrony with a floating promise would only add a window where an
   // acknowledged push has not been applied.
   if (env_.kind === 'snapshot') {
-    const fresh = applySnapshot(env_, now)
+    const fresh = applySnapshot(serverId, env_, now)
     return Response.json({ ok: true, applied: fresh }, { status: 202 })
   }
 
-  const applied = applyEvents(env_, now)
+  const applied = applyEvents(serverId, env_, now)
 
   /**
    * Persist identity to the registry, without making the game wait for it.
@@ -104,6 +113,15 @@ export async function POST(req: Request): Promise<Response> {
    * board correct) and the durable write proceeds behind it. A lost write costs
    * one sighting of a player who will reconnect; a lost acknowledgement costs a
    * retry storm.
+   *
+   * NOT PARTITIONED BY SERVER, UNLIKE THE LIVE BOARD, and the difference is what
+   * each record is ABOUT. The board answers "who is on prod right now", which is
+   * a question about a server. The registry answers "who is this license, and
+   * when was it last here", which is a question about a person, the same human
+   * whichever box they logged into. Incidents are the same: a case is a case.
+   * What follows from that is that a dev server's sessions land in the same
+   * registry rows as prod's, which is a thing to know before reading playtime
+   * off a profile during a test weekend.
    */
   void persistIdentity(env_, now).catch((e) => {
     console.error('[ingest] registry write failed', e)
@@ -252,11 +270,13 @@ export function GET(): Response {
  * had happened since. Both halves were correct and the wire between them was
  * connected to nothing.
  *
- * WHY THE GAME WRITES THE CASE AND THIS ONLY APPENDS. The game's DynamoDB grant
- * is append-only — PutItem conditional on the id being absent — so it can file a
- * case and cannot reach inside one. Corroboration is an UpdateItem on an
- * existing row, which is this console's to make. The game sends a fact; this
- * records it.
+ * WHY THE GAME WRITES THE CASE AND THIS ONLY APPENDS. The game files a case with
+ * a PutItem conditional on the id being absent and does not reach back inside
+ * one; corroboration is an UpdateItem on an existing row, and that is this
+ * console's to make. THE SPLIT IS IN THE CODE, NOT IN THE IAM.
+ * `FiveMGameServerRole` grants GetItem, PutItem, UpdateItem and BatchWriteItem
+ * on every `ringmaster-*` table and the breadth is deliberate (docs/aws-setup.md
+ * §3). The game sends a fact; this records it.
  *
  * FAILURE IS TOLERABLE HERE IN A WAY IT IS NOT FOR THE CASE ITSELF. A
  * corroboration says "still happening" about a case that is already durable, so
