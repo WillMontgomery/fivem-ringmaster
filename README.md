@@ -95,9 +95,9 @@ Ringmaster — us-west-2                          [ this repo ]
         v                                         ^
 FXServer — us-east-2                              |  instance role:
   supervisor -> FXServer stdin                    |  br-players read/write
-  br_ringmaster resource — realtime push  --------+  ringmaster-* GetItem,
-  br_ddb resource — DynamoDB and S3 writes        |  incidents PutItem plus an
-  br_core — captures artifacts, spools, uploads   |  attribute-scoped UpdateItem,
+  br_ringmaster resource — realtime push  --------+  ringmaster-* read/write
+  br_ddb resource — DynamoDB and S3 writes        |  (no Query, no Scan,
+  br_core — captures artifacts, spools, uploads   |  no DeleteItem),
   sshd + dispatch.sh (forced command only)        |  artifacts PutObject
                                                   [ game repo ]
 ```
@@ -160,8 +160,14 @@ reads and writes its own `br-players` table from the `br_ddb` server-side
 JavaScript resource, using an EC2 instance role — no static credentials
 anywhere.
 
-Its reach into Ringmaster's own `ringmaster-*` tables is narrow and has moved
-three times, so it is worth stating as it is today rather than as it was:
+**Its IAM reach into Ringmaster's own tables is not narrow.** `FiveMGameServerRole`
+grants `GetItem`, `PutItem`, `UpdateItem` and `BatchWriteItem` on every
+`ringmaster-*` table, with no `Query`, no `Scan` and no `DeleteItem`. The owner
+wrote it that way on purpose, to avoid revisiting IAM each time a table is added;
+`docs/aws-setup.md` §3 has his reasoning and the full statement list.
+
+What `br_ddb` actually does with that reach is narrower, and has moved three
+times, so it is worth stating as it is today rather than as it was:
 
 - **It reads `ringmaster-bans`, `ringmaster-grants` and `ringmaster-maintenance`**
   — point lookups on a key it already holds, for the connect gate, in-game admin
@@ -178,28 +184,27 @@ three times, so it is worth stating as it is today rather than as it was:
   so it can file a case and never overwrite one) and, since 2026-08-17, **reads
   back a four-attribute projection of one** — enough to answer "decided, and did
   anything happen", and not the moderator's prose or either party's license.
-- **It updates five named attributes on `ringmaster-incidents`, and no others.**
-  A case filed mid-match has no ending until the match has one, so at match end
-  the game writes the timeline back through an `UpdateItem` whose IAM condition
-  names every attribute it may touch. `state`, `verdict` and `resolvedBy` are
-  not on that list, which is what keeps "the game files cases, the console
-  decides them" true now that the verb is no longer append-only. The allowlist
-  is in `docs/aws-setup.md` §3 and it is the whole control.
+- **It updates the match-timeline attributes on `ringmaster-incidents`, and no
+  others.** A case filed mid-match has no ending until the match has one, so at
+  match end the game writes the timeline back through an `UpdateItem`. `state`,
+  `verdict` and `resolvedBy` are not among the attributes it names, which is what
+  keeps "the game files cases, the console decides them" true now that the verb
+  is no longer append-only. That is a property of `close.js`, not of the IAM: the
+  role carries an attribute-scoped statement for this write, and it is redundant
+  beside the broad grant. `docs/aws-setup.md` §3 has both.
 - **It writes screenshots to `royale-incidents-bucket` under `incidents/`**, with
   `s3:PutObject` and nothing else — it cannot read a frame back and cannot erase
   one.
-- **It never touches `ringmaster-audit`.** The audit log is the record of what
-  admins did; a compromised game host must not be able to read, still less
-  rewrite, the account of its own compromise. **This is the line that does not
-  move.**
-- **There is no `Query` and no `Scan` anywhere in `br_ddb`**, which is a stronger
-  guarantee than the table list and the one to lean on: a compromised game
-  server cannot enumerate who is banned, who the admins are, or which cases are
-  open. It can only confirm or deny a key it was already given.
+- **It never names `ringmaster-audit`.** The audit log is the record of what
+  admins did, and nothing on the game side reads or writes it. That separation is
+  in the code; the role reaches that table like every other `ringmaster-*` one.
+- **There is no `Query` and no `Scan` anywhere in `br_ddb`**, and the role grants
+  neither on `ringmaster-*` either, which is the guarantee to lean on: a
+  compromised game server cannot enumerate who is banned, who the admins are, or
+  which cases are open. It can only confirm or deny a key it was already given.
 
 An earlier version of this section claimed the game's policy granted "no access
-to the grants, bans or audit tables". Two thirds of that is now wrong. The audit
-third is still true and is the part that was ever load-bearing.
+to the grants, bans or audit tables". None of that is true of the deployed role.
 
 *Realtime* state — the live player list, host telemetry — takes a different
 path, pushing to Ringmaster's ingest endpoint, because polling DynamoDB for a

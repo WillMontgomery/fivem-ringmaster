@@ -9,7 +9,7 @@ Sections 4 and 5 are networking and can wait until there is something to deploy.
 
 > **Section 6 is not networking and is not optional.** It used to be a bucket to
 > build later, and this line used to sweep it in with the networking; it now
-> holds a live S3 bucket and **the fifth statement on the game box's IAM role**,
+> holds a live S3 bucket and **the game box's only S3 statement**,
 > which section 3 does not contain. A role built from 1–3 alone files incidents
 > correctly and then fails every screenshot upload, silently.
 
@@ -39,7 +39,7 @@ Create ten tables. For every one of them:
 
 | Table name | Partition key | Sort key | Notes |
 |---|---|---|---|
-| `ringmaster-grants` | `license` (String) | — | Maps a Discord account to a game license. **Needs a secondary index — see below.** The game server reads its `scopes` attribute for in-game admin powers; **Ringmaster no longer does** — it has no permission levels. |
+| `ringmaster-grants` | `license` (String) | — | Maps a Discord account to a game license. **Needs a secondary index — see below.** The game server reads its `scopes` attribute for in-game admin powers; **Ringmaster no longer does** — it has no permission levels. The game box can also **write** this table under the deployed policy (§3), which is what fivem-br-gamemode#305 is about. |
 | `ringmaster-bans` | `license` (String) | — | Active and lifted bans. **The key is a qualified identifier, normally a license** — blitz-bot files a `discord:<snowflake>` placeholder for somebody the game has never seen. Ringmaster and blitz-bot write; the game server reads two keys per connect and writes nothing. |
 | `ringmaster-audit` | `pk` (String) | `ts` (Number) | Every admin action. **Ringmaster only.** |
 | `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations. The game appends and updates five named attributes at match end; both sides read. Verdicts are written only by Ringmaster. |
@@ -185,35 +185,16 @@ the table → *Additional settings* → *Time to Live* → *Enable* → attribut
 somebody will come looking for it.** The console mints these tokens itself, in
 answer to an authenticated request from the game server over the existing
 peered link — the game box never reads or writes `ringmaster-handoff`, so
-`FiveMGameServerRole` is unchanged. What the game box already has is a
-`GetItem` on `ringmaster-*` (section 3), which does cover this table; that is
-harmless, because the row stores a **sha256 of the token and never the token**,
-and a `GetItem` needs the key in hand. There is no `Scan` in the game's grant
-and nothing to enumerate.
+`FiveMGameServerRole` is unchanged. The broad `ringmaster-*` grant in section 3
+already covers this table for read and write, so **there is no statement to add
+here and none to look for**. The row stores a **sha256 of the token and never
+the token**, and there is no `Scan` in the game's grant and nothing to
+enumerate.
 
-**If the minting is ever moved to the game box**, this is the statement it would
-need, and it is written here as a *hypothetical* rather than as an instruction —
-do not add it unless that change is actually made:
-
-```json
-{
-  "Sid": "GameServerMintHandoff",
-  "Effect": "Allow",
-  "Action": [
-    "dynamodb:PutItem"
-  ],
-  "Resource": [
-    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-handoff"
-  ]
-}
-```
-
-Note what that grant would mean before granting it: `PutItem` on this table is
-the power to create a credential that opens an admin session for **any Discord
-id already known to this console**, without the console's Discord role check
-ever running. Today that decision is made on the Ringmaster box, where the role
-check lives. Moving it is a real change in where authority sits, not a
-refactor.
+**If the minting is ever moved to the game box**, the move is in the code, not
+in the IAM. Today that decision is made on the Ringmaster box, where the Discord
+role check lives, and moving it is a real change in where authority sits rather
+than a refactor.
 
 The Ringmaster box needs nothing new either — `RingmasterTableAccess` in
 section 2 already covers `ringmaster-*`.
@@ -313,9 +294,6 @@ Name the policy `RingmasterTableAccess` and save.
 
 ## 3. IAM role for the **game server** box (us-east-2)
 
-This is the one where the scoping actually matters, so it is worth doing
-deliberately rather than copying the role above.
-
 Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerRole`**
 → inline policy → JSON:
 
@@ -327,72 +305,80 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
       "Sid": "GameServerWritesOnly",
       "Effect": "Allow",
       "Action": [
+        "dynamodb:GetItem",
         "dynamodb:PutItem",
         "dynamodb:UpdateItem",
         "dynamodb:BatchWriteItem"
       ],
       "Resource": [
+        "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-*",
         "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/br-stats-*"
+      ]
+    },
+    {
+      "Sid": "GameOwnsItsData",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Query",
+        "dynamodb:BatchWriteItem"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/br-*"
       ]
     }
   ]
 }
 ```
 
-**This is the starting policy, and the shortest true sentence about it is that
-the game box cannot touch a single `ringmaster-*` table.** It writes its own
-match data and nothing else. Not the grants table, not the audit log, not the
-ban list, not telemetry.
+**Those two statements are the base, and together they reach every
+`ringmaster-*` table and everything under `br-*`.** `GameServerWritesOnly`
+grants read and write on all of `ringmaster-*`; `GameOwnsItsData` covers the
+game's own tables, `br-players` and `br-matches` included. There is no
+`DeleteItem`, and no `Query` or `Scan` on `ringmaster-*`.
 
-**Five statements have been added to it since, and they are the only five.**
-Four of them are DynamoDB and are the sections immediately below — a read on
-bans, grants and the maintenance window; an append on incidents; since
-2026-08-17, a read back of incident verdicts; and since 2026-08-21, an
-attribute-scoped update that closes an incident's match timeline. The verdict
-read cost a property this document used to advertise, and it is written down
-below rather than quietly dropped.
+**The breadth is intentional.** The owner, 2026-09-13: "I wrote the policy
+intentionally broad as I'm confident in the integrity and security of the box
+we've built, and it future-proofs the IAM so I don't have to mess with it." A
+table added later needs no IAM change, which is the point of writing it this way.
 
-> **The fifth is S3 and it is not in this section.** `s3:PutObject` on the
-> artifacts bucket lives in **§6**, because that is where the bucket is
-> described. **This paragraph used to say four and stop here**, which was
-> accurate about DynamoDB and wrong about the role: a role built from §1–§3
-> alone files incidents correctly and then fails every screenshot upload, on the
-> subject's own client, with nothing on screen to say so. If you are rebuilding
-> this role, §6 is not optional reading.
+**Two consequences, so that nobody reasons from the narrower statements
+described below:** `ringmaster-grants`, `ringmaster-bans` and
+`ringmaster-incidents` are writable by the game box, and the
+`dynamodb:Attributes` condition on `GameServerCloseIncidentTimeline` is
+redundant while this grant stands.
 
-That matters because the game server is the box most exposed to the public
-internet, running software people actively try to exploit. If it is ever
-compromised, this policy means the attacker cannot grant themselves an admin
-scope, cannot edit the record of what they did, and cannot find out who is
-banned.
+**The rest of the deployed role**, beyond those two:
 
-> **⚠ The `Resource` above is `br-stats-*`, and the shipped game code reads and
-> writes `br-players`.** Nothing matches `br-stats-*`. This is not a consequence
-> of any of the additions below — it predates all of them.
->
-> **What the code needs**, from `js-src/br_ddb/src/index.js` (`TABLE_PREFIX_GAME`
-> defaults to `br-`, and every call site names the table `players`):
-> `dynamodb:GetItem`, `dynamodb:PutItem`, `dynamodb:UpdateItem` and
-> `dynamodb:BatchWriteItem` on
-> `arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/br-players`. The `BatchWriteItem`
-> is the match-history writer, which fires in batches of 25 at the end of every
-> match. There is no `Query` and no `Scan` against it from the game side.
->
-> **The JSON above has deliberately not been rewritten to match.** Two live
-> possibilities and they need different fixes: either the role in AWS already
-> says something other than what is written here — in which case *this file* is
-> the stale copy and should be corrected from the real policy — or it says
-> exactly this, in which case the game box has been failing every write to
-> `br-players` since it shipped and the fix is a policy change somebody makes
-> deliberately, having read the paragraph above. **Check the real role before
-> changing either one.** A doc that quietly grants a wildcard to make an error
-> go away is worse than the error.
+- `GameServerCloseIncidentTimeline`: attribute-scoped `UpdateItem` on
+  `ringmaster-incidents`, described below.
+- `GameServerWritesMatches`: `PutItem` on `br-matches`.
+- `GameServerWritesArtifacts`: `s3:PutObject` on
+  `royale-incidents-bucket/incidents/*`. **That one is in §6, not here**, and a
+  role built from §1 to §3 alone files incidents correctly and then fails every
+  screenshot upload, on the subject's own client, with nothing on screen to say
+  so. If you are rebuilding this role, §6 is not optional reading.
+- `PublishOnlyIntoOurOwnNamespace`: `cloudwatch:PutMetricData` in the `Blitz`
+  namespace.
+- `ReadOurOwnInstanceTags`: `ec2:DescribeTags`.
+- `WriteTheDiagnosticLogLine`: CloudWatch Logs on `/blitz/metrics`.
+- `ReadTheDiscordWebhook`: `ssm:GetParameter` on
+  `/blitz/discord/maintenance-webhook`, with `DecryptThatSecureString` for the
+  `kms:Decrypt` that SecureString needs.
 
-> **Revised 2026-08-09** — if you created this role earlier it also granted
-> `ringmaster-telemetry`; **delete that ARN.** Host telemetry is polled by
-> Ringmaster over SSH and written by Ringmaster, so the game box never touches
-> that table. An earlier draft of this file had it in both places, which cannot
-> both be right.
+**`AmazonSSMManagedInstanceCore` is attached as a managed policy**, and a second
+inline policy, **`blitz-host-patch`**, carries the maintenance row, the same
+webhook parameter and the same KMS decrypt.
+
+The sections below describe the grants the game code actually uses. All of them
+are subsumed by the two statements above.
+
+> **Revised 2026-08-09.** Host telemetry is polled by Ringmaster over SSH and
+> written by Ringmaster, so `br_ddb` never touches `ringmaster-telemetry`. The
+> deployed `ringmaster-*` grant covers that table along with the rest of the
+> prefix; this is a fact about the code, not about the policy.
 
 ### The reads it needs — Slice 2
 
@@ -468,9 +454,8 @@ license at all — is the two-key check the gate now actually performs (#38).
 > that distinction. To run `brddb` or `brban` against real credentials, run them
 > on a box started with the switch on.
 
-**Why this policy is shaped the way it is** — this is the single most important
-security control in the whole design, so it is worth understanding rather than
-pasting:
+**Why the reads are shaped the way they are.** The statement above is what
+`br_ddb` uses, and it is worth understanding rather than pasting:
 
 - **`GetItem` only, on named tables.** Enough to answer "is *this* identifier
   banned?", "what scopes does *this* license hold?" and "are we draining?" —
@@ -489,10 +474,10 @@ pasting:
   added**, which is the property to check when reviewing this: a verb learned a
   second argument, the policy did not widen. See the gamemode's
   `docs/ban-contract.md`.
-- **No `ringmaster-audit`, at all.** The audit log is the record of what admins
-  did. A compromised game host must not be able to read — still less rewrite —
-  the account of its own compromise. **This is the line that does not move**,
-  and it is the one line here that survived 2026-08-17 untouched.
+- **`br_ddb` never names `ringmaster-audit`.** The audit log is the record of
+  what admins did, and nothing on the game side reads or writes it. **That
+  separation lives in the code**: the deployed policy reaches that table like
+  every other `ringmaster-*` one.
 - **No `Query` and no `Scan` anywhere in `br_ddb` — and that is now the load-
   bearing guarantee, not the table list.** Verified by reading
   `js-src/br_ddb/src/index.js`: the only commands it imports from
@@ -508,16 +493,16 @@ pasting:
   same sentence holds on the bucket: the game box can add a frame and cannot
   enumerate or read one back.
 
-  **Say it that way round on purpose.** Since 2026-08-17 the *grant* is broader
-  than the code (see below), so "it can only touch these ARNs" is no longer the
-  strong statement it used to be. "It cannot enumerate anything" still is, and
-  it is enforced by the absence of a verb rather than by an ARN list. If
-  `br_ddb` ever needs a `Query`, that is a conversation about this policy — not
-  a change to a function.
-- **No write action on anything that decides authority.** It cannot lift a ban,
-  and it cannot grant itself a scope. `ringmaster-grants`, `ringmaster-bans` and
-  `ringmaster-maintenance` stay *writable only by Ringmaster*, where every
-  change goes through the console's own scope check and lands in the audit log.
+  **Say it that way round on purpose.** The *grant* is far broader than the
+  code, so "it can only touch these ARNs" is not a statement this policy makes.
+  What the deployed policy does still enforce is the enumeration line: it
+  carries no `Query` and no `Scan` on `ringmaster-*`, so nothing on the game box
+  can list who is banned, who the admins are or which cases are open. `Query` on
+  `br-*` is granted, by `GameOwnsItsData`.
+- **`br_ddb` writes nothing that decides authority.** It does not lift a ban and
+  does not grant a scope. Those writes are made in the console, where each one
+  goes through the Discord role check and lands in the audit log. The deployed
+  policy permits them from the game box; the code is what does not make them.
 - **No `DeleteItem` anywhere.** Nothing on the game side ever needs to destroy a
   row.
 
@@ -525,8 +510,9 @@ pasting:
 > excluded: admin actions are moving in-game as well as in the console, and the
 > game needs a permission source for them. The alternative — a grants cache
 > pushed down and invalidated out of band — is a whole subsystem whose failure
-> mode is a stale permission, which is worse than a read. The read is narrow
-> (one license, no enumeration) and the write side is untouched.
+> mode is a stale permission, which is worse than a read. The read is narrow:
+> one license, no enumeration. The write is available to the game box under the
+> deployed policy and is not made by `br_ddb`; see fivem-br-gamemode#305.
 
 ### The one write it needs — incidents, append-only
 
@@ -554,11 +540,10 @@ gamemode is the authority here and states the grant it assumes.
 ```
 
 **The write is conditional on `attribute_not_exists(incidentId)`** on the game
-side, so it can add a case and cannot overwrite one. Even having since gained a
-read (next section), a compromised game box still cannot enumerate open cases,
-read who is banned, discover who the admins are, or alter a verdict. Append
-without any ability to enumerate is a much smaller blast radius than it first
-sounds.
+side, so `br_ddb` adds a case and does not overwrite one. That condition is in
+the code, not in the policy. What the policy still withholds is enumeration: no
+`Query` and no `Scan` on `ringmaster-*`, so nothing on the game box can list
+open cases, who is banned or who the admins are.
 
 > **This section used to end by saying there was "no read of any kind on this
 > table", and used to close the verdict question with "Neither is done."** Both
@@ -594,92 +579,37 @@ close, silently, leaving every case reading "end never reported".
 }
 ```
 
-**THE ATTRIBUTE LIST IS THE WHOLE CONTROL.** Without it this would be a general
-write on the moderation record, and the game box could rewrite `state`,
-`verdict` or `resolvedBy` on any case whose id it holds. With it the game may
-touch only the five fields it actually writes. `ReturnValues: NONE` is not
-decoration either: the attribute list restricts what a request may WRITE, and
-`ReturnValues` is how the same request could otherwise READ a verdict back out.
+**THE ATTRIBUTE LIST IS WHAT THIS STATEMENT CONTROLS.** On its own it holds the
+game box to the fields it actually writes instead of letting it rewrite `state`,
+`verdict` or `resolvedBy` on any case whose id it holds, and `ReturnValues:
+NONE` stops the same request reading a verdict back out.
 
-**THE ALLOWLIST AND `close.js` MUST AGREE, AND ONLY ONE OF THEM FAILS LOUDLY.**
-That file's SET expression sets exactly these attributes and its comment names
-this policy as the reason. Adding a sixth attribute there without changing the
-policy produces AccessDenied at match end, in production, on a path with no user
-watching it. `BR.Ring.incidentStats().closeFailed` is the counter that says so;
-on a healthy server it is zero (`brring` in the FXServer console prints it).
+**It is redundant as deployed.** `GameServerWritesOnly` allows `UpdateItem` on
+every `ringmaster-*` table with no condition attached, and one unconditional
+Allow is enough, so a close falling outside this allowlist is permitted by the
+broad statement anyway. Two things follow: `close.js` can name an attribute the
+allowlist does not, without producing AccessDenied at match end, and
+`BR.Ring.incidentStats().closeFailed`, which `brring` prints in the FXServer
+console, is no longer a reading on this allowlist.
 
-#### The widening HAS LANDED IN CODE, and the policy must already match
-
-**Recorded 2026-08-22, correcting this section.** It previously said this was
-"coming" and "deliberately unapplied". That is no longer true: `close.js` on the
-gamemode's `dev` branch now pushes both names into its SET expression —
+**The seven attributes `close.js` writes**, recorded so the list is right if
+this statement ever stands alone: `incidentId`, `matchEndedAt`,
+`matchStartedAt`, `matchEndsBy`, `matchTimeline`, `matchTimelineComplete` and
+`matchKillsSeen`. The two match names landed in the code on 2026-08-22, so a
+case filed during warmup gains a start and a deadline when the match ends:
 
 ```js
 if (startedAt !== null) sets.push('matchStartedAt = :start')
 if (endsBy   !== null) sets.push('matchEndsBy = :endsBy')
 ```
 
-— so a case filed during warmup gains a start and a deadline when the match
-ends. The JSON above lists **five** attributes and the close path can now write
-**seven**.
-
-**THIS IS THE ORDER THIS FILE WARNS ABOUT, TAKEN IN THE WRONG DIRECTION.** The
-rule three paragraphs down is *"Policy first is a no-op; code first is
-AccessDenied at match end on every match, silently."* The code went first.
-
-So one of two things is true, and only the live role says which:
-
-- **The owner widened the role by hand and this document was not updated.** The
-  likelier of the two: an incident page has been observed with a backfilled
-  `matchStartedAt` on a warmup-filed case, which is precisely the write this
-  grant governs.
-- **The role was never widened**, and every match end since has been failing its
-  close with AccessDenied on a path no user watches.
-
-**`BR.Ring.incidentStats().closeFailed` distinguishes them** — `brring` in the
-FXServer console prints it, and on a healthy server it is zero. A non-zero
-counter here means the policy is short two attributes, not that the code is
-wrong. **`brring` still answers on the production box**: it is one of the three
-verbs the gamemode's dev gate exempts by name, and this diagnostic is the reason
-it is on that list — see the warning in §3.
-
-The attribute list, once confirmed, is:
-
-```json
-"dynamodb:Attributes": [
-  "incidentId", "matchEndedAt", "matchStartedAt", "matchEndsBy",
-  "matchTimeline", "matchTimelineComplete", "matchKillsSeen"
-]
-```
-
-**The JSON earlier in this section is deliberately left at five.** This file's
-standing rule is that a document which silently widens a policy to fit code is a
-document that widens it again next time without anybody deciding — so the
-correction is written here, beside the evidence, rather than edited into the
-block as though it had always been so. Copy the seven-name list into the block
-once `closeFailed` has been read and the role checked.
-
-**The timeline offsets no longer depend on it.** They used to: the `+2:14`
+**The timeline offsets do not depend on them.** They used to: the `+2:14`
 column was drawn only inside `[matchStartedAt, matchEndedAt ?? matchEndsBy]`, so
 a warmup-filed case had no column at all and a backfilled one had a column that
 began partway down the list. `matchOffset` counts from `openedAt` and consults
-no match attribute now, so the widening buys context — not a readable timeline.
-
-**The JSON has not been edited to match, and that is this file's standing rule
-rather than an oversight** — the same one §2 states about `br-players`: a
-document that silently widens a policy to fit code that has not landed is a
-document that widens it again next time without anybody deciding to. Decide it,
-then write it. What to do when it lands:
-
-1. Read the real role. It may already have been widened by hand.
-2. Widen `dynamodb:Attributes` and the SET expression in `close.js` **in that
-   order**. Policy first is a no-op; code first is AccessDenied at match end on
-   every match, silently.
-3. Update the list above so the next rebuild is correct.
-
-Both names already exist on the incident row — `incident.js` writes them on the
-original `PutItem`. What changes is only whether the *close* path may touch
-them.
+no match attribute now, so the two names buy context rather than a readable
+timeline. Both already exist on the incident row: `incident.js` writes them on
+the original `PutItem`.
 
 > **This section is late.** The grant was applied by the owner on 2026-08-20 and
 > written down here on 2026-08-21. In between, this document said the game box
@@ -710,29 +640,14 @@ story of this section.** The prefix covers `audit`, `bans`, `grants`,
 | `ringmaster-maintenance` | `GetItem` | the drain gate |
 | `ringmaster-incidents` | `GetItem` + `PutItem` + attribute-scoped `UpdateItem` | file a case, read its verdict, close its match timeline |
 
-**What was actually applied**, so this file matches the role rather than
-describing an ideal of it:
+**There is no separate statement for this read on the deployed role.** It was
+folded into `GameServerWritesOnly`, whose `GetItem` on `ringmaster-*` covers it
+along with the rest of the prefix, so do not go looking for a
+`GameServerReadIncidentVerdict` in the console. The breadth is the owner's
+deliberate choice, in §3.
 
-```json
-{
-  "Sid": "GameServerReadIncidentVerdict",
-  "Effect": "Allow",
-  "Action": [
-    "dynamodb:GetItem"
-  ],
-  "Resource": [
-    "arn:aws:dynamodb:us-east-2:ACCOUNT_ID:table/ringmaster-*"
-  ]
-}
-```
-
-**That wildcard is the owner's deliberate choice and is written here as such —
-not as a recommendation.** If you are creating this role fresh and would rather
-not carry the breadth, the four ARNs in the table above are sufficient for
-everything `br_ddb` does, and substituting them changes no behaviour. **When
-somebody comes to tighten the wildcard back to a list, that table is the
-answer** — it is transcribed from `js-src/br_ddb/src/index.js`, which names each
-table exactly once. Read the real role before editing either.
+**The table above is still what `br_ddb` uses**, transcribed from
+`js-src/br_ddb/src/index.js`, which names each table exactly once.
 
 **What the verdict read actually is**, verified in `br:ddb:incidentVerdict`
 (`js-src/br_ddb/src/index.js`, ~line 953) rather than described from memory:
@@ -754,9 +669,9 @@ table exactly once. Read the real role before editing either.
   on a failed read would credit Volts against a verdict nobody has seen.
 
 **What it cost, stated plainly so nobody has to rediscover it:** a compromised
-game box can now see the verdicts on cases it filed. It still cannot alter one —
-`ringmaster-incidents` remains write-append-only from that side, and the resolve
-path lives entirely in the console.
+game box can see the verdicts on cases it filed. The resolve path lives entirely
+in the console, and `br_ddb` writes nothing but the timeline attributes; the
+deployed policy does not hold it to that.
 
 ### The incident rules this policy is built around
 
@@ -948,7 +863,7 @@ would make a future rename expensive.
 
   ```json
   {
-    "Sid": "GameServerPutArtifact",
+    "Sid": "GameServerWritesArtifacts",
     "Effect": "Allow",
     "Action": ["s3:PutObject"],
     "Resource": ["arn:aws:s3:::royale-incidents-bucket/incidents/*"]
@@ -967,15 +882,13 @@ would make a future rename expensive.
   }
   ```
 
-> **Both blocks are transcribed from what the shipped code assumes, not read
-> back off the live role.** The operator applied the real policy by hand on
-> 2026-08-20 and this file did not record it for a day. Read the real role
-> before changing either — and if it disagrees with this, *this* is the stale
-> copy.
+> **The game block is read back off the live role; the Ringmaster block is
+> transcribed from what the shipped code assumes.** Read the real role before
+> changing either, and if it disagrees with this, *this* is the stale copy.
 
 **Nine keys, and the console finds them by guessing.** Nothing in DynamoDB says
-which frames a case has and nothing can — the game's grant on
-`ringmaster-incidents` cannot append a capture key after the fact. So the key
+which frames a case has: `br_ddb` does not append a capture key after the fact,
+and no code on either side reads one. So the key
 format is fixed and enumerable **on purpose**: `incidents/<uuid>/01.webp`
 through `09.webp`, three timed frames plus six corroborations. The console
 issues nine `HEAD`s and keeps the ones that answer. **That is what buys the
@@ -1016,10 +929,9 @@ surprised by it:**
   The sentence this was always argued from — *"EMPTY IS NORMAL AND IS NOT
   EVIDENCE OF ANYTHING"* — was the comment on `Incident.captureKeys`. **That
   field has been deleted** (owner, 2026-08-20: "yeah let's not have captureKeys
-  if we don't need it"); it could never be populated, because the game's grant on
-  `ringmaster-incidents` is `PutItem` conditional on the id being absent — and
-  the `UpdateItem` it has since gained names five attributes, none of which is a
-  capture key, so that has not changed. The
+  if we don't need it"); nothing populates it, because `br_ddb` writes the
+  incident row once and then touches only the timeline attributes, none of which
+  is a capture key. The
   sentence moved to `src/lib/artifacts.ts`, which is where the console now
   decides what an empty set means. An old case with no frames is an old case,
   not an innocent one.
