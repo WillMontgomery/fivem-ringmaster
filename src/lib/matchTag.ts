@@ -3,21 +3,36 @@
  *
  * ═══ THIS IS A PORT, NOT A DESIGN ═══
  *
- * The authority is the gamemode's `br_lib/shared/matchtag.lua` — `BR.MatchTag`,
- * which is `('%05x'):format(id)` and nothing else. Sixty-eight places in the
+ * The authority is the gamemode's `br_lib/shared/matchtag.lua`, `BR.MatchTag`,
+ * which is `('%07x'):format(id)` and nothing else. Sixty-eight places in the
  * game print a match id through it, including every line in the server console
  * a moderator reads. If this file produced a different string for the same id,
  * moderation would be reading two different names for one match, which is the
  * single outcome both halves of #291 exist to prevent. The owner: "yes
  * Ringmaster should show hex everywhere please."
  *
- * FIVE CHARACTERS, ZERO PADDED, LOWER CASE, and the padding is the part that is
- * easy to drop. The ids are a fixed-width space (`ID_MIN, ID_MAX = 0x00001,
- * 0xFFFFF` in br_core/server/match.lua), so `0a3f1` and `a3f1` being the same
- * match written two ways is a difference somebody has to hold in their head
+ * SEVEN CHARACTERS, ZERO PADDED, LOWER CASE, and the padding is the part that is
+ * easy to drop. The ids are a fixed-width space (`ID_MIN, ID_MAX = 0x0000001,
+ * 0xFFFFFFF` in br_core/server/match.lua), so `000a3f1` and `a3f1` being the
+ * same match written two ways is a difference somebody has to hold in their head
  * while reading a console against this page. The gamemode pins that in its own
- * suite — `BR.MatchTag(0xa3f1) == '0a3f1'`, "a short id is padded, never
- * trimmed" — and `matchTag.check.ts` pins the same case here.
+ * suite as `BR.MatchTag(0xa3f1) == '000a3f1'`, "a short id is padded, never
+ * trimmed", and `matchTag.check.ts` pins the same case here.
+ *
+ * ═══ THE WIDTH WENT FIVE TO SEVEN; THE PARSER DID NOT MOVE ═══
+ *
+ * This was `('%05x')` over a 20-bit space until the gamemode widened the id to
+ * 28 bits. Twenty bits reaches even odds of a collision at roughly 1,200 matches
+ * by the birthday bound, and every match now has a permanent URL keyed on its
+ * tag, so a collision would be one URL naming two matches.
+ *
+ * ONLY THE CANONICAL RENDERING MOVED, and `matchFromTag` below still accepts one
+ * to eight hex digits. That is load bearing rather than lax: every match already
+ * recorded carries a FIVE-character tag, and this console has already handed out
+ * `/matches/d93aa` style links. Tightening the parser to exactly seven
+ * characters would 404 every link this project has ever produced. A short tag
+ * and its padded form are the same integer and select the same match, which
+ * `matchTag.check.ts` pins by name.
  *
  * ═══ THE ID IS A NUMBER EVERYWHERE IT IS STORED OR SENT ═══
  *
@@ -43,11 +58,11 @@
  * it refuses exactly the values that would otherwise be invented:
  *
  *   · not a finite number, or not an integer — nothing to render
- *   · negative — `%05x` on a negative is not a match id in any build
+ *   · negative — `%07x` on a negative is not a match id in any build
  *   · ZERO, which is the one worth stating. `0` is excluded from the id space
  *     by `match.lua` ("0 IS EXCLUDED and that is load bearing"), and
  *     `historyRowFor` writes `ctx.matchId or 0` — so a row carrying 0 means the
- *     id was ABSENT, not that the match was called `00000`. Rendering it would
+ *     id was ABSENT, not that the match was called `0000000`. Rendering it would
  *     be this console naming a match after a missing value.
  *
  * Callers render `null` as the house em dash, exactly as `LocalTime` does for an
@@ -59,20 +74,24 @@
  *
  * NOT A CEILING THIS REJECTS, and that is deliberate. Every match played before
  * #291 carries an id from the old pure increment — 412, say, which renders
- * `0019c` and is a real match somebody may be moderating. An id above the range
- * cannot be minted by the current game but would still be a real row if one
- * existed, and `%05x` widens rather than truncates, so it is rendered rather
+ * `000019c` and is a real match somebody may be moderating. An id above the
+ * range cannot be minted by the current game but would still be a real row if
+ * one existed, and `%07x` widens rather than truncates, so it is rendered rather
  * than blanked. Blanking a real id would be the worse failure of the two.
+ *
+ * AND IT IS NOT THE PARSER'S BOUND EITHER. `matchFromTag` accepts up to eight
+ * hex digits and is not tightened to this value, so a tag minted under the old
+ * 20-bit space still resolves. See the header.
  */
-export const MATCH_ID_MAX = 0xfffff
+export const MATCH_ID_MAX = 0xfffffff
 
 /** Where the tag stops being padding and starts being the id. */
-const TAG_WIDTH = 5
+const TAG_WIDTH = 7
 
 /**
- * The way a match id is written down: five lower-case hex characters.
+ * The way a match id is written down: seven lower-case hex characters.
  *
- * Null when the value is not an id — see the header. Never `00000`.
+ * Null when the value is not an id — see the header. Never `0000000`.
  */
 export function matchTag(id: number | null | undefined): string | null {
   if (typeof id !== 'number' || !Number.isInteger(id)) return null
@@ -98,6 +117,22 @@ export function matchTag(id: number | null | undefined): string | null {
  *
  * ROUND TRIPS WITH `matchTag` BY CONSTRUCTION, and the check file pins it in
  * both directions: `matchFromTag(matchTag(n)) === n` for every n that has a tag.
+ *
+ * ═══ ONE TO EIGHT DIGITS, AND DO NOT NARROW IT TO SEVEN ═══
+ *
+ * THIS IS THE HALF THAT MUST NOT MOVE when the canonical width does. The width
+ * went five to seven with the 28-bit id, but every match already recorded has a
+ * FIVE-character tag and this console has already handed out `/matches/d93aa`
+ * style links, into Discord and into people's address bars. A parser that
+ * demanded exactly seven characters would 404 every one of them, which is the
+ * one failure worse than a wrong width: the wrong width is legible, a 404 says
+ * the match never existed.
+ *
+ * So a tag is any run of one to eight hex digits, and `d93aa` and `00d93aa` are
+ * the same integer and therefore the same match. Eight is the ceiling because
+ * `matchTag` widens rather than truncating above the space, so an eight-digit
+ * string is still something this module could have produced; nine is not, and a
+ * bound keeps `Number` well inside exact integers.
  */
 export function matchFromTag(s: string | null | undefined): number | null {
   if (typeof s !== 'string') return null
@@ -122,9 +157,13 @@ export function matchFromTag(s: string | null | undefined): number | null {
  * style."
  *
  * KEYED ON THE TAG RATHER THAN THE NUMBER, so the URL in somebody's address bar
- * is the same five characters the game console printed. A decimal route would
+ * is the same seven characters the game console printed. A decimal route would
  * reintroduce the two-names-for-one-match problem in the one place it is most
  * copied and pasted.
+ *
+ * THE HREF THIS MINTS IS THE CANONICAL ONE, seven characters wide, but it is not
+ * the only one the route answers: the five-character links already in the wild
+ * resolve to the same match because `matchFromTag` never narrowed. See there.
  *
  * NULL WHEN THERE IS NO TAG, so a caller cannot accidentally link to
  * `/matches/null`. Every call site has to decide what an absent id looks like,

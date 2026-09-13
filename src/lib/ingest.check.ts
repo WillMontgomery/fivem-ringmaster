@@ -151,10 +151,16 @@ check(
  * ═══ THE SHAPE THE GAME MINTS TODAY, WHICH IS NOT THE ONE ABOVE (#291) ═══
  *
  * `party.lua` mints `('m%ssq%d'):format(BR.MatchTag(m.id), i)` now, so the match
- * half of a squad id is five HEX characters and a real one looks like
- * `md93aasq1`. Every fixture in this file predates that and spells the match half
- * in decimal — they still parse, because the schema is `z.string()`, but they
- * describe a wire the game no longer speaks.
+ * half of a squad id is HEX and a real one looks like `m00d93aasq1`. Every
+ * fixture in this file predates that and spells the match half in decimal. They
+ * still parse, because the schema is `z.string()`, but they describe a wire the
+ * game no longer speaks.
+ *
+ * AND THE HEX HALF GOT TWO CHARACTERS LONGER when the id space went 20 bits to
+ * 28: `BR.MatchTag` is `('%07x')` now, so the squad ids on the wire went from
+ * `md93aasq1` to `m00d93aasq1`. BOTH SHAPES ARE PINNED BELOW. The five-character
+ * one is not a stale fixture: it is written into every history row already
+ * recorded, and nothing backfills those either.
  *
  * IT IS PINNED HERE BECAUSE THE LAST TIME THIS FIELD'S SHAPE MOVED IT TOOK THE
  * INGEST ENDPOINT DOWN. The schema said `z.number().int()`, the game sent
@@ -166,8 +172,20 @@ check(
  * id already written to a history row still has, and nothing backfills them.
  */
 check(
-  'the hex-tagged squad id the game mints since #291',
+  'the hex-tagged squad id the game minted at the old five-character width',
   envelope([player({ matchId: 0xd93aa, squadId: 'md93aasq1' })]),
+  true,
+)
+
+check(
+  'the seven-character squad id the game mints since the id went 28 bits',
+  envelope([player({ matchId: 0xd93aa, squadId: 'm00d93aasq1' })]),
+  true,
+)
+
+check(
+  'a full-width 28-bit id and its squad id',
+  envelope([player({ matchId: 0xa70bf9c, squadId: 'ma70bf9csq3' })]),
   true,
 )
 

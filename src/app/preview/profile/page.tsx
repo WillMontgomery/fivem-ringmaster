@@ -147,21 +147,24 @@ const LICENSE = 'license:preview000000000000000000000000000'
 const MATCHES: ProfileMatch[] = [
   {
     /**
-     * ═══ THE TWO ID SHAPES A REAL HISTORY CARRIES, SIDE BY SIDE (#291) ═══
+     * ═══ THE THREE ID SHAPES A REAL HISTORY CARRIES, SIDE BY SIDE (#291) ═══
      *
-     * The newest two matches here were played since #291 and carry random 20-bit
-     * ids; the older four are from the pure increment that came before it and are
-     * small numbers. THAT MIX IS THE REAL STATE OF EVERY PROFILE ON THE SERVER
-     * RIGHT NOW and it will be for months, because nothing renumbers a match that
-     * has already been played.
+     * The newest match here was minted since the id space went 28 bits; the next
+     * is a 20-bit draw from between #291 and the widening; the older four are
+     * from the pure increment that came before both and are small numbers. THAT
+     * MIX IS THE REAL STATE OF EVERY PROFILE ON THE SERVER RIGHT NOW and it will
+     * be for months, because nothing renumbers a match that has already been
+     * played.
      *
-     * It matters here because the two render differently in the Match column and
-     * only one of them is a fair test of it: `0xc41e7` renders `c41e7`, five real
-     * characters, while 412 renders `0019c` and is three fifths padding. A
-     * harness carrying only the second would prove the column fits an id that no
-     * new match can produce.
+     * It matters here because the three render at different real widths in the
+     * Match column and only the first is a fair test of it: `0xc41e739` renders
+     * `c41e739`, seven real characters, while `0x3b0d9` renders `003b0d9` and 412
+     * renders `000019c`, which is five sevenths padding. A harness carrying only
+     * the padded ones would prove the column fits an id that no new match can
+     * produce, which is exactly the mistake this note was written to stop when
+     * the width was five.
      */
-    matchId: 0xc41e7,
+    matchId: 0xc41e739,
     endedAt: BASE,
     mode: 'squad',
     placement: 1,
@@ -1246,7 +1249,7 @@ function fixture(
       ? // THE SQUAD ID CARRIES THE HEX TAG, because party.lua mints
         // `('m%ssq%d'):format(BR.MatchTag(m.id), i)` since #291. `m412sq3` was
         // the old decimal shape and is no longer a string the game can send.
-        { src: 12, state: 'in_match', matchId: 0xc41e7, squadId: 'mc41e7sq3', hp: 100, inventory: [] }
+        { src: 12, state: 'in_match', matchId: 0xc41e739, squadId: 'mc41e739sq3', hp: 100, inventory: [] }
       : null,
     incidents: reportsAgainst(counts.against),
     reportsFiled: reportsFiledBy(counts.filed),

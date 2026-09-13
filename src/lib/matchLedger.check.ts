@@ -110,7 +110,9 @@ const modern = ledgerFrom(ID, [
 ])!
 
 check('the ledger exists', modern !== null)
-check('it is named in hex', modern.tag === 'd93aa', modern.tag)
+// SEVEN CHARACTERS SINCE THE ID WENT 28 BITS. `0xd93aa` is a 20-bit id, so it
+// is padded here rather than full width. See `matchTag.ts`.
+check('it is named in hex', modern.tag === '00d93aa', modern.tag)
 check('the start time is read', modern.startedAt === STARTED, modern.startedAt)
 check('the end time is read', modern.endedAt === ENDED, modern.endedAt)
 check('the field size is the game`s count, not the row count', modern.total === 24, modern.total)

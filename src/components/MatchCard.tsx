@@ -170,7 +170,7 @@ export function MatchCard({
             than smoothed over with a second rendering of a live match.
 
             NO TAG MEANS NO LINK. `matchTag` returns null rather than inventing
-            `00000` — see its header. Unreachable from a live snapshot, since the
+            `0000000` — see its header. Unreachable from a live snapshot, since the
             game cannot mint id 0, but the markup must not depend on that.
           */}
           {(() => {

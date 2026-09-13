@@ -859,7 +859,7 @@ export function playerPanelFrom(
  *   `BR.State.me.state == BR.PlayerState.WARMUP` and nothing else. So for the
  *   whole life of the DUI the squad is already formed.
  *
- *   THE FORMAT IS `m<5 hex>sq<n>` SINCE #291 and nothing here parses it. The id
+ *   THE FORMAT IS `m<7 hex>sq<n>` SINCE #291 and nothing here parses it. The id
  *   is compared as an opaque string, so the shape may change again without
  *   touching this file. `components/MatchCard.tsx` is still the one place that
  *   reads the trailing index.

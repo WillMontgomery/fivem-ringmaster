@@ -393,7 +393,7 @@ const MODE_LABEL: Record<string, string> = {
  * link, no copy affordance and nothing anywhere else on the page pointing at
  * it — checked before deleting." Every clause of that has stopped being true.
  * There is a match page now (#51), the id is how you reach it, and it is written
- * in the same five hex characters the game server prints (#291).
+ * in the same seven hex characters the game server prints (#291).
  *
  * The owner, 2026-09-12: "I'm still not seeing anywhere that mentions matches by
  * hex, or our new match page. No link to it in the profile page match history
@@ -420,9 +420,12 @@ const MATCH_COLUMNS = [
   // lands on the values' right edge without either being given a fixed width
   // wide enough for the longest possible earnings string.
   { key: 'earned', label: 'Earned', className: 'ml-auto shrink-0 text-right' },
-  // LAST, AND FIXED WIDTH, because every tag is exactly five characters — the
-  // one column in this table whose content cannot vary in length. `ml-auto` on
-  // `earned` above still pushes this pair to the right edge together.
+  // LAST, AND FIXED WIDTH, because every tag is exactly seven characters: the
+  // one column in this table whose content cannot vary in length. It was five
+  // until the id space went 28 bits; `w-16` holds seven `text-xs` mono digits
+  // with room to spare, checked in the profile harness against `0xc41e739`.
+  // `ml-auto` on `earned` above still pushes this pair to the right edge
+  // together.
   { key: 'match', label: 'Match', className: 'w-16 shrink-0 text-right' },
 ] as const
 

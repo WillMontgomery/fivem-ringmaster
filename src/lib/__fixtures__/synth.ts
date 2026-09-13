@@ -78,19 +78,21 @@ export function synthSnapshot(): SnapshotEnvelope {
   const gameMs = 4_281_003
 
   /**
-   * ═══ REAL 20-BIT IDS, NOT 41/42/43 (#291) ═══
+   * ═══ REAL MINTED IDS, NOT 41/42/43 (#291) ═══
    *
    * These were 41, 42 and 43 — ids from the pure increment the gamemode used
-   * before #291 mints `0x00001` to `0xFFFFF` at random. A fixture full of
+   * before #291 mints `0x0000001` to `0xFFFFFFF` at random. A fixture full of
    * two-digit ids cannot reproduce what the owner actually saw ("the live players
    * view also still just says `match 889770`") and, worse, every id in it renders
-   * as a tag that is four fifths padding, so the harness would show `00029` and
+   * as a tag that is nearly all padding, so the harness would show `0000029` and
    * prove nothing about a real one.
    *
    * `0xd93aa` IS 889770, THE NUMBER FROM THE COMPLAINT, so the harness renders
-   * the exact match he was looking at. `0x0a3f1` is here because it is the case
-   * the padding exists for — a four-digit id that must render `0a3f1` and never
-   * `a3f1`. `0xa70bf` is a full-width one.
+   * the exact match he was looking at. It is a 20-bit draw from before the id
+   * widened, which is why it renders `00d93aa` rather than seven real characters.
+   * `0x0a3f1` is here because it is the case the padding exists for. `0xa70bf9c`
+   * is a FULL-WIDTH 28-BIT ID, seven characters with no padding at all, and it
+   * is the one that shows whether a tag at the new width fits where it is drawn.
    *
    * THE BUCKETS DO NOT MOVE, and that is the point of #291's split: the routing
    * bucket comes from `m.seq`, the internal increment, and not from `m.id`. Three
@@ -99,7 +101,7 @@ export function synthSnapshot(): SnapshotEnvelope {
   const matches = [
     { id: 0xd93aa, state: 'STORM', mode: 'squads', bucket: 141, endsAt: 4_400_000, alive: 0, squadsAlive: 0 },
     { id: 0x0a3f1, state: 'BUS', mode: 'squads', bucket: 142, endsAt: null, alive: 0, squadsAlive: 0 },
-    { id: 0xa70bf, state: 'WARMUP', mode: 'solo', bucket: 143, endsAt: null, alive: 0, squadsAlive: 0 },
+    { id: 0xa70bf9c, state: 'WARMUP', mode: 'solo', bucket: 143, endsAt: null, alive: 0, squadsAlive: 0 },
   ]
 
   const players: SnapshotEnvelope['snapshot']['players'] = []

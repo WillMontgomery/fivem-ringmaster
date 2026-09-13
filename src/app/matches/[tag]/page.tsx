@@ -12,13 +12,27 @@ import { liveView } from '@/lib/state'
  *
  * ═══ KEYED ON THE HEX TAG, NOT THE DECIMAL ID ═══
  *
- * The URL segment is the same five characters the game server prints into its
+ * The URL segment is the same seven characters the game server prints into its
  * own console, so a match id copied out of a server log pastes straight into the
  * address bar and a URL pasted into Discord reads as the thing people are talking
  * about. A decimal route would have reintroduced the two-names-for-one-match
  * problem in the single place an id gets copied most. `matchFromTag` parses it as
  * base 16 and strictly — see `lib/matchTag`, and note that a digits-only tag like
- * `0019c` is hex, which is exactly the case a lenient parse gets silently wrong.
+ * `000019c` is hex, which is exactly the case a lenient parse gets silently
+ * wrong.
+ *
+ * ═══ THE OLD FIVE-CHARACTER LINKS STILL LAND HERE ═══
+ *
+ * The tag was five characters until the gamemode took the id space from 20 bits
+ * to 28, and this console published `/matches/d93aa` style links for the whole
+ * of that period. They still resolve, because `matchFromTag` accepts one to
+ * eight hex digits and `d93aa` and `00d93aa` are the same integer. The width
+ * that moved is the CANONICAL RENDERING, which is what `matchHref` mints from
+ * here on; the route is deliberately wider than what it mints.
+ *
+ * SO DO NOT NARROW THE PARSE TO SEVEN CHARACTERS. Case 1 below is a 404, and a
+ * 404 here does not read as "that link is the old width", it reads as "this
+ * console has no such match". `matchTag.check.ts` section F pins the old links.
  *
  * NOT IN THE SIDE NAVBAR, per #51 in as many words: "This page does not need to
  * be in the side navbar." `AppShell`'s `active` is therefore the live board,

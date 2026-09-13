@@ -90,7 +90,7 @@ export function MatchView({ ledger }: { ledger: MatchLedger }) {
       <Card className="surface-edge gap-0 overflow-hidden py-0">
         <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-card/60 px-4 py-3">
           {/*
-            THE ID IS THE HEADING, and it is the same five characters the game
+            THE ID IS THE HEADING, and it is the same seven characters the game
             server printed into its own console. That is the entire point of
             #291's console half: "Ringmaster and the game logs should convert
             together, or moderation reads two numbers for one match."

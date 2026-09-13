@@ -140,7 +140,7 @@ export interface MatchParticipant {
 /** One match, as far as the rows can describe it. */
 export interface MatchLedger {
   id: number
-  /** The five hex characters the game console prints. */
+  /** The seven hex characters the game console prints. */
   tag: string
   /** 'solo' | 'squad' as the game spells it. '' when unreadable. */
   mode: string
