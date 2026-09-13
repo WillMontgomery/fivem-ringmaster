@@ -102,19 +102,26 @@ const ATTRS = {
   '#revives': 'revives',
   '#xp': 'xp',
   /**
-   * ═══ PROJECTED, AND IT IS NOT ON THE PROFILE ROW YET ═══
+   * ═══ PROJECTED, AND IT IS ON THE PROFILE ROW ═══
    *
-   * `voltsSpent` landed in the gamemode in `03cce2d` (#293) on the roster entry,
-   * the results row, the history row and br_ddb's `HISTORY_NUMBERS`. It did NOT
-   * land on `STATS_ADDS`, which is the allowlist for the atomic ADD onto
-   * `{sk: 'profile'}`, so the rows this scan reads carry no such attribute and
-   * every `BoardRow.voltsSpent` is zero.
+   * `voltsSpent` reached the gamemode in `03cce2d` (#293) on the roster entry,
+   * the results row, the history row and br_ddb's `HISTORY_NUMBERS`, and then
+   * reached `STATS_ADDS` in `40f00de` -- that is the allowlist for the atomic
+   * ADD onto `{sk: 'profile'}`, which is the row this scan reads. So the
+   * attribute is really there and `BoardRow.voltsSpent` is a real number.
    *
-   * ASKING FOR AN ABSENT ATTRIBUTE IS FREE. DynamoDB returns nothing for it; it
-   * does not error and it does not cost capacity. Naming it here means the day
-   * the gamemode adds it to `STATS_ADDS`, the board starts reading real numbers
-   * with no change on this side - and `lib/scoreboard.ts`'s `spend` category is
-   * one `available: true` away from being a card.
+   * THE SPENDERS CARD IS LIVE ON THE STRENGTH OF IT. `lib/scoreboard.ts`'s
+   * `spend` category is `available: true`, and its header records that turning
+   * it on was the one boolean it promised to be.
+   *
+   * ⚠ ONLY PLAYERS WHO HAVE FINISHED A MATCH SINCE `40f00de` HAVE ONE. Nothing
+   * backfills a lifetime counter, so an older profile carries no attribute at
+   * all rather than a zero, and the board ranks whoever has been playing.
+   *
+   * NAMING AN ABSENT ATTRIBUTE IS FREE, which is why this line could be written
+   * before the gamemode had anything to put behind it. DynamoDB returns nothing
+   * for one it cannot find; it does not error and it does not cost capacity.
+   * That is still what happens for every profile older than `40f00de`.
    *
    * DAMAGE AND PLAY TIME USED TO BE ON THIS LIST AND ARE NOT ANY MORE. The owner
    * removed both from the board by name, so the board stops asking for them: a
