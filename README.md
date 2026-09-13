@@ -96,9 +96,9 @@ Ringmaster — us-west-2                          [ this repo ]
 FXServer — us-east-2                              |  instance role:
   supervisor -> FXServer stdin                    |  br-players read/write
   br_ringmaster resource — realtime push  --------+  ringmaster-* read/write
-  br_ddb resource — DynamoDB and S3 writes        |  (no Query, no Scan,
-  br_core — captures artifacts, spools, uploads   |  no DeleteItem),
-  sshd + dispatch.sh (forced command only)        |  artifacts PutObject
+  br_ddb resource — DynamoDB and S3 writes        |  (no Query, no Scan),
+  br_core — captures artifacts, spools, uploads   |  artifacts PutObject
+  sshd + dispatch.sh (forced command only)        |
                                                   [ game repo ]
 ```
 
@@ -162,7 +162,8 @@ anywhere.
 
 **Its IAM reach into Ringmaster's own tables is not narrow.** `FiveMGameServerRole`
 grants `GetItem`, `PutItem`, `UpdateItem` and `BatchWriteItem` on every
-`ringmaster-*` table, with no `Query`, no `Scan` and no `DeleteItem`. The owner
+`ringmaster-*` table, with no `Query` and no `Scan`. `DeleteItem` is not granted
+either, though `BatchWriteItem` can delete rows through `DeleteRequest`. The owner
 wrote it that way on purpose, to avoid revisiting IAM each time a table is added;
 `docs/aws-setup.md` §3 has his reasoning and the full statement list.
 

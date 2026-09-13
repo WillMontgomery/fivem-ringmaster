@@ -42,7 +42,7 @@ Create ten tables. For every one of them:
 | `ringmaster-grants` | `license` (String) | — | Maps a Discord account to a game license. **Needs a secondary index — see below.** The game server reads its `scopes` attribute for in-game admin powers; **Ringmaster no longer does** — it has no permission levels. The game box can also **write** this table under the deployed policy (§3), which is what fivem-br-gamemode#305 is about. |
 | `ringmaster-bans` | `license` (String) | — | Active and lifted bans. **The key is a qualified identifier, normally a license** — blitz-bot files a `discord:<snowflake>` placeholder for somebody the game has never seen. Ringmaster and blitz-bot write; the game server reads two keys per connect and writes nothing. |
 | `ringmaster-audit` | `pk` (String) | `ts` (Number) | Every admin action. **Ringmaster only.** |
-| `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations. The game appends and updates five named attributes at match end; both sides read. Verdicts are written only by Ringmaster. |
+| `ringmaster-incidents` | `incidentId` (String) | — | Reports and anticheat escalations. The game appends and updates seven named attributes at match end; both sides read. Verdicts are written only by Ringmaster. |
 | `ringmaster-sessions` | `pk` (String) | `sk` (String) | Auth.js writes this. **Needs a secondary index *and* TTL — see below** |
 | `ringmaster-telemetry` | `host` (String) | `ts` (Number) | **Add a TTL attribute named `expires`.** Provisioned, and nothing writes it yet — see the note below. |
 | `ringmaster-maintenance` | `id` (String) | — | The scheduled maintenance window. **One item, `id = "current"`.** The game reads it for the drain gate. |
@@ -336,8 +336,9 @@ Same path: *Roles* → *Create role* → **EC2** → name it **`FiveMGameServerR
 **Those two statements are the base, and together they reach every
 `ringmaster-*` table and everything under `br-*`.** `GameServerWritesOnly`
 grants read and write on all of `ringmaster-*`; `GameOwnsItsData` covers the
-game's own tables, `br-players` and `br-matches` included. There is no
-`DeleteItem`, and no `Query` or `Scan` on `ringmaster-*`.
+game's own tables, `br-players` and `br-matches` included. Neither statement
+carries `Query` or `Scan` on `ringmaster-*`, and neither carries `DeleteItem`,
+though `BatchWriteItem` can delete rows through `DeleteRequest`.
 
 **The breadth is intentional.** The owner, 2026-09-13: "I wrote the policy
 intentionally broad as I'm confident in the integrity and security of the box
@@ -503,8 +504,9 @@ license at all — is the two-key check the gate now actually performs (#38).
   does not grant a scope. Those writes are made in the console, where each one
   goes through the Discord role check and lands in the audit log. The deployed
   policy permits them from the game box; the code is what does not make them.
-- **No `DeleteItem` anywhere.** Nothing on the game side ever needs to destroy a
-  row.
+- **No `DeleteItem` anywhere, and nothing on the game side ever needs to destroy
+  a row.** `BatchWriteItem` is granted and carries `DeleteRequest`, so the
+  absence of the `DeleteItem` verb is not the absence of deletion.
 
 > **Why `ringmaster-grants` is readable here at all**, having previously been
 > excluded: admin actions are moving in-game as well as in the console, and the
@@ -570,8 +572,8 @@ close, silently, leaving every case reading "end never reported".
   "Condition": {
     "ForAllValues:StringEquals": {
       "dynamodb:Attributes": [
-        "incidentId", "matchEndedAt", "matchTimeline",
-        "matchTimelineComplete", "matchKillsSeen"
+        "incidentId", "matchEndedAt", "matchStartedAt", "matchEndsBy",
+        "matchTimeline", "matchTimelineComplete", "matchKillsSeen"
       ]
     },
     "StringEquals": { "dynamodb:ReturnValues": "NONE" }
@@ -592,11 +594,10 @@ allowlist does not, without producing AccessDenied at match end, and
 `BR.Ring.incidentStats().closeFailed`, which `brring` prints in the FXServer
 console, is no longer a reading on this allowlist.
 
-**The seven attributes `close.js` writes**, recorded so the list is right if
-this statement ever stands alone: `incidentId`, `matchEndedAt`,
-`matchStartedAt`, `matchEndsBy`, `matchTimeline`, `matchTimelineComplete` and
-`matchKillsSeen`. The two match names landed in the code on 2026-08-22, so a
-case filed during warmup gains a start and a deadline when the match ends:
+**The seven names above are the deployed list, and they are the seven `close.js`
+writes.** `matchStartedAt` and `matchEndsBy` landed in the code on 2026-08-22
+and are in the deployed condition, so a case filed during warmup gains a start
+and a deadline when the match ends:
 
 ```js
 if (startedAt !== null) sets.push('matchStartedAt = :start')
