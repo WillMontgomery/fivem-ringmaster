@@ -1,7 +1,14 @@
 /**
  * Who is pushing, and where their state lands. infradocs#23.
  *
- *   npx tsx src/lib/ingestAuth.check.ts
+ *   npx tsx --conditions=react-server src/lib/ingestAuth.check.ts
+ *
+ * THE CONDITION IS NOT DECORATION. `lib/ingestSecret.ts` carries `import
+ * 'server-only'`, whose default export throws the moment it is loaded outside a
+ * React Server Component; under `--conditions=react-server` it resolves to that
+ * package's empty module instead, which is exactly what Next does when it
+ * compiles a server module. Without the flag this file cannot import the thing
+ * it exists to check. `package.json` passes it; run it by hand the same way.
  *
  * A PLAIN SCRIPT, matching `service.check.ts` and the dozen beside it: this
  * repo has no test framework. IT IS WIRED INTO `npm run verify` as
@@ -43,9 +50,9 @@ import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_SERVER_ID,
   parseIngestCredentials,
-  resolveServerId,
   type IngestCredential,
 } from './ingestAuth'
+import { resolveServerId } from './ingestSecret'
 import type { SnapshotEnvelope } from './ingest'
 import {
   applyEvents,
@@ -352,6 +359,40 @@ expectSource('D7  and so are the events', ingestRoute, /applyEvents\(\s*serverId
  */
 expectSource('D8  /api/handoff/mint authenticates against the same set', mintRoute, 'resolveServerId(', true)
 expectSource('D9  and not against a single secret of its own', mintRoute, /\bINGEST_SECRET\b/, false)
+
+// ===========================================================================
+// E. THE CRYPTO STAYS OUT OF THE BROWSER BUNDLE
+// ===========================================================================
+
+/**
+ * E IS THE 2026-09-13 BUILD FAILURE, PINNED WHERE THE SPLIT IS.
+ *
+ * The comparison and the parser started life in one file. `lib/env.ts` imports
+ * the parser so `INGEST_SECRETS` is validated in the one pass that names every
+ * bad variable at once, and `env.ts` is reachable from `HostBoard.tsx` through
+ * `lib/maintenance` and `lib/dynamo`, so `node:crypto` was in the browser
+ * graph and `next build` died on an `UnhandledSchemeError` naming a module five
+ * hops away. `main` was red on the owner's deploy branch.
+ *
+ * THE GENERAL FORM OF THAT MISTAKE IS `scripts/check-client-graph.mjs`, which
+ * walks every client component's import closure and fails on any node builtin
+ * it reaches, from anywhere in `src/`. It would have caught this one and it
+ * will catch the next one, which will not be about ingest.
+ *
+ * WHAT IS ASSERTED HERE IS THE PARTICULAR SPLIT, because the general check
+ * cannot say WHY these two files are two files. Merging them back passes a
+ * typecheck, passes every case in A through D, and reintroduces the outage.
+ */
+const authModule = source('lib/ingestAuth.ts')
+const secretModule = source('lib/ingestSecret.ts')
+const envModule = source('lib/env.ts')
+
+expectSource('E1  the parser, which env.ts imports, reaches no node builtin', authModule, /from\s*'node:/, false)
+expectSource('E2  and does not hash anything itself', authModule, /createHash|timingSafeEqual/, false)
+expectSource('E3  the comparison is fenced with server-only', secretModule, "import 'server-only'", true)
+expectSource('E4  and that fence is the first line, before the builtin it guards', secretModule.split('\n')[0] ?? '', "import 'server-only'", true)
+expectSource('E5  the comparison is where the crypto lives', secretModule, /from 'node:crypto'/, true)
+expectSource('E6  env.ts never pulls the server-only half into its own graph', envModule, 'ingestSecret', false)
 
 // ===========================================================================
 

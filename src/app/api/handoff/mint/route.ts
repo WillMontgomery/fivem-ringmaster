@@ -3,7 +3,7 @@ import { DynamoDBAdapter } from '@auth/dynamodb-adapter'
 import { checkAdminRole } from '@/lib/discordRole'
 import { ddb, tables } from '@/lib/dynamo'
 import { env } from '@/lib/env'
-import { resolveServerId } from '@/lib/ingestAuth'
+import { resolveServerId } from '@/lib/ingestSecret'
 import {
   HANDOFF_TTL_MS,
   MINT_ROLE_TIMEOUT_MS,

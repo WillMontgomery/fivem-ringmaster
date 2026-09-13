@@ -1,7 +1,24 @@
-import { createHash, timingSafeEqual } from 'node:crypto'
-
 /**
  * Which game server is pushing. infradocs#23.
+ *
+ * ═══ THIS HALF IS PURE, AND THAT IS A BUILD CONSTRAINT, NOT A PREFERENCE ═══
+ *
+ * NOTHING HERE MAY IMPORT A NODE BUILTIN. `lib/env.ts` imports this file so the
+ * credential set is validated in the one pass that names every bad variable at
+ * once, and `env.ts` is reachable from client components through
+ * `lib/dynamo.ts`: `HostBoard.tsx` -> `lib/maintenance` -> `lib/dynamo` ->
+ * `lib/env` -> here. Webpack cannot resolve `node:crypto` for the browser, so a
+ * single `node:crypto` import in this file is a failed production build with an
+ * `UnhandledSchemeError` naming a module five hops from the component that
+ * caused it. It shipped exactly that way once, on 2026-09-13, and `npm run
+ * verify` did not catch it because `next build` was only ever run in CI.
+ *
+ * THE COMPARISON LIVES IN `lib/ingestSecret.ts`, which carries `import
+ * 'server-only'` so that importing it from the client graph is a build error at
+ * the import site rather than a webpack scheme error downstream. Only the two
+ * route handlers import it. `scripts/check-client-graph.mjs` walks the client
+ * closure on every `npm run verify` and fails on any node builtin reachable
+ * from it, which is the cheap version of the build CI runs.
  *
  * ═══ IDENTITY IS A PROPERTY OF THE CREDENTIAL, NEVER OF THE PAYLOAD ═══
  *
@@ -88,19 +105,18 @@ export const SERVER_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/
 export const DEFAULT_SERVER_ID: ServerId = 'prod'
 
 /**
- * One configured credential.
+ * One configured credential: a server, and the secret that proves it is that
+ * server.
  *
- * THE DIGEST IS KEPT AND THE SECRET IS NOT. `timingSafeEqual` throws on a length
- * mismatch and catching that throw would leak the real secret's length through
- * timing, so both sides are hashed to a fixed 32 bytes, the same trick
- * `/api/ingest` has used since it had one secret. Hashing every configured
- * secret once at parse rather than once per request is the only optimization
- * here, and it is a safe one: the work per request is now exactly N constant-
- * time comparisons of equal-length buffers.
+ * IT CARRIES THE SECRET RATHER THAN A DIGEST OF IT, because hashing needs
+ * `node:crypto` and this file cannot have it. `lib/ingestSecret.ts` derives the
+ * digests instead, memoized on the identity of the array, so the configured set
+ * is still hashed once and not once per push. The value is no more exposed here
+ * than it was in `process.env`, which is where it came from.
  */
 export interface IngestCredential {
   serverId: ServerId
-  digest: Buffer
+  secret: string
 }
 
 /** What `lib/env.ts` hands the parser, straight out of `process.env`. */
@@ -113,10 +129,6 @@ export interface IngestSecretSources {
 
 /** Matches `INGEST_SECRET`'s own floor. A short secret is a lock drawn on a door. */
 const MIN_SECRET_LEN = 16
-
-function digestOf(secret: string): Buffer {
-  return createHash('sha256').update(secret).digest()
-}
 
 /**
  * Build the credential set from the environment.
@@ -184,7 +196,7 @@ export function parseIngestCredentials(
     }
 
     claimed.set(secret, serverId)
-    creds.push({ serverId, digest: digestOf(secret) })
+    creds.push({ serverId, secret })
   }
 
   const raw = sources.secrets?.trim()
@@ -225,48 +237,6 @@ export function parseIngestCredentials(
   }
 
   return creds
-}
-
-/**
- * Which server presented this secret, or null if none did.
- *
- * ═══ EVERY CREDENTIAL IS COMPARED, EVERY TIME ═══
- *
- * There is no early return out of the loop and there must never be one. An exit
- * on the first match makes the time this function takes a readout of the
- * matched credential's POSITION in the list, which, with a handful of servers
- * and a caller willing to make a lot of requests, is a way to learn that a
- * guess was closer than another guess. The loop always runs N times, does the
- * same work on each iteration, and decides nothing until it is over.
- *
- * `timingSafeEqual` IS WHAT MAKES EACH COMPARISON SAFE, and it can only do that
- * over equal lengths, which every pair here has, because both sides are sha256
- * digests. That is the same reason the single-secret version hashed first, kept
- * for the same reason.
- *
- * THE RESULT IS SELECTED, NOT BRANCHED AROUND. `matched = hit ? id : matched`
- * performs identical work whether or not this credential was the one, so a
- * matching iteration is not distinguishable from a non-matching one by the work
- * that follows it.
- *
- * AN ABSENT HEADER RETURNS EARLY, and that leaks nothing: it is a fact about the
- * request the caller already knows, decided before any secret is touched.
- */
-export function resolveServerId(
-  presented: string | null | undefined,
-  credentials: readonly IngestCredential[],
-): ServerId | null {
-  if (!presented) return null
-
-  const a = digestOf(presented)
-
-  let matched: ServerId | null = null
-  for (const credential of credentials) {
-    const hit = timingSafeEqual(a, credential.digest)
-    matched = hit ? credential.serverId : matched
-  }
-
-  return matched
 }
 
 /** The servers this console will accept a push from. For operator output only. */
