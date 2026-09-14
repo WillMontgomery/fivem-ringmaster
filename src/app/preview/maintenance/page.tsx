@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { AppShell } from '@/components/AppShell'
 import { MaintenancePanel } from '@/components/MaintenancePanel'
 import { DEMO_USER } from '@/lib/demo'
-import { AUTO_AFTER_MS, type MaintenanceWindow } from '@/lib/maintenance'
+import type { MaintenanceWindow } from '@/lib/maintenance'
 import type { RefUpdate, UpdateTarget } from '@/lib/ssh'
 import { cn } from '@/lib/utils'
 
@@ -102,7 +102,6 @@ const BASE: MaintenanceWindow = {
   deployMode: 'when-empty',
   deployAt: null,
   updateAvailable: 0,
-  updateFirstSeenAt: null,
 }
 
 /** A window an admin scheduled a few minutes ago and is now watching drain. */
@@ -448,7 +447,7 @@ const views: Record<string, View> = {
   },
 
   /**
-   * The ordinary case: on main, behind, with the 72-hour clock running.
+   * The ordinary case: on main, behind.
    *
    * THE CARD SAYS "UPDATE AVAILABLE" AND NOT HOW MANY. The count is gone on the
    * owner's instruction; what stands where it was is the pair of commits, both
@@ -464,7 +463,6 @@ const views: Record<string, View> = {
     window: {
       ...BASE,
       updateAvailable: 3,
-      updateFirstSeenAt: NOW - 20 * 60 * 60_000,
     },
     players: 12,
   },
@@ -485,7 +483,6 @@ const views: Record<string, View> = {
     window: {
       ...BASE,
       updateAvailable: 3,
-      updateFirstSeenAt: NOW - 20 * 60 * 60_000,
     },
     players: 12,
   },
@@ -556,7 +553,6 @@ const views: Record<string, View> = {
       ...BASE,
       state: 'deploying',
       updateAvailable: 3,
-      updateFirstSeenAt: NOW - 20 * 60 * 60_000,
       deployStartedAt: NOW - 30_000,
     },
     players: 0,
@@ -643,7 +639,6 @@ const views: Record<string, View> = {
     window: {
       ...BASE,
       updateAvailable: 3,
-      updateFirstSeenAt: NOW - 20 * 60 * 60_000,
       completedAt: NOW - 4 * 60_000,
       deployStartedAt: NOW - 5 * 60_000,
       deployBootEpoch: 'boot-before-the-restart',
@@ -655,9 +650,8 @@ const views: Record<string, View> = {
 
   /**
    * A dispatcher too old to report its ref. Deliberately in the set: "unknown"
-   * must keep behaving exactly like main here, which is the opposite polarity
-   * to the automation gate, and it is the regression that would be easiest to
-   * cause while fixing the parked case.
+   * must keep behaving exactly like main here, and it is the regression that
+   * would be easiest to cause while fixing the parked case.
    */
   unknown: {
     deployedRef: null,
@@ -683,7 +677,6 @@ const views: Record<string, View> = {
     window: {
       ...BASE,
       updateAvailable: 3,
-      updateFirstSeenAt: NOW - 20 * 60 * 60_000,
     },
     players: 12,
   },
@@ -723,10 +716,6 @@ async function Preview({
       ? { ...fixture.updateTarget, at: Date.now() }
       : null,
   }
-
-  const deadline = view.window?.updateFirstSeenAt
-    ? view.window.updateFirstSeenAt + AUTO_AFTER_MS
-    : null
 
   return (
     <AppShell
@@ -830,7 +819,7 @@ async function Preview({
           {view.window?.deployLandedSha
             ? view.window.deployLandedSha.slice(0, 8)
             : '(not recorded)'}
-          {deadline ? ', automatic deadline set' : ', no automatic deadline'}.
+          .
           Not reachable in production.
         </p>
       </div>

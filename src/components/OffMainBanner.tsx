@@ -22,12 +22,10 @@ import { cn } from '@/lib/utils'
  * deployed. This one resolves only when a human decides it should, so it is
  * sized to be impossible to stop noticing rather than to be glanced at.
  *
- * RENDERS NOTHING WHEN THE HOST HAS NOT ANSWERED. Absence of an answer is
- * handled upstream by `isOnMain`, which reads "unknown" as off main so the
- * AUTOMATION turns off — but showing this banner on the strength of a host we
- * simply have not reached yet would put a permanent red bar over a console
- * whose SSH channel is merely unconfigured. Different question, different safe
- * default: gate the automation pessimistically, gate the alarm on a fact.
+ * RENDERS NOTHING WHEN THE HOST HAS NOT ANSWERED. Showing this banner on the
+ * strength of a host we simply have not reached yet would put a permanent red
+ * bar over a console whose SSH channel is merely unconfigured. Gate the alarm
+ * on a fact.
  */
 export function OffMainBanner({
   deployedRef,
@@ -62,9 +60,6 @@ export function OffMainBanner({
             </>
           ) : null}
           .
-        </span>
-        <span className="text-muted-foreground">
-          Automatic updates are paused while it is parked.
         </span>
         {/*
           A BUTTON, NOT LINK-STYLED TEXT, AND THAT HALF WAS RIGHT. It was

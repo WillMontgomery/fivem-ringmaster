@@ -269,7 +269,7 @@ const landedCases = [
     false,
   ],
   [
-    'no claim was made — an automatic window nobody was reading',
+    'no claim was made, a window with no arrow on the page',
     null,
     D,
     D,

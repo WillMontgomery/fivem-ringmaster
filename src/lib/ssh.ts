@@ -233,11 +233,9 @@ export interface HostStatus {
    * off the pin — a switch that was staged and then cancelled leaves a pin
    * naming a branch the box has never run.
    *
-   * OPTIONAL, AND EVERY READER MUST HANDLE ITS ABSENCE AS "NOT MAIN". An older
-   * dispatcher does not send it, and a detached HEAD cannot answer it. Being
-   * wrong in that direction costs an off-main banner on a box that is fine;
-   * being wrong the other way costs an unannounced automatic deploy of main
-   * over a parked branch. Use {@link isOnMain}, never a bare comparison.
+   * OPTIONAL, AND EVERY READER MUST HANDLE ITS ABSENCE. An older dispatcher
+   * does not send it, and a detached HEAD cannot answer it. Use
+   * {@link isParkedOffMain}, never a bare comparison.
    */
   deployedRef?: string
   /** What the next deploy will check out. May differ from `deployedRef`. */
@@ -296,40 +294,13 @@ export interface HostStatus {
 }
 
 /**
- * Is the game host running `main`?
- *
- * WRITTEN IN THE POSITIVE, and that is the whole reason this is a function
- * rather than an inline `!==`. `status.deployedRef !== 'main'` reads as "off
- * main" for `undefined` too, which is right, but the inverse spelling —
- * `deployedRef === undefined || deployedRef === 'main'` — is the one somebody
- * writes by accident when they want the automation gate, and it silently
- * re-enables automatic deploys on every box whose dispatcher is too old to
- * answer. One function, one direction, no way to get the polarity wrong.
- */
-export function isOnMain(
-  // Takes only the field it reads, so a caller holding a bare ref — the design
-  // harness, or a component handed one as a prop — asks the same function the
-  // real callers do rather than writing the comparison out again.
-  status: Pick<HostStatus, 'deployedRef'> | null | undefined,
-): boolean {
-  return status?.deployedRef === 'main'
-}
-
-/**
  * Has the host told us, in so many words, that it is running something else?
  *
- * NOT `!isOnMain`, AND THE DIFFERENCE IS A DEPLOYMENT ORDER. Three states
- * exist, not two: `main`, some other ref, and *no answer* — a dispatcher that
- * predates branch switching does not send the field at all, and a detached HEAD
- * sends it empty. `isOnMain` folds "no answer" in with "some other ref",
- * because an automatic deploy at a host we cannot interrogate is the failure
- * worth preventing. This folds it in with `main` instead, because it decides
- * what to SHOW, and a console that hides its update badge and blanks its
- * maintenance page against an older game box would look broken while being
- * fine.
- *
- * The one thing neither spelling may do is drive both decisions. Use `isOnMain`
- * for anything that acts on the server; use this for anything a human reads.
+ * THREE STATES EXIST, NOT TWO: `main`, some other ref, and *no answer*. A
+ * dispatcher that predates branch switching does not send the field at all,
+ * and a detached HEAD sends it empty. This folds "no answer" in with `main`,
+ * because a console that hides its update badge and blanks its maintenance
+ * page against an older game box would look broken while being fine.
  */
 export function isParkedOffMain(
   status: Pick<HostStatus, 'deployedRef'> | null | undefined,

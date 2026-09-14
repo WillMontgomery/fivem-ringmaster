@@ -61,9 +61,11 @@
  * fails here rather than in a playtest.
  */
 
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import ts from 'typescript'
 
 import { refBehindNow, refBlockedNow, nothingToDeploy } from '../src/lib/maintenance.ts'
 import {
@@ -792,6 +794,145 @@ for (const deployedRef of ['dev', 'main', 'feature/loot-v2', 'release/1.4.0']) {
   }
 }
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * 11. NOTHING SCHEDULES A WINDOW ON ITS OWN.
+ *
+ * The console used to schedule maintenance by itself once an update had waited
+ * 72 hours. It failed the one time it ran, and the game box's nightly patch job
+ * now deploys the gamemode itself, so a second scheduler would be fighting it
+ * over one server. A window comes into being only because somebody asked:
+ * `POST /api/maintenance`, behind `authorizeWrite`, from the console or from
+ * `blitz-bot`'s `/drain`. So that route is the one caller of `maint.schedule`,
+ * and a second one anywhere under src fails here.
+ *
+ * READ OFF THE SYNTAX TREE, NOT THE TEXT. A text match for `.schedule(` passes
+ * a named import, a space before the paren, and a driver that writes the row
+ * itself; comments are skipped for free, and the driver's own comments still
+ * say "schedule". Three rules: every call to anything named `schedule` is in
+ * the route and nothing imports or destructures it under another name; the
+ * driver's code does not say `schedule` at all; and `state: 'scheduled'`
+ * appears once in src, inside `schedule` in lib/maintenance.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+{
+  const ROUTE = 'src/app/api/maintenance/route.ts'
+  const MAINT = 'src/lib/maintenance.ts'
+  const DRIVER = 'src/lib/maintenanceDriver.ts'
+
+  const files = []
+  const walk = (dir) => {
+    for (const entry of readdirSync(resolve(ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`
+      if (entry.isDirectory()) walk(rel)
+      else if (/\.tsx?$/.test(entry.name)) files.push(rel)
+    }
+  }
+  walk('src')
+
+  const unwrap = (e) =>
+    ts.isParenthesizedExpression(e) ||
+    ts.isNonNullExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isSatisfiesExpression(e)
+      ? unwrap(e.expression)
+      : e
+  const nameOf = (n) => (n && (ts.isIdentifier(n) || ts.isStringLiteral(n)) ? n.text : null)
+  const calleeName = (call) => {
+    const c = unwrap(call.expression)
+    if (ts.isIdentifier(c)) return c.text
+    if (ts.isPropertyAccessExpression(c)) return c.name.text
+    if (ts.isElementAccessExpression(c)) return nameOf(c.argumentExpression)
+    return null
+  }
+
+  const callers = new Set()
+  const aliases = new Set()
+  const driverSays = []
+  const scheduledRows = []
+  let gate = -1
+  let call = -1
+
+  for (const rel of files) {
+    const source = ts.createSourceFile(
+      rel,
+      read(rel),
+      ts.ScriptTarget.Latest,
+      true,
+      rel.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    )
+    const visit = (node, insideSchedule) => {
+      if (ts.isCallExpression(node)) {
+        const name = calleeName(node)
+        if (name === 'schedule') {
+          callers.add(rel)
+          if (rel === ROUTE && call < 0) call = node.getStart(source)
+        }
+        if (name === 'authorizeWrite' && rel === ROUTE && gate < 0) gate = node.getStart(source)
+      }
+      if (
+        (ts.isImportSpecifier(node) || ts.isExportSpecifier(node) || ts.isBindingElement(node)) &&
+        nameOf(node.propertyName ?? node.name) === 'schedule'
+      ) {
+        aliases.add(rel)
+      }
+      if (
+        rel === DRIVER &&
+        (((ts.isIdentifier(node) || ts.isStringLiteralLike(node)) && /\bschedule\b/.test(node.text)) ||
+          ((ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) &&
+            /\bschedule\b/.test(node.text)))
+      ) {
+        driverSays.push(node.getStart(source))
+      }
+      if (
+        ts.isPropertyAssignment(node) &&
+        nameOf(node.name) === 'state' &&
+        ts.isStringLiteralLike(unwrap(node.initializer)) &&
+        unwrap(node.initializer).text === 'scheduled'
+      ) {
+        scheduledRows.push({ rel, insideSchedule })
+      }
+      const inside =
+        insideSchedule || (ts.isFunctionDeclaration(node) && node.name?.text === 'schedule')
+      ts.forEachChild(node, (child) => visit(child, inside))
+    }
+    visit(source, false)
+  }
+
+  if (callers.size !== 1 || !callers.has(ROUTE)) {
+    failed++
+    console.error(
+      `  FAIL  schedule is called from ${JSON.stringify([...callers])}; the only caller ` +
+        `must be ${ROUTE}, so nothing schedules a window without a person asking`,
+    )
+  }
+  if (aliases.size > 0) {
+    failed++
+    console.error(
+      `  FAIL  schedule is imported, re-exported or destructured in ${JSON.stringify([...aliases])}; ` +
+        `call it as maint.schedule from ${ROUTE} so the rule above can see it`,
+    )
+  }
+  if (driverSays.length > 0) {
+    failed++
+    console.error(
+      `  FAIL  ${DRIVER} mentions schedule in code at offset(s) ${driverSays.join(', ')}; ` +
+        `the driver advances windows and never makes one`,
+    )
+  }
+  if (scheduledRows.length !== 1 || scheduledRows[0].rel !== MAINT || !scheduledRows[0].insideSchedule) {
+    failed++
+    console.error(
+      `  FAIL  state: 'scheduled' is written at ${JSON.stringify(scheduledRows)}; ` +
+        `the only place a row becomes scheduled is schedule() in ${MAINT}`,
+    )
+  }
+  if (gate < 0 || call < 0 || gate > call) {
+    failed++
+    console.error('  FAIL  api/maintenance reaches maint.schedule without authorizeWrite first')
+  }
+}
+
 if (failed > 0) {
   console.error(`\ncheck:deployphase — ${failed} failure(s)`)
   process.exit(1)
@@ -799,6 +940,7 @@ if (failed > 0) {
 
 console.log(
   `check:deployphase — ${cases.length} completion cases and 6 properties, ` +
-    `${blockCases.length} eligibility cases and 6 properties, and 4 call sites hold ` +
+    `${blockCases.length} eligibility cases and 6 properties, 4 call sites, and one ` +
+    `caller of maint.schedule hold ` +
     `(grace ${RESTART_GRACE_MS / 60_000}m)`,
 )

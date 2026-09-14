@@ -229,13 +229,11 @@ const NAV: Array<{ group: string; items: NavItem[] }> = [
        * playing on. Hiding it on main means the dangerous button is not sitting
        * in the nav on the ordinary day.
        *
-       * `isParkedOffMain`, NOT `!isOnMain`, and the difference matters. A host
-       * whose dispatcher is too old to report its ref answers neither, and
-       * `isOnMain` folds that silence in with "off main" — correct for turning
-       * the AUTOMATION off, wrong here, where it would show a dev-only page on
-       * every box we simply have not reached. See the note on both functions in
-       * `lib/ssh.ts`: gate the automation pessimistically, gate what a human
-       * sees on a fact.
+       * `isParkedOffMain`, NOT A BARE `!== 'main'`, and the difference matters.
+       * A host whose dispatcher is too old to report its ref does not answer,
+       * and folding that silence in with "off main" would show a dev-only page
+       * on every box we simply have not reached. See the note in `lib/ssh.ts`:
+       * gate what a human sees on a fact.
        *
        * `/process` USED TO SIT BELOW THIS AND IS GONE (#20). Superseded — the
        * maintenance page already does the deploy-and-restart it was drawn for,

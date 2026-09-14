@@ -413,10 +413,9 @@ async function poll(): Promise<void> {
      * the header of a console whose server is running main — a sentence that is
      * both false and unreachable, since nothing would ever poll to correct it.
      *
-     * `isParkedOffMain`, NOT `!isOnMain`, and lib/ssh states the rule: a host
-     * too old to report its ref folds in with main here, because everything
-     * this value feeds is something a human READS. Gate the automation
-     * pessimistically; gate the decoration on a stated fact.
+     * `isParkedOffMain`, and lib/ssh states the rule: a host too old to report
+     * its ref folds in with main here, because everything this value feeds is
+     * something a human READS. Gate the decoration on a stated fact.
      */
     const parked = isParkedOffMain(status)
 

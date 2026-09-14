@@ -22,10 +22,10 @@ import { isParkedOffMain, type HostConfig, type HostConvar } from '@/lib/ssh'
  * why rather than 404ing — somebody following an old bookmark should learn the
  * rule, not conclude the console is broken.
  *
- * `isParkedOffMain` RATHER THAN `!isOnMain`: a dispatcher too old to report its
- * ref answers neither question, and folding that silence in with "off main"
+ * `isParkedOffMain` RATHER THAN A BARE `!== 'main'`: a dispatcher too old to
+ * report its ref does not answer, and folding that silence in with "off main"
  * would show a dev-only page on every host the console has not reached. Wrong
- * direction for something a human reads. See both functions in `lib/ssh.ts`.
+ * direction for something a human reads. See the function in `lib/ssh.ts`.
  *
  * ===========================================================================
  * NOTHING ON THIS SIDE FILTERS ANYTHING, AND IT MUST NOT START.

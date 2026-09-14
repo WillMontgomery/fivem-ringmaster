@@ -247,13 +247,10 @@ async function tick(): Promise<void> {
     }
 
     /**
-     * THE TEST IS DELIBERATELY THE OPPOSITE POLARITY TO `isOnMain`, and the
-     * asymmetry is the point. `isOnMain` gates the AUTOMATION and reads a
-     * missing `deployedRef` as "not main", because a host too old to answer must
-     * not have deploys fired at it automatically. This is a chip: a host too old
-     * to answer is a host that has always shown this chip against main, and
-     * changing that would be a silent regression on a box that is fine. Gate the
-     * automation pessimistically, gate the decoration on a stated fact.
+     * A MISSING `deployedRef` READS AS MAIN HERE, the `isParkedOffMain`
+     * polarity. This is a chip: a host too old to answer is a host that has
+     * always shown this chip against main, and changing that would be a silent
+     * regression on a box that is fine. Gate the decoration on a stated fact.
      */
     const ref = v.status.deployedRef
     const parked = typeof ref === 'string' && ref !== 'main'

@@ -1,7 +1,7 @@
 import * as audit from './audit'
 import * as maint from './maintenance'
 import { RESTART_GRACE_MS, heartbeatIsFresh } from './serverPhase'
-import { isOnMain, isParkedOffMain, runVerb, sshConfigured, switchRef } from './ssh'
+import { isParkedOffMain, runVerb, sshConfigured, switchRef } from './ssh'
 import {
   ensurePolling,
   hostView,
@@ -275,25 +275,7 @@ export async function tick(): Promise<void> {
       }
     }
 
-    /**
-     * IS THE BOX ON MAIN? DERIVED FROM THE HOST, EVERY TICK, NEVER STORED.
-     *
-     * This gates the automation below, and where it lives is the entire
-     * decision. The obvious home is a flag on the maintenance `current` row —
-     * and `maint.schedule()` is a full `ddb.put` over that key, so any
-     * schedule/cancel cycle would wipe it. The failure that produces is
-     * specific and bad: the flag comes back as absent, absent reads as "on
-     * main", and fifteen seconds later the driver schedules and deploys `main`
-     * over a branch somebody is actively testing, attributed to `system`, with
-     * nothing anywhere saying why the code changed under them.
-     *
-     * Derived state cannot be wiped by a write to something else. `isOnMain`
-     * is written in the positive so a host that does not answer the question —
-     * an older dispatcher, a detached HEAD — reads as off main and turns the
-     * automation OFF rather than on.
-     */
     const status = hostView().status
-    const onMain = isOnMain(status)
 
     /**
      * Keep the update signal fresh on the row the game polls.
@@ -312,10 +294,10 @@ export async function tick(): Promise<void> {
      * behaviour disagree. The off-main banner is what should be visible
      * instead, and it is.
      *
-     * GATED ON `isParkedOffMain`, NOT ON `!onMain`, AND THAT AVOIDS A DEADLOCK.
-     * `onMain` is false for a host that has not answered the question — which
-     * is every game box until it has deployed the dispatcher that reports the
-     * field. Suppressing the update signal on that basis would zero
+     * GATED ON `isParkedOffMain`, NOT ON A BARE `!== 'main'`, AND THAT AVOIDS A
+     * DEADLOCK. The bare comparison is true for a host that has not answered
+     * the question, which is every game box until it has deployed the
+     * dispatcher that reports the field. Suppressing the update signal on that basis would zero
      * `updateAvailable`, which blanks the maintenance page ("running the latest
      * code") and makes `POST /api/maintenance` refuse ("nothing to deploy") —
      * so the console would refuse to deploy the very commit that teaches the
@@ -328,10 +310,8 @@ export async function tick(): Promise<void> {
      * a tidiness complaint. `ensureDriver` starts this tick and the telemetry
      * poller in the same breath, and the poller's first answer is an SSH round
      * trip away — so the first tick after EVERY console restart ran with a null
-     * status, called `noteUpdateAvailable(0)`, and that call clears BOTH
-     * `updateAvailable` and `updateFirstSeenAt`. The second is the start of the
-     * 72-hour clock, so a console restarted daily reset the deadline daily and
-     * the automatic window could never arrive. `behindMainNow` returns null
+     * status, called `noteUpdateAvailable(0)`, and that call cleared
+     * `updateAvailable` over a real pending update. `behindMainNow` returns null
      * instead, and null means we skip the write and leave the row exactly as the
      * last tick that actually knew something left it.
      *
@@ -347,66 +327,21 @@ export async function tick(): Promise<void> {
     }
 
     /**
-     * The automation. An update nobody schedules is the normal outcome of a
-     * busy week, and the cost is silent drift — so after three days the console
-     * schedules the window itself, attributed to `system` so the audit log
-     * never implies a person chose this moment.
+     * NOTHING HERE SCHEDULES A WINDOW. This driver only advances windows a
+     * person asked for through `api/maintenance`. It used to schedule one by
+     * itself once an update had waited 72 hours; that failed the one time it
+     * ran, and the game box's nightly patch job now deploys the gamemode itself.
+     * `check:deployphase` fails if a second caller of `maint.schedule` appears.
      *
-     * `onMain` IS THE GATE, AND IT IS STRICTER THAN THE LINE ABOVE. A host that
-     * does not answer "which ref" still reports its distance from main, so
-     * `behind` above can be positive while `onMain` is false. That combination
-     * is exactly the one where the console must not schedule anything by
-     * itself: it would be firing a deploy at a box whose state it cannot read.
-     * A human can still schedule it from the page, with their name on it.
-     *
-     * Re-read after noteUpdateAvailable so `updateFirstSeenAt` is the value
-     * just written rather than the one from before this tick.
-     *
-     * `behind !== null` IS THE SAME FAIL-QUIET DIRECTION EVERY OTHER GATE HERE
-     * TAKES. A tick that does not know how far behind main the box is does not
-     * schedule a deploy on the strength of not knowing; it waits for the poller,
-     * which is fifteen seconds away.
-     *
-     * AND `onMain` IS ALSO WHAT KEEPS THIS OUT OF THE ELIGIBILITY HOLE, which
-     * is worth writing down because "the automatic path deploys without anybody
-     * watching" makes it the first place to look. The box refuses a ref whose
-     * `tools/dispatch.sh` differs from main's, so the only ref this can ever aim
-     * at is the one that rule is measured against and cannot be blocked. The
-     * console-side gate for the human path lives where the human path is —
-     * `refBlockedNow`, read by `MaintenancePanel` and by `api/maintenance` — and
-     * there is deliberately no copy of it here: a tick refusing to fire a window
-     * an admin already scheduled, on a two-minute reading that may have been
-     * answered from stale refs, is #146's shape with an audit row attached. If
-     * the branch has become undeployable in the meantime the box says so, the
-     * window lands in `failed` with the reason on the row, and nothing was
-     * restarted — which is the safe end of that trade.
+     * THERE IS NO ELIGIBILITY CHECK IN THIS FILE EITHER, deliberately. The gate
+     * lives where the human path is (`refBlockedNow`, read by `MaintenancePanel`
+     * and by `api/maintenance`), and a tick refusing to fire a window an admin
+     * already scheduled, on a two-minute reading that may have been answered
+     * from stale refs, is #146's shape with an audit row attached. If the branch
+     * has become undeployable in the meantime the box says so, the window lands
+     * in `failed` with the reason on the row, and nothing was restarted, which
+     * is the safe end of that trade.
      */
-    if (!maint.isLive(w) && onMain && behind !== null && behind > 0) {
-      const fresh = await maint.current()
-      const deadline = maint.autoDeadline(fresh?.updateFirstSeenAt)
-      if (deadline !== null && now >= deadline) {
-        await maint
-          .schedule({
-            createdBy: null,
-            createdByName: 'system',
-            note: `Automatic update — ${behind} commit${behind === 1 ? '' : 's'} behind for over 72 hours`,
-            drainStartsAt: now,
-            deployMode: 'when-empty',
-            deployAt: null,
-          })
-          .then(async () => {
-            await audit.begin({
-              action: 'maintenance.schedule',
-              actor: { license: null, name: 'system', discordId: null },
-              reason: 'Update available for more than 72 hours',
-              detail: { behind, automatic: true },
-            })
-          })
-          .catch(() => {})
-        w = remember(await maint.current())
-      }
-    }
-
     if (!maint.isLive(w)) return
 
     /**

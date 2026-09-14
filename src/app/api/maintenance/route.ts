@@ -1,4 +1,3 @@
-import { cookies } from 'next/headers'
 import { z } from 'zod'
 
 import {
@@ -10,11 +9,9 @@ import {
 import * as audit from '@/lib/audit'
 import * as maint from '@/lib/maintenance'
 import { ensureDriver, tick } from '@/lib/maintenanceDriver'
-import { readPrefs } from '@/lib/prefs'
 import { isParkedOffMain } from '@/lib/ssh'
 import { liveView } from '@/lib/state'
 import { hostView, refreshDeployedRef } from '@/lib/telemetry'
-import { formatInstant } from '@/lib/time'
 
 /**
  * Read and schedule the maintenance window.
@@ -90,8 +87,8 @@ export async function POST(req: Request): Promise<Response> {
      *
      * AND THIS IS THE ROUTE THAT MADE A SERVICE CREDENTIAL NECESSARY RATHER
      * THAN CONVENIENT. Every gate below — `nothingToDeploy`, `refBlockedNow`,
-     * the deploy time against the automatic deadline, the already-scheduled
-     * refusal in `maint.schedule` — lives here and nowhere else, while
+     * the already-scheduled refusal in `maint.schedule` — lives here and
+     * nowhere else, while
      * `maintenanceDriver` advances any `scheduled` row it finds and then really
      * deploys. A bot writing that row straight into DynamoDB would start an
      * unreviewed restart of the game server with none of this consulted.
@@ -131,8 +128,6 @@ export async function POST(req: Request): Promise<Response> {
       )
     }
 
-    const existing = await maint.current()
-
     /**
      * IS THE BOX PARKED ON A BRANCH RIGHT NOW?
      *
@@ -140,10 +135,8 @@ export async function POST(req: Request): Promise<Response> {
      * thing the driver reads and costs nothing — no SSH call of our own for a
      * fact that is already sitting in memory, refreshed every fifteen seconds.
      *
-     * `isParkedOffMain`, NEVER `!isOnMain`, and lib/ssh states the rule this
-     * follows: `isOnMain` folds "the host has not answered" in with "off main"
-     * because it gates the automation, which must fail towards doing nothing.
-     * This decides what a HUMAN IS ALLOWED TO ASK FOR, so it folds a silent
+     * `isParkedOffMain`, and lib/ssh states the rule this follows. This
+     * decides what a HUMAN IS ALLOWED TO ASK FOR, so it folds a silent
      * host in with main and leaves a game box whose dispatcher predates branch
      * switching behaving in every respect as it did before.
      *
@@ -232,14 +225,11 @@ export async function POST(req: Request): Promise<Response> {
      * one function, and can differ only by a poll interval of skew that
      * resolves itself.
      *
-     * The automatic path is NOT relaxed or tightened by any of this. It lives
-     * in the driver behind `onMain && behind !== null && behind > 0` and stays
-     * exactly where it is: the rule is that automatic updates require main, not
-     * that deploying requires main. Nothing derived from `refUpdate` is written
-     * to the maintenance row, and `behindMain` above still means distance from
-     * main and nothing else — it is now read from the host snapshot rather than
-     * from the row's copy of it, which is the same number a tick fresher and,
-     * unlike the row, able to say that nobody has measured it yet.
+     * Nothing derived from `refUpdate` is written to the maintenance row, and
+     * `behindMain` above still means distance from main and nothing else. It is
+     * now read from the host snapshot rather than from the row's copy of it,
+     * which is the same number a tick fresher and, unlike the row, able to say
+     * that nobody has measured it yet.
      */
     const noDeploy = maint.nothingToDeploy({
       behindMain,
@@ -298,59 +288,6 @@ export async function POST(req: Request): Promise<Response> {
     if (input.deployMode === 'at-time' && input.deployAt! <= drainStartsAt) {
       throw new ActionError(
         'The deploy time has to be after draining starts, or nobody gets a chance to finish.',
-      )
-    }
-
-    /**
-     * A DEPLOY TIME PAST THE AUTOMATIC DEADLINE WOULD NEVER HAPPEN. The
-     * automation schedules its own window once an update has waited 72 hours,
-     * and that window would run first — so a later choice here is not a longer
-     * delay, it is a setting that silently does nothing. Refusing it with the
-     * reason is better than accepting it and being wrong later.
-     *
-     * THE TIME IN THAT SENTENCE IS THE READER'S, NOT THE CONTAINER'S. This was
-     * a bare `toLocaleString()` — no options at all, so both the locale and the
-     * timezone came from the Node process. It told an admin which deploy times
-     * were legal, in the server's zone, with nothing saying so; the operator
-     * would read a time five hours off, pick something "earlier", and be
-     * refused again. Read from the request cookies here because a route handler
-     * has no `PrefsProvider` above it.
-     */
-    const prefs = readPrefs(await cookies())
-
-    /**
-     * NULL WHENEVER THE AUTOMATION CANNOT FIRE, not merely when the row has no
-     * timestamp on it.
-     *
-     * The driver schedules its own window only on `onMain && behind > 0`, so
-     * with no update pending there is no automatic window for a chosen deploy
-     * time to collide with — and refusing a time against a deadline that will
-     * never arrive would be refusing for a reason that does not exist. That is
-     * not hypothetical on a parked box: `updateAvailable` is held at zero while
-     * the server runs a branch, but a stale `updateFirstSeenAt` can still be
-     * sitting on the row until the next driver tick clears it, which would make
-     * a timed refresh of the parked branch fail with a sentence about an
-     * automatic update that is not coming.
-     *
-     * AND NULL WHEN THE DISTANCE IS UNKNOWN, for the same reason. The driver's
-     * gate is now `onMain && behind !== null && behind > 0`; a tick that does not
-     * know the distance schedules nothing, so there is no deadline to collide
-     * with and no reason to refuse a time against one. `behindMain !== null &&
-     * behindMain > 0` is that gate, spelled the same way.
-     */
-    const deadline =
-      behindMain !== null && behindMain > 0
-        ? maint.autoDeadline(existing?.updateFirstSeenAt)
-        : null
-    if (
-      input.deployMode === 'at-time' &&
-      deadline !== null &&
-      input.deployAt! > deadline
-    ) {
-      throw new ActionError(
-        `That is after ${formatInstant(deadline, prefs)}, when this update ` +
-          `is scheduled automatically because it will have been waiting 72 hours. ` +
-          `Pick an earlier time, or let the automation handle it.`,
       )
     }
 

@@ -150,12 +150,6 @@ export interface MaintenanceWindow {
    * for a number that changes on the same cadence.
    */
   updateAvailable?: number | null
-  /**
-   * When the current update was FIRST seen. The 72-hour clock runs from here,
-   * not from the last poll — otherwise the deadline would reset every fifteen
-   * seconds and never arrive.
-   */
-  updateFirstSeenAt?: number | null
 
   /**
    * The branch this window will put on the box, and the exact commit it was
@@ -278,9 +272,8 @@ export interface MaintenanceWindow {
    * the gap the owner hit. The claim that has to be kept is the one that was on
    * the screen.
    *
-   * NULL FOR A WINDOW WITH NO ARROW ON THE PAGE — an automatic 72-hour window
-   * that nobody was looking at, a console whose `branches` reading had not
-   * landed, a switch (where {@link targetSha} is the pinned commit and is the
+   * NULL FOR A WINDOW WITH NO ARROW ON THE PAGE — a console whose `branches`
+   * reading had not landed, a switch (where {@link targetSha} is the pinned commit and is the
    * stronger promise). Null means "nothing was claimed", which is not the same
    * as "the claim was kept".
    */
@@ -361,31 +354,6 @@ export function isUsableRef(ref: string): boolean {
 /** A full commit id, which is the only form the box will accept as a pin. */
 export function isFullSha(sha: string): boolean {
   return /^[0-9a-f]{40}$/.test(sha)
-}
-
-/**
- * How long an available update may sit before maintenance schedules itself.
- *
- * WHY AUTOMATE THIS AT ALL. An update nobody schedules is the normal outcome of
- * a busy week, and the cost is silent: the server drifts further from main, the
- * eventual deploy carries more change, and the first thing anybody notices is a
- * bigger, riskier restart. Three days is long enough that no reasonable
- * intention gets overridden and short enough that drift stays small.
- */
-export const AUTO_AFTER_MS = 72 * 60 * 60 * 1000
-
-/**
- * The moment maintenance will schedule itself, given when the update appeared.
- *
- * Used by the UI to bound the date picker: there is no point letting somebody
- * choose a deploy time after the automation would already have run, because the
- * automation would win and their choice would silently never happen.
- */
-export function autoDeadline(updateFirstSeenAt: number | null | undefined):
-  | number
-  | null {
-  if (!updateFirstSeenAt) return null
-  return updateFirstSeenAt + AUTO_AFTER_MS
 }
 
 /**
@@ -559,9 +527,7 @@ export function branchRefusal(
  * and `ensureDriver` starts the driver's tick and that poller in the same
  * breath — so the first driver tick after every console restart runs with no
  * status at all. Under `?? 0` that tick wrote `updateAvailable: 0` over a real
- * pending update AND cleared `updateFirstSeenAt`, which is the start of the
- * 72-hour automatic-deploy clock. A console that restarted daily could never
- * reach the deadline it exists to enforce.
+ * pending update.
  *
  * IT ANSWERS ONLY FOR MAIN, which is the mirror of `refBehindNow` answering
  * only off it. `behindMain` on a parked box is a large permanent number
@@ -570,7 +536,7 @@ export function branchRefusal(
  * our knowledge; it is the correct answer to a question that does not apply.
  *
  * A HOST THAT HAS NOT NAMED ITS REF FOLDS IN WITH MAIN, not with parked — the
- * `isParkedOffMain` polarity, not `!isOnMain`. This decides what a human READS
+ * `isParkedOffMain` polarity. This decides what a human READS
  * and what a human may ASK FOR, and an older dispatcher must keep behaving
  * exactly as it always has. lib/ssh states the rule; this obeys it rather than
  * restating it, which is why the comparison is spelled out the same way
@@ -934,35 +900,27 @@ export function isDraining(
 }
 
 /**
- * Record how far behind main the server is, and when we first noticed.
+ * Record how far behind main the server is.
  *
  * WRITTEN ON THE SAME ROW THE GAME POLLS, so one GetItem tells the game both
  * whether to drain and whether to nudge admins about a waiting update.
- *
- * `updateFirstSeenAt` is set once and left alone while the update persists. It
- * is the start of the 72-hour clock, and refreshing it on every poll would push
- * the deadline forever into the future — the automation would never fire, which
- * is the exact failure it exists to prevent.
  */
 export async function noteUpdateAvailable(behind: number): Promise<void> {
   const existing = await current()
 
-  // Back in sync: clear the flag and the clock together, so the next update
-  // starts a fresh three days rather than inheriting an old deadline.
+  // Back in sync: clear the flag.
   if (behind <= 0) {
     if (!existing) return
     await ddb
       .update({
         TableName: tables.maintenance,
         Key: { id: CURRENT },
-        UpdateExpression: 'SET updateAvailable = :z, updateFirstSeenAt = :n',
-        ExpressionAttributeValues: { ':z': 0, ':n': null },
+        UpdateExpression: 'SET updateAvailable = :z',
+        ExpressionAttributeValues: { ':z': 0 },
       })
       .catch(() => {})
     return
   }
-
-  const firstSeen = existing?.updateFirstSeenAt || Date.now()
 
   if (!existing) {
     // No row yet — the game still needs one to read, so create a minimal
@@ -980,7 +938,6 @@ export async function noteUpdateAvailable(behind: number): Promise<void> {
         deployMode: 'when-empty',
         deployAt: null,
         updateAvailable: behind,
-        updateFirstSeenAt: firstSeen,
       } satisfies MaintenanceWindow,
     })
     return
@@ -990,8 +947,8 @@ export async function noteUpdateAvailable(behind: number): Promise<void> {
     .update({
       TableName: tables.maintenance,
       Key: { id: CURRENT },
-      UpdateExpression: 'SET updateAvailable = :b, updateFirstSeenAt = :f',
-      ExpressionAttributeValues: { ':b': behind, ':f': firstSeen },
+      UpdateExpression: 'SET updateAvailable = :b',
+      ExpressionAttributeValues: { ':b': behind },
     })
     .catch(() => {})
 }
@@ -1036,7 +993,6 @@ export async function schedule(input: {
   // correct for control flow, useless for reading fields off the row we are
   // about to replace.
   const carriedAvailable = existing?.updateAvailable ?? null
-  const carriedFirstSeen = existing?.updateFirstSeenAt ?? null
 
   if (isLive(existing)) {
     throw new Error('A maintenance window is already scheduled. Cancel it first.')
@@ -1086,24 +1042,15 @@ export async function schedule(input: {
     forcedWithPlayers: null,
 
     // CARRIED FORWARD, not reset. This is a full put over the same key, so
-    // anything not repeated here is destroyed — and losing `updateFirstSeenAt`
-    // would restart the 72-hour clock every time somebody scheduled and
-    // cancelled, which is the one sequence that must not defeat the automation.
+    // anything not repeated here is destroyed.
     updateAvailable: carriedAvailable,
-    updateFirstSeenAt: carriedFirstSeen,
 
     /**
-     * NOT carried forward, and the asymmetry with the two lines above is the
-     * point. A ref change belongs to the window that asked for it: carrying it
-     * would mean the NEXT window — an ordinary update, or one somebody
-     * scheduled for a different reason entirely — silently inherited a branch
-     * switch nobody chose in it.
-     *
-     * That this row is a full `put` is also exactly why the off-main automation
-     * gate is NOT stored here. It is derived from the game host on every driver
-     * tick; a flag on this row would be wiped by any schedule/cancel cycle,
-     * after which the driver would auto-deploy main over a parked branch and
-     * attribute it to `system`.
+     * NOT carried forward, and the asymmetry with the line above is the point.
+     * A ref change belongs to the window that asked for it: carrying it would
+     * mean the NEXT window (an ordinary update, or one somebody scheduled for a
+     * different reason entirely) silently inherited a branch switch nobody
+     * chose in it.
      */
     targetRef: input.targetRef ?? null,
     targetSha: input.targetSha ?? null,
@@ -1351,7 +1298,7 @@ export async function markComplete(
     TableName: tables.maintenance,
     Key: { id: CURRENT },
     UpdateExpression: clearSignal
-      ? 'SET #s = :complete, completedAt = :t, deployError = :e, updateAvailable = :z, updateFirstSeenAt = :null'
+      ? 'SET #s = :complete, completedAt = :t, deployError = :e, updateAvailable = :z'
       : 'SET #s = :complete, completedAt = :t, deployError = :e',
     ExpressionAttributeNames: { '#s': 'state' },
     ExpressionAttributeValues: clearSignal
@@ -1360,7 +1307,6 @@ export async function markComplete(
           ':t': completedAt,
           ':e': null,
           ':z': 0,
-          ':null': null,
         }
       : {
           ':complete': 'complete',

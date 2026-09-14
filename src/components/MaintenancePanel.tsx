@@ -45,7 +45,6 @@ import { commitUrl, compareUrl, shortSha } from '@/lib/github'
 import { useLiveState } from '@/lib/livePoll'
 import { deployPhase, RESTART_GRACE_MS } from '@/lib/serverPhase'
 import {
-  AUTO_AFTER_MS,
   behindMainNow,
   branchRefusal,
   nothingToDeploy,
@@ -968,22 +967,17 @@ export function MaintenancePanel({
             own.
           </p>
           {/*
-            THE RULE, IN THE OWNER'S OWN TERMS: still discovered, not installed.
-
             This used to read "automatic updates are paused while it is parked",
-            which was true of installing and quietly wrong about finding —
-            nothing was looking at the parked branch at all, so a commit pushed
-            to the branch the live server was running was invisible here until
-            somebody opened the branch picker and went looking for it. The
-            console now watches the branch the box is on and says so; what stays
-            switched off is the part that deploys without being asked.
+            which was quietly wrong about finding: nothing was looking at the
+            parked branch at all, so a commit pushed to the branch the live
+            server was running was invisible here until somebody opened the
+            branch picker and went looking for it. The console now watches the
+            branch the box is on and says so.
           */}
           <p className="mt-1 text-xs text-muted-foreground">
             New commits on{' '}
             <code className="font-mono">{deployedRef}</code> are still found
-            automatically. Installing them is not — while the box is parked
-            nothing deploys unless somebody asks, and a main-branch update
-            waiting behind this one waits indefinitely.
+            automatically.
           </p>
         </div>
 
@@ -1357,26 +1351,6 @@ export function MaintenancePanel({
   // ------------------------------------------------------------ schedule ----
 
   /**
-   * The automatic deadline, and null whenever the automation cannot fire.
-   *
-   * `behindMain` is null while the box is parked and the driver's own gate is
-   * `onMain && behind !== null && behind > 0` — so off main there is no
-   * automatic window coming, whatever timestamp happens to be left on the row.
-   * Deriving the deadline from `updateFirstSeenAt` alone would put "this runs
-   * automatically on Tuesday" and a hard cap on the deploy-time picker in front
-   * of an operator on a parked box, for a window that will never run.
-   *
-   * AND NULL WHEN THE DISTANCE IS UNKNOWN, which the `> 0` gets for free and is
-   * worth stating anyway: a console that has not heard from the host must not
-   * promise an automatic deploy on Tuesday either. It says nothing until it
-   * knows, which is the whole rule this card was rewritten around.
-   */
-  const deadline =
-    behindMain !== null && behindMain > 0 && w?.updateFirstSeenAt
-      ? w.updateFirstSeenAt + AUTO_AFTER_MS
-      : null
-
-  /**
    * WHY THERE IS NO BOX, OR NULL WHEN THERE IS ONE.
    *
    * THE OWNER'S RULE, IN HIS WORDS: "the schedule an update box shouldn't even
@@ -1476,11 +1450,6 @@ export function MaintenancePanel({
    * state below names the ref — "running the latest code on dev" — which is true
    * of exactly the branch it names and says nothing about main. `nothingToDeploy`
    * writes that sentence, beside the 409 it would refuse with.
-   *
-   * THE RULE IS STILL NOT SYMMETRIC. Automatic updates require main; a
-   * human-initiated deploy does not. The 72-hour automation must never fire at a
-   * box somebody is testing on — that gate is `onMain && behind > 0` in the
-   * driver and none of this goes near it.
    *
    * NOTHING HERE PINS A SHA. An update is `scheduleWith(null)` — no
    * `targetRef`, no `targetSha` — which leaves `tools/deploy.sh` to resolve the
@@ -1717,12 +1686,6 @@ export function MaintenancePanel({
                       </>
                     )}
                   </p>
-                  {deadline && (
-                    <p className="mt-1 text-xs text-muted-foreground/70">
-                      If nobody schedules it, this runs automatically on{' '}
-                      <span className="text-foreground">{clock(deadline)}</span>.
-                    </p>
-                  )}
                 </>
               )}
 
@@ -1890,7 +1853,6 @@ export function MaintenancePanel({
                       id="m-at"
                       type="datetime-local"
                       value={deployAt}
-                      max={deadline ? localInput(deadline) : undefined}
                       onChange={(e) => setDeployAt(e.target.value)}
                       className="max-w-xs"
                     />
@@ -1908,13 +1870,6 @@ export function MaintenancePanel({
                       Anyone still connected at that moment is disconnected
                       mid-match.
                     </p>
-                    {deadline && (
-                      <p className="text-xs text-muted-foreground/70">
-                        Cannot be later than {clock(deadline)} — the automatic
-                        window would already have run by then, so a later time
-                        would never happen.
-                      </p>
-                    )}
                   </div>
                 )}
               </div>
@@ -2069,7 +2024,7 @@ export function MaintenancePanel({
             </p>
             <p>
               The server drains first — nobody loses a match — and the switch
-              lands once it empties. Automatic updates stop while it is parked.
+              lands once it empties.
             </p>
             <p className="text-muted-foreground">
               If that commit moves before the deploy runs, the game host refuses
@@ -2583,13 +2538,6 @@ function MaintenanceExplainer() {
           running it cannot be called off — the restart is already happening.
         </p>
         <p>
-          <span className="font-medium text-foreground">
-            An update left for 72 hours schedules itself.
-          </span>{' '}
-          It runs the same drain, and the audit log records it as initiated by{' '}
-          <code className="font-mono">system</code>.
-        </p>
-        <p>
           <span className="font-medium text-foreground">Deploy now</span> skips
           the waiting and disconnects whoever is still playing. It asks first,
           and records who chose it and how many people were on.
@@ -2603,17 +2551,6 @@ function MaintenanceExplainer() {
           never the console&rsquo;s channel to the box — which is what makes
           &ldquo;revert to main&rdquo; something you can always rely on. Nothing
           brings the server back to main on its own.
-        </p>
-        <p>
-          <span className="font-medium text-foreground">
-            While the server is on a branch, only the AUTOMATIC install pauses.
-          </span>{' '}
-          New commits on that branch are still found on their own and shown
-          here. You schedule the deploy yourself, and it takes the newest commit
-          on the branch the server is on rather than putting main back — the
-          same drain, the same waiting for the server to empty. The 72-hour
-          automation is what stays off, because nothing should deploy over a
-          branch somebody is testing on while they are not looking.
         </p>
       </div>
     </Card>
