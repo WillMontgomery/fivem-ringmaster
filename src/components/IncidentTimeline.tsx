@@ -38,6 +38,7 @@ import {
   matchOffset,
   matchProgress,
   mergeTimeline,
+  weaponPart,
   weaponTone,
   withClosure,
   type CaseClosure,
@@ -485,9 +486,7 @@ function MatchRow({
           ) : isChatBlock(entry) ? (
             <ChatBlock entry={entry} />
           ) : (
-            <span className="font-medium">
-              {labelFor(MATCH_EVENT_LABEL, entry.kind)}
-            </span>
+            <Labelled entry={entry} />
           )}
         </TimelineTitle>
         <TimelineMeta>
@@ -678,6 +677,55 @@ const UNAUTHORIZED_DETAIL =
  * an anchor with no href between them is both wrong markup and a styling
  * surprise. Base UI, not Radix: there is no `asChild` here.
  */
+/**
+ * Every match row that is not a kill and not chat: its word, and its weapon.
+ *
+ * ═══ THE WEAPON IS WHY THIS IS A COMPONENT AND NOT A `<span>` ═══
+ *
+ * A `weapon_strip` row carries a weapon and nothing else, and until this was
+ * written nothing rendered it. The row read `Weapon strip` and a timestamp, the
+ * hash sat on the DynamoDB item unread, and the game side had gone to some
+ * trouble to put it there: `br_lib/shared/incident_build.lua` says the number is
+ * "the whole content of the finding -- there is no label for a weapon the
+ * gamemode has never heard of, so the number the cheat actually used is what an
+ * admin gets". It was not what an admin got. An owner reading a real case could
+ * not tell a conjured railgun from a firetruck's water cannon, which is the
+ * difference between a ban and a bug in our own strip check.
+ *
+ * IT IS A RAW NUMBER AND IT IS SHOWN AS ONE. The gamemode has no name for a
+ * weapon it does not issue -- that is what the kind means -- so there is no
+ * label to look up and nothing to dress it up as. `weaponPart` already answers
+ * with the number when there is no `weaponLabel`, which is exactly this case.
+ *
+ * NO RED, DELIBERATELY, AND THE `<Weapon>` REUSE IS NOT AN OVERSIGHT.
+ * `weaponTone` is the one thing that decides the red, it is answered from a
+ * field a strip entry does not carry, and the game omits that field on purpose
+ * because the kind IS the claim. So this renders plain today, which is right --
+ * the red and its card say "damage from one is high-confidence evidence", and a
+ * strip is a weapon taken OUT of a hand before it fired anything. Reusing the
+ * component rather than printing `part.raw` costs nothing and means an entry
+ * that does carry the flag is styled without a second decision.
+ *
+ * THE SEPARATOR MATCHES `Kill`'s, which already renders `name — weapon` for a
+ * death with no second party. A different one here would read as a different
+ * kind of fact on the same list.
+ */
+function Labelled({ entry }: { entry: MatchTimelineEntry }) {
+  const weapon = weaponPart(entry)
+
+  return (
+    <>
+      <span className="font-medium">{labelFor(MATCH_EVENT_LABEL, entry.kind)}</span>
+      {weapon && (
+        <>
+          {' '}
+          — <Weapon weapon={weapon} />
+        </>
+      )}
+    </>
+  )
+}
+
 function Weapon({ weapon }: { weapon: WeaponPart }) {
   const tone = weaponTone(weapon)
   if (tone === '') return <>{weapon.raw}</>
