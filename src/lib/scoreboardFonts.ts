@@ -5,9 +5,11 @@
  *
  *   node scripts/build-scoreboard-fonts.mjs
  *
- * The source bytes are `src/lib/fonts/*.woff2` and `src/lib/scoreboard.check.ts`
- * decodes every constant below and compares it to the file beside it, so this
- * file drifting from those is a failing gate rather than a silent difference.
+ * The source bytes are `src/lib/fonts/*.woff2`, and two gates hold this file to
+ * them. `src/lib/scoreboard.check.ts` decodes every constant below and compares
+ * it to the file beside it, so the payload cannot drift. And
+ * `scripts/check-font-build.mjs` re-runs the generator and compares this whole
+ * file to what it emits, so the shape around the payload cannot drift either.
  *
  * WHY THEY TRAVEL INSIDE THE DOCUMENT. The board is fetched by a DUI - a browser
  * on a player's machine, over the public internet, while their client streams a

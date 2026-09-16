@@ -3745,7 +3745,16 @@ console.log('\nH. the embedded fonts match the woff2 beside them')
  * builds with no generation step. The cost of committing generated output is
  * that it can drift: somebody swaps a face on disk, does not regenerate, and the
  * repository now says one thing and serves another. Decoding and comparing is
- * cheap and removes the whole class.
+ * cheap and removes that.
+ *
+ * IT IS HALF THE PROPERTY, AND THIS COMMENT USED TO CLAIM IT WAS ALL OF IT. What
+ * is asserted below is that the PAYLOAD matches the disk. Nothing here can see
+ * the FILE: rename a constant, reorder the faces, rewrite the header, drop the
+ * license paragraph, and the same bytes are still found under the same names,
+ * every case below still passes, and the committed artifact has quietly stopped
+ * being the output of its own generator. `scripts/check-font-build.mjs` holds
+ * the other half by re-running the generator and comparing the whole file. The
+ * two are not redundant and neither replaces the other.
  */
 for (const face of EMBEDDED_FACES) {
   const onDisk = readFileSync(resolve(ROOT, 'src/lib/fonts', face.file))

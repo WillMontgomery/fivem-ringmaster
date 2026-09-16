@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit",
     "check:secrets": "node scripts/check-secrets.mjs",
     "check:clientgraph": "node scripts/check-client-graph.mjs",
-    "verify": "npm run check:secrets && npm run check:clientgraph && npm run check:banrule && npm run check:banreconcile && npm run check:ingest && npm run check:ingestauth && npm run check:xpcurve && npm run check:verdict && npm run check:artifacts && npm run check:discordrole && npm run check:adminlicense && npm run check:handoff && npm run check:origin && npm run check:service && npm run check:framed && npm run check:chips && npm run check:deployphase && npm run check:deploytarget && npm run check:branchpicker && npm run check:timeline && npm run check:stripweapon && npm run check:corroboration && npm run check:profilelink && npm run check:matchtag && npm run check:matchledger && npm run check:actionbar && npm run check:ddbhealth && npm run check:dispatchhealth && npm run check:healthroute && npm run check:feedage && npm run check:contrast && npm run check:cef && npm run check:scoreboard && npm run typecheck && npm run lint",
+    "check:inventory": "node scripts/check-verify-inventory.mjs",
+    "verify": "npm run check:secrets && npm run check:inventory && npm run check:clientgraph && npm run check:banrule && npm run check:banreconcile && npm run check:ingest && npm run check:ingestauth && npm run check:xpcurve && npm run check:verdict && npm run check:artifacts && npm run check:discordrole && npm run check:adminlicense && npm run check:handoff && npm run check:origin && npm run check:service && npm run check:framed && npm run check:chips && npm run check:deployphase && npm run check:deploytarget && npm run check:branchpicker && npm run check:timeline && npm run check:stripweapon && npm run check:corroboration && npm run check:profilelink && npm run check:matchtag && npm run check:matchledger && npm run check:actionbar && npm run check:ddbhealth && npm run check:dispatchhealth && npm run check:healthroute && npm run check:feedage && npm run check:contrast && npm run check:cef && npm run check:fontbuild && npm run check:scoreboard && npm run typecheck && npm run lint",
     "check:xpcurve": "tsx scripts/check-xp-curve.mjs",
     "check:banrule": "node scripts/check-ban-rule.mjs",
     "check:banreconcile": "tsx src/lib/bans.check.ts",
@@ -44,6 +45,7 @@
     "check:feedage": "tsx src/lib/feedHealth.check.ts",
     "check:contrast": "tsx scripts/check-contrast.mjs",
     "check:cef": "node scripts/check-cef-css.mjs",
+    "check:fontbuild": "node scripts/check-font-build.mjs",
     "check:scoreboard": "tsx src/lib/scoreboard.check.ts",
     "check:framed": "tsx src/lib/framed.check.ts"
   },
