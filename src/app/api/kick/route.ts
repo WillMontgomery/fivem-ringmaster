@@ -58,6 +58,14 @@ export async function POST(req: Request): Promise<Response> {
      * below — the SSH check, the closed-case refusal, the audit row, the
      * verdict — is identical for both because none of it is authorisation. See
      * lib/service.ts.
+     *
+     * AND THIS IS THE ONE ROUTE THE SYSTEM ACTOR REACHES. When the bot bans a
+     * member itself (the rapid-offense escalation) it names no human, and the
+     * gate lets that through only for a license whose ban is already in force,
+     * with a reason and without an `incidentId`. So it arrives here as the
+     * `System` actor and is kicked like any other: the audit row says `System`,
+     * `reason` is the bot's own, and no case is ever closed by it. Nothing below
+     * branches on which actor it is, and nothing needs to.
      */
     const { actor } = await authorizeWrite('kick', req)
 

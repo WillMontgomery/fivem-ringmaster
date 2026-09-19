@@ -1,7 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
+import { z } from 'zod'
+
 import * as audit from './audit'
 import type { Actor } from './audit'
+import { consistentBanFor, isActive, type Ban } from './bans'
 import { fetchDiscordUser } from './discord'
 import {
   checkAdminRole,
@@ -116,6 +119,53 @@ import { grantsForDiscordId } from './grants'
  * consequence somebody CHOSE, findable in the file that chose it, rather than
  * something discovered later and mistaken for an oversight.
  *
+ * ═══ AND ONE CALLER THAT IS NOBODY: THE SYSTEM ACTOR ═══
+ *
+ * Everything above assumes a human pressed something, and since blitz-bot#23
+ * one thing is pressed by nobody. A member who offends again during their
+ * rapid-offense probation is banned by the bot itself: it bans them in Discord,
+ * its own audit mirror writes the permanent game ban straight to DynamoDB, and
+ * then it asks this door for the live kick. There is no admin to name. The bot
+ * used to name ITSELF, so its own Discord id went through the role gate above,
+ * the bot does not hold the admin role, and the kick came back `role-revoked`
+ * (owner, 2026-09-19). The ban stood and the player stayed in the match.
+ *
+ * SO {@link SYSTEM_ACTOR} IS A SECOND KIND OF ACTOR, AND IT IS GIVEN EXACTLY ONE
+ * THING. The rule that justifies it, and that every line of `systemGate` is:
+ *
+ *   A SYSTEM ACTOR MAY ENFORCE A BAN THAT ALREADY EXISTS. IT MAY NEVER CREATE
+ *   A PUNISHMENT, AND IT MAY NEVER ACT ON ANYBODY WHO IS NOT ALREADY BANNED.
+ *
+ * Which comes out as three refusals, in this order:
+ *
+ *   ONLY {@link SYSTEM_ROUTE}. Not a ban, not a drain, not a cancel. Every other
+ *   path this credential opens refuses the marker BY NAME (`system-scope`),
+ *   before anything is read, rather than leaving it to fail the snowflake test
+ *   by accident.
+ *
+ *   ONLY A PLAIN KICK OF ONE LICENSE, WITH A REASON (`system-body`). No
+ *   `incidentId`, because closing a case is a decision. No missing reason,
+ *   because the kick route's default for one says an admin did it.
+ *
+ *   ONLY SOMEBODY WHOSE BAN IS IN FORCE AT THE MOMENT OF THE CALL
+ *   (`not-banned`), read strongly consistent from `ringmaster-bans` so the row
+ *   the bot wrote a moment ago is certain to be seen (lib/bans.ts,
+ *   `consistentBanFor`). A read that fails is a refusal (`store`), never an
+ *   allowance. No row, a served row and a lifted row are all the same answer.
+ *
+ * NOTHING ABOUT A HUMAN CALL CHANGES. The marker is matched exactly and before
+ * the snowflake test, a Discord id can never equal it because ids are digits,
+ * and a human is still put to `enforceDiscordAdmin` on every path, a banned
+ * target or not. The system branch never reaches the role gate, and the human
+ * branch never reads the ban table.
+ *
+ * THE ROW SAYS `System`, the name this console already writes for work nobody
+ * did by hand: lib/incidents.ts writes it on every event without a human, and
+ * IncidentDetail carries the owner's ruling on the spelling. Null license, null
+ * Discord id. The kick's `reason` is the bot's own rapid-offense reason, so an
+ * admin reading `/audit` sees why, in the reason column where every kick keeps
+ * its why.
+ *
  * ═══ SCOPED, SO WIDENING IT IS A DECISION ═══
  *
  * {@link SERVICE_ROUTES} is a closed list of four exact paths and the gate
@@ -124,6 +174,11 @@ import { grantsForDiscordId } from './grants'
  * word `SERVICE_ROUTES` in it. `service.check.ts` asserts the two halves agree
  * in both directions, by walking the routes on disk rather than by holding a
  * list somebody has to remember to update.
+ *
+ * THE SYSTEM ACTOR'S SCOPE IS ONE PATH INSIDE THAT ONE, {@link SYSTEM_ROUTE}, and
+ * it is a single constant rather than a list on purpose: giving the system a
+ * second capability should read as a change to the rule above, not as one more
+ * entry in an array.
  *
  * THE LIST GREW ONCE AND THAT IS WHAT IT LOOKS LIKE WHEN IT DOES. `/drain
  * cancel` was refused for as long as this list said three, because #42 wired the
@@ -150,8 +205,43 @@ import { grantsForDiscordId } from './grants'
  */
 export const COMMAND_SECRET_HEADER = 'x-ringmaster-service'
 
-/** The Discord id of the human on whose behalf the call is being made. */
+/**
+ * Who the call is made for: the Discord id of the human on whose behalf it is
+ * made, or {@link SYSTEM_ACTOR} when nobody pressed anything.
+ */
 export const SERVICE_ACTOR_HEADER = 'x-ringmaster-actor'
+
+/**
+ * The actor a call names when there is no human behind it. See the header.
+ *
+ * A WORD, SO IT CAN NEVER BE A DISCORD ID. Snowflakes are digits and
+ * {@link SNOWFLAKE} accepts nothing else, so no admin's id can collide with
+ * this and no value of this can reach the role gate as though it were an admin.
+ * Matched EXACTLY: `System`, ` system` and `SYSTEM` are not the marker, and are
+ * refused as any other actor that is not a Discord id.
+ *
+ * A DEPLOYED CONTRACT, LIKE THE HEADER IT TRAVELS IN. blitz-bot sends this
+ * string (its src/ringmaster.ts, `SYSTEM_ACTOR`), and changing it on one side
+ * turns every automated kick back into a refusal.
+ */
+export const SYSTEM_ACTOR = 'system'
+
+/** The one path a {@link SYSTEM_ACTOR} call may take. See the header. */
+export const SYSTEM_ROUTE = '/api/kick'
+
+/**
+ * Who the audit row names for a {@link SYSTEM_ACTOR} call.
+ *
+ * `System`, WITH THE CAPITAL, because that is how this console already names
+ * work nobody did by hand (`byName: 'System'` in lib/incidents.ts). No license
+ * and no Discord id, because there is nobody to link to, and a profile link on
+ * this row would point at a person who did not do it.
+ */
+export const SYSTEM_ATTRIBUTION: Readonly<Actor> = {
+  license: null,
+  name: 'System',
+  discordId: null,
+}
 
 /**
  * Who holds the credential. One secret, one caller.
@@ -202,6 +292,35 @@ export const SERVICE_ROUTES = [
  */
 const SNOWFLAKE = /^[0-9]{1,32}$/
 
+/**
+ * What a {@link SYSTEM_ACTOR} kick may carry, and nothing more.
+ *
+ * STRICT, SO AN UNKNOWN FIELD IS A REFUSAL AND NOT A FIELD THAT IS IGNORED. The
+ * one that matters is `incidentId`: the kick route closes the case it names
+ * with a `kick` verdict, and a verdict is a decision the system actor may not
+ * take. Anything else the route learns to accept later is refused here until
+ * somebody decides the system may send it too.
+ *
+ * `reason` IS REQUIRED, where the route makes it optional. A reasonless kick
+ * falls back to the route's own wording, which says an admin did it, and that
+ * sentence on a `System` row would be false.
+ *
+ * THE LICENSE IS TAKEN EXACTLY AS SENT, NOT TRIMMED, and that is what makes the
+ * ban this gate reads the same row as the player the route kicks. The route
+ * trims before it acts; a value that trimming would change never gets that
+ * far, so the two can never be two different strings. The pattern is
+ * `licenseSchema`'s in lib/actions.ts, copied because that file imports
+ * `@/auth` and cannot be loaded from here, and `service.check.ts` fails if the
+ * two stop matching.
+ */
+const systemKickSchema = z
+  .object({
+    license: z.string().regex(/^license2?:[0-9a-f]{6,64}$/i),
+    reason: z.string().trim().min(1),
+    playerName: z.string().nullable().optional(),
+  })
+  .strict()
+
 export type ServiceLogLevel = 'info' | 'warn' | 'error'
 
 /**
@@ -233,6 +352,13 @@ export interface ServiceDeps {
     actor: Actor
     action: string
   }): Promise<RoleCheck>
+  /**
+   * The ban row on one license, lifted and served ones included, or null when
+   * there is none. Asked for a {@link SYSTEM_ACTOR} call and never for a human
+   * one. Strongly consistent, see `consistentBanFor`. Throws when the read
+   * fails, and the gate refuses on a throw.
+   */
+  ban(license: string): Promise<Ban | null>
   /** The operator log. Separated so a check can assert loudness. */
   log(level: ServiceLogLevel, message: string): void
 }
@@ -284,6 +410,7 @@ export function serviceDeps(): ServiceDeps {
           },
         },
       }),
+    ban: consistentBanFor,
     log: (level, message) => {
       if (level === 'error') console.error(message)
       else if (level === 'warn') console.warn(message)
@@ -292,7 +419,7 @@ export function serviceDeps(): ServiceDeps {
   }
 }
 
-/** One call at the door, reduced to the four things that decide it. */
+/** One call at the door, reduced to the things that decide it. */
 export interface ServiceRequest {
   /** What the caller presented in {@link COMMAND_SECRET_HEADER}. */
   secret: string | null
@@ -302,11 +429,22 @@ export interface ServiceRequest {
   path: string
   /** The route's own label, for the log. Decides nothing — see `ActionLabel`. */
   action: string
+  /**
+   * The request's JSON body, READ ONLY FOR A {@link SYSTEM_ACTOR} CALL, and only
+   * once the gate has got as far as needing it.
+   *
+   * A FUNCTION RATHER THAN A VALUE so that nothing is read for a caller who
+   * failed the secret, the path or the system scope, which is the same "a
+   * stranger costs nothing" property every earlier refusal has. It rejects, or
+   * answers something that is not a kick, and the gate refuses either way.
+   */
+  body(): Promise<unknown>
 }
 
 /**
- * Allowed, with the human to attribute it to — or refused, with the status and
- * the machine code the caller is told.
+ * Allowed, with the actor to attribute it to (the named human, or
+ * {@link SYSTEM_ATTRIBUTION}), or refused, with the status and the machine
+ * code the caller is told.
  */
 export type ServiceVerdict =
   | { ok: true; actor: Actor }
@@ -344,7 +482,7 @@ export function isServiceCall(req: Request): boolean {
   return req.headers.get(COMMAND_SECRET_HEADER) !== null
 }
 
-/** Read the two headers and the path off a real request. */
+/** Read the two headers and the path off a real request, and the body on demand. */
 export function serviceRequest(action: string, req: Request): ServiceRequest {
   let path = ''
   try {
@@ -360,15 +498,31 @@ export function serviceRequest(action: string, req: Request): ServiceRequest {
     actor: req.headers.get(SERVICE_ACTOR_HEADER),
     path,
     action,
+    /**
+     * READ OFF A CLONE, so the route still reads the original afterwards. The
+     * gate runs before the route touches the body, so the clone is taken while
+     * the stream is whole, and both copies are the same bytes: the license the
+     * gate found banned is the license the route kicks.
+     */
+    body: () => req.clone().json(),
   }
 }
 
 /**
- * The gate. Answers with the acting human, or refuses.
+ * The gate. Answers with the acting human, or with `System`, or refuses.
  *
  * THE ORDER IS THE SECURITY PROPERTY, the same way it is in `authorize()`:
  *
  *   configured? → secret → scope → actor shape → identity → Discord role
+ *
+ * AND ONE BRANCH OFF IT, TAKEN ONLY BY THE EXACT {@link SYSTEM_ACTOR} MARKER,
+ * after the scope check and before the actor shape:
+ *
+ *   system? → the kick route only → a plain kick body → a ban in force
+ *
+ * The branch returns on every path through it, so a system call can never
+ * fall through into the human half below, and a human call can never reach
+ * the branch. See the header for the rule it enforces.
  *
  * AND IT IS `authorize()`'s ORDER, DELIBERATELY. There, `currentAdmin()` builds
  * the `Actor` and only then does `discordGate` run over it; here the two
@@ -448,6 +602,13 @@ export async function serviceGate(
     )
     return { ok: false, status: 403, error: 'scope' }
   }
+
+  /**
+   * NOBODY, BY NAME. Asked before the snowflake test rather than left to fail
+   * it, so that the one actor that is not a human is refused or allowed by a
+   * rule written for it, never by the accident of not being digits.
+   */
+  if (actor === SYSTEM_ACTOR) return await systemGate(input, deps, where)
 
   /**
    * THE REQUEST MUST CARRY THE HUMAN. There is no session here to read an
@@ -559,4 +720,110 @@ export async function serviceGate(
   )
 
   return { ok: true, actor: acting }
+}
+
+/**
+ * The system actor's half of the gate: the kick route, a plain kick, a ban in
+ * force. The header carries the rule; this is the rule, in its order.
+ *
+ * IT READS NOTHING ABOUT A PERSON. No grants row, no Discord name, no role
+ * check, because there is no person. What it reads is the one fact that makes
+ * the kick legitimate, and it reads that from the ban table rather than taking
+ * the caller's word for it.
+ *
+ * EVERY REFUSAL IS AN `error`, like every other refusal in this file. The bot
+ * sends this marker for exactly one thing, so a refusal here is either that
+ * thing failing (the ban was lifted between the write and the kick, or the
+ * table did not answer) or a caller that is not the bot.
+ */
+async function systemGate(
+  input: ServiceRequest,
+  deps: ServiceDeps,
+  where: string,
+): Promise<ServiceVerdict> {
+  const { path, action } = input
+
+  if (normalisePath(path) !== SYSTEM_ROUTE) {
+    deps.log(
+      'error',
+      `[service] REFUSED a \`${action}\` call by ${SERVICE_CALLER} to ${where}: ` +
+        `${SERVICE_ACTOR_HEADER} named the system, and the system may only kick ` +
+        `somebody already banned, at ${SYSTEM_ROUTE}.`,
+    )
+    return { ok: false, status: 403, error: 'system-scope' }
+  }
+
+  /**
+   * AN UNREADABLE BODY IS AN EMPTY ONE, and the schema refuses it. The route
+   * would refuse the same body a line later; refusing it here means a system
+   * call never gets as far as reading the ban table about nothing.
+   */
+  let raw: unknown
+  try {
+    raw = await input.body()
+  } catch {
+    raw = undefined
+  }
+
+  const parsed = systemKickSchema.safeParse(raw)
+  if (!parsed.success) {
+    deps.log(
+      'error',
+      `[service] REFUSED a \`${action}\` call by ${SERVICE_CALLER} to ${where}: ` +
+        `a system kick carries one license and a reason and nothing else, and ` +
+        `this one did not (${parsed.error.issues[0]?.message ?? 'no body'}).`,
+    )
+    return { ok: false, status: 400, error: 'system-body' }
+  }
+
+  const { license } = parsed.data
+
+  /**
+   * A FAILED READ IS A REFUSAL, NEVER AN ALLOWANCE. Allowing on a failure would
+   * make "the table did not answer" the one state in which the system may kick
+   * anybody at all, which is the opposite of the rule. `store` is the code the
+   * human path already answers a failed grants read with, and the bot retries
+   * it, which is right: the ban is still there to be read in a minute.
+   */
+  let ban: Ban | null
+  try {
+    ban = await deps.ban(license)
+  } catch (e) {
+    deps.log(
+      'error',
+      `[service] REFUSED a \`${action}\` call by ${SERVICE_CALLER} to ${where}: ` +
+        `could not read the ban on ${license}, so nothing shows this kick enforces ` +
+        `one: ${e instanceof Error ? e.message : String(e)}`,
+    )
+    return { ok: false, status: 503, error: 'store' }
+  }
+
+  /**
+   * `isActive` DECIDES, the same function the console's pages and the ban route
+   * ask, so this gate cannot disagree with the rest of the console about what
+   * "banned" means. No row, a lifted row and a served row are one answer.
+   */
+  if (!ban || !isActive(ban)) {
+    const state = !ban
+      ? 'no ban'
+      : ban.liftedAt
+        ? 'a ban that was lifted'
+        : 'a ban that has run out'
+    deps.log(
+      'error',
+      `[service] REFUSED a \`${action}\` call by ${SERVICE_CALLER} to ${where}: ` +
+        `${license} has ${state}, and the system may only kick somebody whose ` +
+        `ban is in force.`,
+    )
+    return { ok: false, status: 403, error: 'not-banned' }
+  }
+
+  deps.log(
+    'info',
+    `[service] ${SERVICE_CALLER} relayed a system \`${action}\` call to ${where} ` +
+      `for ${license}, enforcing the ban in force there.`,
+  )
+
+  // A copy, so no route can edit the constant by editing its actor.
+  return { ok: true, actor: { ...SYSTEM_ATTRIBUTION } }
 }

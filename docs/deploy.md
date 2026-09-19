@@ -569,7 +569,7 @@ Two headers, on a POST to one of four paths:
 | Header | Carries |
 |---|---|
 | `x-ringmaster-service` | the value of `COMMAND_SECRET` |
-| `x-ringmaster-actor` | the **Discord id of the admin who typed the command** |
+| `x-ringmaster-actor` | the **Discord id of the admin who typed the command**, or `system` when nobody did (below) |
 
 | Path | What uses it |
 |---|---|
@@ -655,6 +655,25 @@ carries the argument at length; `SERVICE_ROUTES` stays a write allowlist.
 > rather than the first, and a bad minute at Discord must not stop every
 > moderation command in the guild. It is the same polarity the session path
 > uses, through the same function.
+
+> **`x-ringmaster-actor: system` is the one call with no admin behind it.** When
+> a member offends again during rapid-offense probation, the bot bans them
+> itself, writes the game ban itself, and then asks for the live kick naming
+> `system`. The console accepts that on `POST /api/kick` only, only for a
+> license whose ban is in force at that moment (read straight from
+> `ringmaster-bans`), and only with a reason and no `incidentId`. The audit row
+> names `System`, with the bot's rapid-offense reason beside it. Everywhere else
+> it is refused, and the journal line says which rule refused it:
+>
+> | Code | Meaning |
+> |---|---|
+> | `403 system-scope` | `system` on any path other than `/api/kick` |
+> | `400 system-body` | a system kick without a reason, with an `incidentId`, or not a kick at all |
+> | `403 not-banned` | that license has no ban, or its ban was lifted or has run out |
+> | `503 store` | the ban could not be read; refused, and the bot tries again |
+>
+> A system actor can carry out a ban that already exists. It cannot issue one,
+> close a case, or remove anybody who is not banned.
 
 ### The value, and keeping the two copies the same
 

@@ -183,6 +183,40 @@ export async function banFor(license: string): Promise<Ban | null> {
 }
 
 /**
+ * The ban row for one identifier, read STRONGLY CONSISTENT.
+ *
+ * FOR THE ONE CALLER THAT ACTS ON A ROW WRITTEN A MOMENT AGO BY SOMEBODY ELSE:
+ * the system kick in lib/service.ts. blitz-bot writes a rapid-offense ban to
+ * this table and then, in the same breath, asks this console to kick for it,
+ * and the kick is allowed only if this read finds that ban in force. A default
+ * `GetItem` is eventually consistent and may be answered by a replica that has
+ * not seen the write yet, which would refuse the kick in exactly the case it
+ * exists for, and refuse it permanently, because the bot does not retry a
+ * refusal.
+ *
+ * A CONSISTENT READ RETURNS EVERY WRITE THAT WAS ACKNOWLEDGED BEFORE IT, and the
+ * bot relays the kick only after its own `PutItem` came back successful. So the
+ * row it just wrote is there to be found, by construction rather than by a
+ * delay somebody hoped was long enough. It costs one read unit instead of half,
+ * on a call made once per automated ban.
+ *
+ * NOT `banFor` WITH A FLAG. Every other reader here renders a page or checks a
+ * duplicate a human is about to create, and a stale answer there costs a
+ * refresh. This one is an authorization decision, and it is kept as its own
+ * function so that nobody tidies the consistency away as an unexplained option.
+ *
+ * THROWS WHEN THE READ FAILS, like `banFor`. The gate refuses on a throw.
+ */
+export async function consistentBanFor(license: string): Promise<Ban | null> {
+  const res = await ddb.get({
+    TableName: tables.bans,
+    Key: { license },
+    ConsistentRead: true,
+  })
+  return (res.Item as Ban | undefined) ?? null
+}
+
+/**
  * The active ban for one identifier, or null.
  *
  * WHAT THE CONSOLE'S OWN PAGES ASK, and no longer the whole of what the connect

@@ -230,6 +230,11 @@ export interface WriteContext {
  * adding a header, and adding one does not weaken the session path either: the
  * two are exclusive, and neither is consulted twice.
  *
+ * THE ONE CALL WITH NO HUMAN IN IT is the system actor, and it opens one thing:
+ * a kick at `/api/kick` of a license whose ban is already in force, attributed
+ * to `System`. lib/service.ts carries the rule and refuses the marker on every
+ * other path, so what a route gets back here is still just an actor.
+ *
  * WHAT IT DOES NOT DO IS AS IMPORTANT AS WHAT IT DOES. It authorises the
  * CALLER. Every check the route makes afterwards — `nothingToDeploy`, the
  * already-scheduled guard, "that license is already banned", the closed-case

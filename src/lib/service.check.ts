@@ -58,6 +58,15 @@
  *      was sent: refused and unreachable are told apart, nothing is ever
  *      reported as confirmed, and every route that kicks goes through the one
  *      classifier.
+ *   I. THE SYSTEM ACTOR, the one call with no human in it. The negative cases
+ *      are the point: the marker refused BY NAME on every other path the
+ *      credential opens, refused on the kick for no ban, a served ban, a lifted
+ *      ban and a ban that could not be read, refused for a body that is more
+ *      than a plain kick; the marker matched exactly; a human still put through
+ *      the role gate with a banned target; and the shipped ban read asked for
+ *      a consistent read. Then one positive end to end, through a real Request:
+ *      the escalation's kick is allowed, attributed to `System`, and the route
+ *      can still read the body the gate read.
  * ============================================================================
  *
  * THE CHECKS ARE WRITTEN TO BE ABLE TO FAIL. Deleting the path check fails all
@@ -70,7 +79,10 @@
  * the other direction, and taking `/api/maintenance/cancel` off the list AND out
  * of its route — the tidy-looking revert that would put `/drain cancel` back to
  * `Not signed in` — fails E on the named set. Collapsing a refusal and a dead
- * link back into one error fails H.
+ * link back into one error fails H. Letting the system marker past the path
+ * check, the body check or the ban check fails I; so does allowing it when the
+ * ban read throws, dropping `ConsistentRead`, or deleting the system branch so
+ * that the marker is refused only by accident, as `400 actor`.
  */
 
 process.env.DISCORD_CLIENT_ID ??= 'check-client-id'
@@ -100,6 +112,7 @@ import {
   failureStatus,
   type CommandOutcome,
 } from './commandOutcome'
+import type { Ban } from './bans'
 import { RoleRevokedError, type RoleCheck } from './discordRole'
 import { env } from './env'
 import {
@@ -107,8 +120,12 @@ import {
   SERVICE_ACTOR_HEADER,
   SERVICE_CALLER,
   SERVICE_ROUTES,
+  SYSTEM_ACTOR,
+  SYSTEM_ATTRIBUTION,
+  SYSTEM_ROUTE,
   isServiceCall,
   normalisePath,
+  serviceDeps,
   serviceGate,
   serviceRequest,
   type ServiceDeps,
@@ -125,6 +142,33 @@ const SECRET = 'a-real-command-secret-value-24'
 const ADMIN = '100000000000000001'
 const LICENSE = 'license:abc123def456'
 const NAME = 'Wilhelmina'
+
+/** The player the escalation banned, and the reason blitz-bot bans them with. */
+const BANNED = 'license:0123456789abcdef'
+const ESCALATION_REASON =
+  'blitz-bot: qualifying message removal during one-hour access-recovery probation'
+const HOUR = 3_600_000
+
+/** A ban row as blitz-bot's audit mirror writes one: permanent, never lifted. */
+function banRow(over: Partial<Ban> = {}): Ban {
+  return {
+    license: BANNED,
+    at: Date.now() - 1_000,
+    by: null,
+    byName: 'blitz-bot',
+    reason: ESCALATION_REASON,
+    expiresAt: null,
+    playerName: 'nate',
+    liftedAt: null,
+    liftedBy: null,
+    liftedByName: null,
+    liftReason: null,
+    ...over,
+  }
+}
+
+/** The body blitz-bot sends for the escalation's kick. */
+const SYSTEM_BODY = { license: BANNED, playerName: 'nate', reason: ESCALATION_REASON }
 
 let failed = 0
 function fail(label: string, detail: string): void {
@@ -150,6 +194,11 @@ interface Spy {
   logs: Array<{ level: ServiceLogLevel; message: string }>
   /** Which dependencies were reached, in order. The order is half the test. */
   calls: string[]
+  /**
+   * A request body that records being read into `calls` as `body`, so a case
+   * can assert WHETHER the gate read it as well as what it decided.
+   */
+  bodyOf(value: unknown): ServiceRequest['body']
 }
 
 /**
@@ -184,12 +233,25 @@ function spy(over: Partial<ServiceDeps> = {}): Spy {
       calls.push(`role:${discordId}`)
       return HELD
     },
+    /**
+     * ONE PLAYER IS BANNED AND NOBODY ELSE IS, so a case that kicks somebody
+     * else is refused by the table and not by a fake that agrees with anything.
+     */
+    ban: async (license) => {
+      calls.push(`ban:${license}`)
+      return license === BANNED ? banRow() : null
+    },
     log: (level, message) => {
       logs.push({ level, message })
     },
   }
 
-  return { deps: { ...base, ...over }, logs, calls }
+  const bodyOf = (value: unknown): ServiceRequest['body'] => async () => {
+    calls.push('body')
+    return value
+  }
+
+  return { deps: { ...base, ...over }, logs, calls, bodyOf }
 }
 
 /** An `enforceRole` that answers the way a given verdict would. */
@@ -212,6 +274,7 @@ function call(over: Partial<ServiceRequest> = {}): ServiceRequest {
     actor: ADMIN,
     path: '/api/kick',
     action: 'kick',
+    body: async () => undefined,
     ...over,
   }
 }
@@ -1083,6 +1146,482 @@ async function main(): Promise<void> {
       }
     }
   }
+
+  // =========================================================================
+  // I. THE SYSTEM ACTOR: enforce a ban that exists, and nothing else
+  // =========================================================================
+
+  {
+    /**
+     * THE MARKER AND ITS ONE PATH ARE PINNED, because both are a contract with
+     * blitz-bot, and because the whole safety of the marker rests on it never
+     * being something a Discord id can be.
+     */
+    expect('system: the marker on the wire is unchanged', SYSTEM_ACTOR, 'system')
+    expect('system: the one path it opens', SYSTEM_ROUTE, '/api/kick')
+    if (/^[0-9]+$/.test(SYSTEM_ACTOR)) {
+      fail('system', 'the marker is all digits, so an admin`s Discord id could be it')
+    }
+    if (!(SERVICE_ROUTES as readonly string[]).includes(SYSTEM_ROUTE)) {
+      fail('system', `${SYSTEM_ROUTE} is not on SERVICE_ROUTES, so the credential never reaches it`)
+    }
+    expect('system: the row is named System', SYSTEM_ATTRIBUTION.name, 'System')
+    expect('system: the row carries no license', SYSTEM_ATTRIBUTION.license, null)
+    expect('system: the row carries no Discord id', SYSTEM_ATTRIBUTION.discordId, null)
+  }
+
+  /**
+   * [label, request override, deps override, verdict, the dependencies reached]
+   *
+   * THE LAST COLUMN IS HALF OF EVERY CASE. A refusal that happened to read the
+   * ban table, or the grants row, or ask Discord, first is a refusal in the
+   * wrong place; and the allowed cases prove the system call reads the body and
+   * the ban and NOTHING about a person.
+   */
+  const systemCases: Array<
+    [
+      string,
+      (s: Spy) => Partial<ServiceRequest>,
+      Partial<ServiceDeps>,
+      string,
+      string,
+    ]
+  > = [
+    // ---- The one thing it may do. ----
+    ['the escalation`s kick of a banned license', () => ({}), {}, 'allowed', `body,ban:${BANNED}`],
+    ['a trailing slash on the kick path', () => ({ path: '/api/kick/' }), {}, 'allowed', `body,ban:${BANNED}`],
+    [
+      'a ban with an expiry that has not arrived',
+      () => ({}),
+      { ban: async () => banRow({ expiresAt: Date.now() + HOUR }) },
+      'allowed',
+      `body`,
+    ],
+    [
+      'a body with no player name, which is optional',
+      (s) => ({ body: s.bodyOf({ license: BANNED, reason: ESCALATION_REASON }) }),
+      {},
+      'allowed',
+      `body,ban:${BANNED}`,
+    ],
+
+    // ---- Every other path the credential opens, refused by name. ----
+    ['the ban route', () => ({ path: '/api/bans', action: 'ban' }), {}, '403 system-scope', ''],
+    ['the maintenance route', () => ({ path: '/api/maintenance', action: 'process' }), {}, '403 system-scope', ''],
+    ['the maintenance cancel route', () => ({ path: '/api/maintenance/cancel', action: 'process' }), {}, '403 system-scope', ''],
+
+    // ---- The credential's own refusals still come first. ----
+    ['a path the credential does not open at all', () => ({ path: '/api/maintenance/force' }), {}, '403 scope', ''],
+    ['the ban lift route', () => ({ path: '/api/bans/lift' }), {}, '403 scope', ''],
+    ['a wrong secret', () => ({ secret: 'not-the-secret' }), {}, '401 auth', ''],
+    ['no secret configured', () => ({}), { secret: () => undefined }, '503 not-configured', ''],
+
+    // ---- Nobody to enforce against. ----
+    [
+      'a license with no ban at all',
+      (s) => ({ body: s.bodyOf({ ...SYSTEM_BODY, license: 'license:ffffffffffffffff' }) }),
+      {},
+      '403 not-banned',
+      'body,ban:license:ffffffffffffffff',
+    ],
+    [
+      'a ban that has run out',
+      () => ({}),
+      { ban: async () => banRow({ expiresAt: Date.now() - HOUR }) },
+      '403 not-banned',
+      'body',
+    ],
+    [
+      'a permanent ban that was lifted',
+      () => ({}),
+      {
+        ban: async () =>
+          banRow({ liftedAt: Date.now() - HOUR, liftedBy: LICENSE, liftedByName: NAME }),
+      },
+      '403 not-banned',
+      'body',
+    ],
+    [
+      'a lifted ban whose expiry is still in the future',
+      () => ({}),
+      { ban: async () => banRow({ expiresAt: Date.now() + HOUR, liftedAt: Date.now() - HOUR }) },
+      '403 not-banned',
+      'body',
+    ],
+
+    // ---- The ban could not be read, which is never an allowance. ----
+    [
+      'the ban read failed',
+      () => ({}),
+      {
+        ban: async () => {
+          throw new Error('ProvisionedThroughputExceededException')
+        },
+      },
+      '503 store',
+      'body',
+    ],
+
+    // ---- More than a plain kick. ----
+    [
+      'an incidentId, which would close a case with a verdict',
+      (s) => ({ body: s.bodyOf({ ...SYSTEM_BODY, incidentId: '00000000-0000-4000-8000-000000000000' }) }),
+      {},
+      '400 system-body',
+      'body',
+    ],
+    [
+      'a field the system kick does not carry',
+      (s) => ({ body: s.bodyOf({ ...SYSTEM_BODY, days: 7 }) }),
+      {},
+      '400 system-body',
+      'body',
+    ],
+    [
+      'no reason, which the route would word as an admin`s kick',
+      (s) => ({ body: s.bodyOf({ license: BANNED, playerName: 'nate' }) }),
+      {},
+      '400 system-body',
+      'body',
+    ],
+    ['a blank reason', (s) => ({ body: s.bodyOf({ ...SYSTEM_BODY, reason: '   ' }) }), {}, '400 system-body', 'body'],
+    ['a null reason', (s) => ({ body: s.bodyOf({ ...SYSTEM_BODY, reason: null }) }), {}, '400 system-body', 'body'],
+    ['no license', (s) => ({ body: s.bodyOf({ reason: ESCALATION_REASON }) }), {}, '400 system-body', 'body'],
+    ['a license that is not one', (s) => ({ body: s.bodyOf({ ...SYSTEM_BODY, license: 'nate' }) }), {}, '400 system-body', 'body'],
+    [
+      'a Discord placeholder key, which is not a license',
+      (s) => ({ body: s.bodyOf({ ...SYSTEM_BODY, license: 'discord:280000000000000000' }) }),
+      {},
+      '400 system-body',
+      'body',
+    ],
+    /**
+     * PADDING IS REFUSED RATHER THAN TRIMMED. The route trims; if the gate
+     * trimmed too, the two would agree, but if it did not, the gate would read
+     * the ban on one string and the route would kick another. Refusing is the
+     * only answer that cannot drift.
+     */
+    [
+      'a license with padding around it',
+      (s) => ({ body: s.bodyOf({ ...SYSTEM_BODY, license: ` ${BANNED}` }) }),
+      {},
+      '400 system-body',
+      'body',
+    ],
+    ['no body', (s) => ({ body: s.bodyOf(undefined) }), {}, '400 system-body', 'body'],
+    ['a body that is a string', (s) => ({ body: s.bodyOf(BANNED) }), {}, '400 system-body', 'body'],
+    ['a body that is an array', (s) => ({ body: s.bodyOf([SYSTEM_BODY]) }), {}, '400 system-body', 'body'],
+    [
+      'a body that is not JSON',
+      (s) => ({
+        body: async () => {
+          s.calls.push('body')
+          throw new SyntaxError('Unexpected end of JSON input')
+        },
+      }),
+      {},
+      '400 system-body',
+      'body',
+    ],
+  ]
+
+  for (const [label, req, over, want, reached] of systemCases) {
+    const s = spy(over)
+    const verdict = await serviceGate(
+      call({ actor: SYSTEM_ACTOR, body: s.bodyOf(SYSTEM_BODY), ...req(s) }),
+      s.deps,
+    )
+    expect(`system: ${label}`, refusal(verdict), want)
+    expect(`system: ${label}, what it reached`, s.calls.join(','), reached)
+
+    /**
+     * NOTHING ABOUT A PERSON, EVER. A system call that reached the grants row,
+     * the Discord name or the role gate has fallen into the human half of the
+     * gate, which is the state that turned the escalation's kick into a
+     * `role-revoked` in the first place.
+     */
+    if (s.calls.some((c) => /^(license|name|role):/.test(c))) {
+      fail(`system: ${label}`, `a system call reached the human half: ${s.calls.join(', ')}`)
+    }
+
+    const errors = s.logs.filter((l) => l.level === 'error')
+    if (want === 'allowed') {
+      if (errors.length > 0) {
+        fail(`system loudness: ${label}`, `an ALLOWED call logged an error: ${errors[0]?.message}`)
+      }
+      if (s.logs.length === 0) fail(`system loudness: ${label}`, 'an allowed call left no trace')
+    } else if (errors.length === 0) {
+      fail(`system loudness: ${label}`, 'a REFUSED system call logged nothing at error level')
+    }
+
+    for (const { message } of s.logs) {
+      if (message.includes(SECRET)) {
+        fail(`system loudness: ${label}`, 'a log line contains the configured secret')
+      }
+    }
+
+    if (verdict.ok) {
+      expect(`system: ${label}, attributed to System`, verdict.actor.name, 'System')
+      expect(`system: ${label}, with no license`, verdict.actor.license, null)
+      expect(`system: ${label}, with no Discord id`, verdict.actor.discordId, null)
+    }
+  }
+
+  /**
+   * AS A PROPERTY, SO A LATER EDIT TO THE TABLE CANNOT DROP IT: on EVERY path
+   * the credential opens other than the kick, a perfect secret, the
+   * escalation's own body and a ban in force still do not open it for the
+   * system, and it is the system rule that says so rather than the snowflake
+   * test.
+   */
+  for (const path of SERVICE_ROUTES) {
+    if (normalisePath(path) === SYSTEM_ROUTE) continue
+    const s = spy()
+    const verdict = await serviceGate(
+      call({ actor: SYSTEM_ACTOR, path, body: s.bodyOf(SYSTEM_BODY) }),
+      s.deps,
+    )
+    expect(`system property: ${path}`, refusal(verdict), '403 system-scope')
+    if (s.calls.length > 0) {
+      fail(`system property: ${path}`, `was refused only after reaching ${s.calls.join(', ')}`)
+    }
+    if (!s.logs.some((l) => l.level === 'error' && l.message.includes('named the system'))) {
+      fail(`system property: ${path}`, 'the refusal does not say it was the system rule')
+    }
+  }
+
+  /**
+   * THE MARKER IS MATCHED EXACTLY. Near misses are not the system and are not
+   * a Discord id either, so they are refused as any other actor that is not an
+   * id, having read nothing: no body, no ban, no person.
+   */
+  for (const near of ['System', 'SYSTEM', ' system', 'system ', 'sys', 'blitz-bot', 'system:rapid-offense']) {
+    const s = spy()
+    const verdict = await serviceGate(
+      call({ actor: near, body: s.bodyOf(SYSTEM_BODY) }),
+      s.deps,
+    )
+    expect(`system: "${near}" is not the marker`, refusal(verdict), '400 actor')
+    expect(`system: "${near}" reached nothing`, s.calls.length, 0)
+  }
+
+  {
+    /**
+     * A HUMAN IS NOT CHANGED BY THE TARGET BEING BANNED. The active ban is the
+     * system actor's whole justification and none of a human's: a named admin
+     * kicking a banned player still has to hold the role, still gets
+     * `role-revoked` without it, and the ban table and the body are never read
+     * on their behalf.
+     */
+    const s = spy()
+    s.deps.enforceRole = async ({ discordId }) => {
+      s.calls.push(`role:${discordId}`)
+      throw new RoleRevokedError('role-removed')
+    }
+    const verdict = await serviceGate(call({ body: s.bodyOf(SYSTEM_BODY) }), s.deps)
+    expect('system: a human without the role, kicking a banned player', refusal(verdict), '403 role-revoked')
+    expect(
+      'system: that human went through the person checks and nothing else',
+      s.calls.join(','),
+      `license:${ADMIN},name:${ADMIN},role:${ADMIN}`,
+    )
+  }
+
+  {
+    /**
+     * THE INCIDENT ITSELF, and it still refuses: a snowflake is a person, and
+     * the bot's own id does not hold the admin role. The fix is the marker, not
+     * trusting that id, so naming it is exactly as refused as it was on
+     * 2026-09-19.
+     */
+    const BOT = '1400000000000000000'
+    const s = spy(roleRefuses('role-removed'))
+    const verdict = await serviceGate(call({ actor: BOT, body: s.bodyOf(SYSTEM_BODY) }), s.deps)
+    expect('system: the bot`s own Discord id is still refused', refusal(verdict), '403 role-revoked')
+    if (s.calls.includes('body') || s.calls.some((c) => c.startsWith('ban:'))) {
+      fail('system', 'a snowflake actor had the ban table read on its behalf')
+    }
+  }
+
+  {
+    // And a human who DOES hold the role is the human, not System.
+    const s = spy()
+    const verdict = await serviceGate(call({ body: s.bodyOf(SYSTEM_BODY) }), s.deps)
+    if (!verdict.ok) fail('system: a human with the role', `was refused: ${refusal(verdict)}`)
+    else {
+      expect('system: a human with the role is attributed to themselves', verdict.actor.discordId, ADMIN)
+      if (verdict.actor.name === SYSTEM_ATTRIBUTION.name) {
+        fail('system', 'a human call came back attributed to System')
+      }
+    }
+    if (s.calls.includes('body') || s.calls.some((c) => c.startsWith('ban:'))) {
+      fail('system', 'a human call read the body or the ban table')
+    }
+  }
+
+  {
+    // The actor handed back is a copy; a route editing it edits nothing shared.
+    const verdict = await serviceGate(call({ actor: SYSTEM_ACTOR, body: spy().bodyOf(SYSTEM_BODY) }), spy().deps)
+    if (verdict.ok) {
+      verdict.actor.name = 'somebody else'
+      expect('system: the attribution cannot be edited through a verdict', SYSTEM_ATTRIBUTION.name, 'System')
+    } else {
+      fail('system: attribution copy', `the escalation kick was refused: ${refusal(verdict)}`)
+    }
+  }
+
+  {
+    /**
+     * THE SHIPPED BAN READ, NOT ONLY THE FAKE. Everything above proves the
+     * gate right GIVEN a read that sees the row the bot just wrote. This proves
+     * the real one asks for that: a consistent read, on the bans table, keyed
+     * by the license the gate was handed. `lib/dynamo`'s `ddb` is a Proxy that
+     * builds its client on first use and keeps it on `globalThis`, so seeding
+     * that slot intercepts it with no network, as handoff.check.ts does.
+     */
+    const gets: Array<Record<string, unknown>> = []
+    let answer: () => Promise<{ Item?: Ban }> = async () => ({ Item: banRow() })
+
+    ;(globalThis as unknown as { ddb: unknown }).ddb = {
+      async get(args: Record<string, unknown>) {
+        gets.push(args)
+        return answer()
+      },
+    }
+
+    const shipped = serviceDeps().ban
+
+    const row = await shipped(BANNED)
+    const got = gets[0] ?? {}
+    expect('system: the shipped ban read is one GetItem', gets.length, 1)
+    expect('system: the shipped ban read is CONSISTENT', got.ConsistentRead, true)
+    expect(
+      'system: on the bans table',
+      typeof got.TableName === 'string' && got.TableName.endsWith('bans'),
+      true,
+    )
+    expect(
+      'system: keyed by the license it was asked about',
+      (got.Key as Record<string, unknown> | undefined)?.license,
+      BANNED,
+    )
+    expect('system: and hands the row back', row?.license, BANNED)
+
+    // Through the gate, with only the ban read real.
+    const allowed = await serviceGate(
+      call({ actor: SYSTEM_ACTOR, body: spy().bodyOf(SYSTEM_BODY) }),
+      spy({ ban: shipped }).deps,
+    )
+    expect('system: the shipped read allows a ban in force', refusal(allowed), 'allowed')
+
+    answer = async () => ({})
+    const none = await serviceGate(
+      call({ actor: SYSTEM_ACTOR, body: spy().bodyOf(SYSTEM_BODY) }),
+      spy({ ban: shipped }).deps,
+    )
+    expect('system: the shipped read refuses no row', refusal(none), '403 not-banned')
+
+    answer = async () => ({ Item: banRow({ liftedAt: Date.now() - HOUR }) })
+    const lifted = await serviceGate(
+      call({ actor: SYSTEM_ACTOR, body: spy().bodyOf(SYSTEM_BODY) }),
+      spy({ ban: shipped }).deps,
+    )
+    expect('system: the shipped read refuses a lifted row', refusal(lifted), '403 not-banned')
+
+    answer = async () => {
+      throw new Error('ResourceNotFoundException')
+    }
+    const broken = await serviceGate(
+      call({ actor: SYSTEM_ACTOR, body: spy().bodyOf(SYSTEM_BODY) }),
+      spy({ ban: shipped }).deps,
+    )
+    expect('system: the shipped read failing is a refusal', refusal(broken), '503 store')
+  }
+
+  {
+    /**
+     * END TO END THROUGH A REAL REQUEST: the escalation's kick, exactly as
+     * blitz-bot sends it, through the real adapter and the real gate. Allowed,
+     * attributed to System, and the ROUTE CAN STILL READ THE BODY afterwards,
+     * because the gate read a clone. If the adapter read the original, the
+     * route's own `req.json()` would throw and every system kick would be a 400.
+     */
+    const req = new Request('https://console.example.com/api/kick', {
+      method: 'POST',
+      headers: {
+        [COMMAND_SECRET_HEADER]: SECRET,
+        [SERVICE_ACTOR_HEADER]: SYSTEM_ACTOR,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(SYSTEM_BODY),
+    })
+
+    expect('system e2e: a command call', isServiceCall(req), true)
+
+    const s = spy()
+    const verdict = await serviceGate(serviceRequest('kick', req), s.deps)
+    expect('system e2e: the escalation`s kick is allowed', refusal(verdict), 'allowed')
+    if (verdict.ok) {
+      expect('system e2e: attributed to System', verdict.actor.name, 'System')
+      expect('system e2e: with no license', verdict.actor.license, null)
+      expect('system e2e: with no Discord id', verdict.actor.discordId, null)
+    }
+    expect('system e2e: the ban was read for the license in the body', s.calls.join(','), `ban:${BANNED}`)
+
+    const routeBody = (await req.json()) as { license?: unknown; reason?: unknown }
+    expect('system e2e: the route still reads the license', routeBody.license, BANNED)
+    expect('system e2e: and the reason it will record', routeBody.reason, ESCALATION_REASON)
+  }
+
+  {
+    // The same request to the ban route: refused by name, and its body untouched.
+    const req = new Request('https://console.example.com/api/bans', {
+      method: 'POST',
+      headers: {
+        [COMMAND_SECRET_HEADER]: SECRET,
+        [SERVICE_ACTOR_HEADER]: SYSTEM_ACTOR,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ ...SYSTEM_BODY, reason: 'a ban nobody decided' }),
+    })
+
+    const verdict = await serviceGate(serviceRequest('ban', req), spy().deps)
+    expect('system e2e: the ban route refuses the system', refusal(verdict), '403 system-scope')
+    expect('system e2e: and never read the body', req.bodyUsed, false)
+  }
+
+  {
+    // A human's request: the gate never touches the body at all.
+    const req = new Request('https://console.example.com/api/kick', {
+      method: 'POST',
+      headers: {
+        [COMMAND_SECRET_HEADER]: SECRET,
+        [SERVICE_ACTOR_HEADER]: ADMIN,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(SYSTEM_BODY),
+    })
+
+    const verdict = await serviceGate(serviceRequest('kick', req), spy().deps)
+    expect('system e2e: a human kick is still the human', refusal(verdict), 'allowed')
+    expect('system e2e: and the gate never read its body', req.bodyUsed, false)
+  }
+
+  {
+    /**
+     * THE COPIED LICENSE PATTERN STILL MATCHES THE ROUTE'S. The gate checks the
+     * license with its own copy because lib/actions.ts cannot be loaded here;
+     * a copy that drifted would let the gate and the route disagree about what
+     * a license is. Read as text, for the reason section F reads actions.ts as
+     * text.
+     */
+    const PATTERN = '/^license2?:[0-9a-f]{6,64}$/i'
+    for (const rel of ['lib/actions.ts', 'lib/service.ts']) {
+      if (!readFileSync(join(SRC_DIR, ...rel.split('/')), 'utf8').includes(PATTERN)) {
+        fail('system', `src/${rel} no longer carries ${PATTERN}; the two license checks must match`)
+      }
+    }
+  }
 }
 
 // ===========================================================================
@@ -1190,7 +1729,7 @@ void main().then(
     }
     console.log(
       'check:service — rule, order, loudness, attribution, scope, wiring, ' +
-        'environment and outcome assertions all pass',
+        'environment, outcome and system actor assertions all pass',
     )
   },
   (e: unknown) => {
